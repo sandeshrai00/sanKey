@@ -262,6 +262,29 @@ Panel {
         root.installed = true
         root.refreshStatus()
         root.refreshPacks()
+        // Aggressive poll for 10 seconds to catch daemon startup
+        root.installPollRemaining = 10
+        installPollTimer.running = true
+      }
+    }
+  }
+
+  property int installPollRemaining: 0
+
+  Timer {
+    id: installPollTimer
+    interval: 500
+    repeat: true
+    running: false
+    onTriggered: {
+      if (!root.installed || root.running) {
+        running = false
+        return
+      }
+      root.refreshStatus()
+      root.installPollRemaining--
+      if (root.installPollRemaining <= 0) {
+        running = false
       }
     }
   }
@@ -282,18 +305,6 @@ Panel {
     repeat: true
     running: root.installed && !root.opened && root.running
     onTriggered: root.refreshStatus()
-  }
-
-  // Poll right after install until daemon is up — fixes dimmed icon on first install.
-  Timer {
-    id: installPollTimer
-    interval: 1000
-    repeat: true
-    running: root.installed && !root.running
-    onTriggered: {
-      if (!root.installed) { running = false; return }
-      root.refreshStatus()
-    }
   }
 
   // Re-check the binary quickly so auto-setup flips "Not installed" to live.
