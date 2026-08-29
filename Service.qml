@@ -76,6 +76,13 @@ Item {
     }
   }
 
-  Component.onCompleted: {
+  Component.onDestruction: {
+    // Stop the sankeyd daemon when the plugin is unloaded/removed.
+    // This handles both user-initiated removal via the menu and
+    // programmatic removal via omarchy-plugin-remove.
+    Quickshell.execDetached(["systemctl", "--user", "stop", "sankey"])
+    Quickshell.execDetached(["systemctl", "--user", "disable", "sankey"])
+    // Fallback: kill any running sankeyd process directly
+    Quickshell.execDetached(["pkill", "-x", "sankeyd"])
   }
 }
