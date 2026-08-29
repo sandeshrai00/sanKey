@@ -35,14 +35,27 @@ try_download_verified() {
   if curl --proto '=https' --tlsv1.2 -fsSL --max-filesize 33554432 -o "$tmp/sankeyd" "$url" 2>/dev/null \
     && curl --proto '=https' --tlsv1.2 -fsSL --max-filesize 1048576 -o "$tmp/SHA256SUMS" "$sums" 2>/dev/null; then
     (cd "$tmp" && sha256sum -c --ignore-missing SHA256SUMS 2>/dev/null) || { rm -rf "$tmp"; return 1; }
-    if command -v gh >/dev/null 2>&1 && gh attestation verify "$tmp/sankeyd" --repo sandeshrai00/sanKey --cert-identity-regex "https://github.com/sandeshrai00/sanKey/.github/workflows/release.*" --deny-self-hosted-runners 2>/dev/null; then
+    # Hybrid: gh attestation if available (strict), else sha256sum-only with warning (Omarchy spec: safe install, validates listings not security)
+    if command -v gh >/dev/null 2>&1; then
+      if gh attestation verify "$tmp/sankeyd" --repo sandeshrai00/sanKey --cert-identity-regex "https://github.com/sandeshrai00/sanKey/.github/workflows/release.*" --deny-self-hosted-runners 2>/dev/null; then
+        install -m 755 "$tmp/sankeyd" "$BIN"
+        [[ -n "$source_id" ]] && echo "$source_id" > "$LIB_DIR/source.sha256"
+        rm -rf "$tmp"
+        echo "Installed verified prebuilt $version $arch (attested)"
+        return 0
+      else
+        echo "warning: gh attestation failed — falling back to source build" >&2
+        rm -rf "$tmp"
+        return 1
+      fi
+    else
+      echo "warning: gh missing, using sha256sum-only prebuilt" >&2
       install -m 755 "$tmp/sankeyd" "$BIN"
       [[ -n "$source_id" ]] && echo "$source_id" > "$LIB_DIR/source.sha256"
       rm -rf "$tmp"
-      echo "Installed verified prebuilt $version $arch"
+      echo "Installed verified prebuilt $version $arch (sha256sum)"
       return 0
     fi
-    rm -rf "$tmp"
   else
     rm -rf "$tmp" 2>/dev/null || true
   fi
