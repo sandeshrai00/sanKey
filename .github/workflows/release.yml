@@ -16,7 +16,7 @@ jobs:
           toolchain: "1.87"
           components: rustfmt, clippy
       - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libevdev-dev pkg-config libgtk-4-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libevdev-dev libxtst-dev libxi-dev pkg-config libgtk-4-dev
       - name: Build sankeyd x86_64
         run: |
           cargo build --locked --release --manifest-path daemon/Cargo.toml
