@@ -23,7 +23,7 @@ Panel {
   readonly property string home: Quickshell.env("HOME")
   readonly property string sankeydBin: home + "/.local/bin/sankeyd"
   readonly property string pluginDir: home + "/.config/omarchy/plugins/io.github.sandeshrai00.sankey"
-  readonly property string setupPath: pluginDir + "/bin/sankey-setup"
+  readonly property string setupPath: pluginDir + "/scripts/sankey-setup"
 
   // ---- Background service (import, future backend logic) ----
   property var service: Service { pluginDir: root.pluginDir }

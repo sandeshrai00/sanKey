@@ -36,7 +36,7 @@ Item {
       lastImportError = ""
       lastImportResult = ""
       importHelper.command = ["/usr/bin/python3",
-        pluginDir + "/bin/sankey-import-pack.py"]
+        pluginDir + "/scripts/sankey-import-pack.py"]
       importHelper.running = true
     }
   }
