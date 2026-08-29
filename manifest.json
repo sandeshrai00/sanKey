@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.sanman.sankey",
+  "id": "io.github.sandeshrai00.sankey",
   "name": "Sankey",
   "version": "0.1.0",
-  "author": "sandesh_rai",
+  "author": "sandeshrai00",
   "description": "Mechanical keyboard sounds driven by the sankeyd daemon: live mute, volume and soundpack controls.",
   "license": "MIT",
   "activation": "on-demand",

@@ -62,7 +62,7 @@ fi
 # Deterministic source build outside plugin dir (avoids watcher thrash)
 export SOURCE_DATE_EPOCH=$(git -C "$PLUGIN_DIR" log -1 --format=%ct 2>/dev/null || date +%s)
 export CARGO_INCREMENTAL=0
-export CARGO_TERM_QUIET=1
+export CARGO_TERM_QUIET=true
 cargo build --locked --release --manifest-path "$DAEMON_DIR/Cargo.toml" --target-dir "$TARGET_DIR"
 install -m 755 "$TARGET_DIR/release/sankeyd" "$BIN"
 [[ -n "$source_id" ]] && echo "$source_id" > "$LIB_DIR/source.sha256"

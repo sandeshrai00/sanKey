@@ -14,7 +14,7 @@ Item {
   property string pluginDir: ""
 
   readonly property string pluginId: manifest && manifest.id
-    ? String(manifest.id) : "io.github.sanman.sankey"
+    ? String(manifest.id) : "io.github.sandeshrai00.sankey"
 
   property bool importing: false
   property string lastImportResult: ""

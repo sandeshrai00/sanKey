@@ -18,5 +18,5 @@ else
   rm -f ~/.local/bin/sankeyd ~/.config/systemd/user/sankey.service
   systemctl --user daemon-reload 2>/dev/null || true
 fi
-# plugin folder removal is done by: omarchy plugin remove io.github.sanman.sankey --yes
-echo "run: omarchy plugin remove io.github.sanman.sankey --yes ; omarchy restart shell"
+# plugin folder removal is done by: omarchy plugin remove io.github.sandeshrai00.sankey --yes
+echo "run: omarchy plugin remove io.github.sandeshrai00.sankey --yes ; omarchy restart shell"

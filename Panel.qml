@@ -17,12 +17,12 @@ import "Model.js" as Model
 // state is kept in this file beyond what the last reading says.
 Panel {
   id: root
-  moduleName: "io.github.sanman.sankey"
-  ipcTarget: "io.github.sanman.sankey"
+  moduleName: "io.github.sandeshrai00.sankey"
+  ipcTarget: "io.github.sandeshrai00.sankey"
 
   readonly property string home: Quickshell.env("HOME")
   readonly property string sankeydBin: home + "/.local/bin/sankeyd"
-  readonly property string pluginDir: home + "/.config/omarchy/plugins/io.github.sanman.sankey"
+  readonly property string pluginDir: home + "/.config/omarchy/plugins/io.github.sandeshrai00.sankey"
   readonly property string setupPath: pluginDir + "/bin/sankey-setup"
 
   // ---- Background service (import, future backend logic) ----
@@ -124,7 +124,7 @@ Panel {
     var cfg = root.bar && root.bar.shell ? root.bar.shell.shellConfig : null
     var layout = cfg && cfg.bar && cfg.bar.layout ? cfg.bar.layout : null
     if (!layout) return "right"
-    var id = "io.github.sanman.sankey"
+    var id = "io.github.sandeshrai00.sankey"
     for (var s of ["left","center","right"]) {
       var arr = layout[s]
       if (!Array.isArray(arr)) continue
@@ -135,13 +135,13 @@ Panel {
 
   function moveToSection(section) {
     if (["left","center","right"].indexOf(section)===-1) return
-    Quickshell.execDetached(["omarchy","plugin","enable","io.github.sanman.sankey","--section",section])
+    Quickshell.execDetached(["omarchy","plugin","enable","io.github.sandeshrai00.sankey","--section",section])
   }
 
   function remove() {
     // Omarchy-native: plugin removal via CLI, daemon via systemd — no bar.run rm -rf
     Quickshell.execDetached(["systemctl", "--user", "disable", "--now", "sankey"])
-    Quickshell.execDetached(["omarchy", "plugin", "remove", "io.github.sanman.sankey", "--yes"])
+    Quickshell.execDetached(["omarchy", "plugin", "remove", "io.github.sandeshrai00.sankey", "--yes"])
     root.installed = false
     root.running = false
   }
