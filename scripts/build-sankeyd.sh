@@ -32,13 +32,15 @@ try_download_verified() {
   command -v sha256sum >/dev/null 2>&1 || return 1
   local tmp=$(mktemp -d)
   echo "Trying verified prebuilt $url ..."
-  if curl --proto '=https' --tlsv1.2 -fsSL --max-filesize 33554432 -o "$tmp/sankeyd" "$url" 2>/dev/null \
+  if curl --proto '=https' --tlsv1.2 -fsSL --max-filesize 33554432 -o "$tmp/sankeyd-x86_64" "$url" 2>/dev/null \
     && curl --proto '=https' --tlsv1.2 -fsSL --max-filesize 1048576 -o "$tmp/SHA256SUMS" "$sums" 2>/dev/null; then
-    (cd "$tmp" && sha256sum -c --ignore-missing SHA256SUMS 2>/dev/null) || { rm -rf "$tmp"; return 1; }
+    # SHA256SUMS may contain "dist/sankeyd-x86_64" path — normalize
+    sed -i 's|dist/||g' "$tmp/SHA256SUMS" 2>/dev/null || true
+    (cd "$tmp" && sha256sum -c SHA256SUMS 2>/dev/null) || { rm -rf "$tmp"; return 1; }
     # Hybrid: gh attestation if available (strict), else sha256sum-only with warning (Omarchy spec: safe install, validates listings not security)
     if command -v gh >/dev/null 2>&1; then
-      if gh attestation verify "$tmp/sankeyd" --repo sandeshrai00/sanKey --cert-identity-regex "https://github.com/sandeshrai00/sanKey/.github/workflows/release.*" --deny-self-hosted-runners 2>/dev/null; then
-        install -m 755 "$tmp/sankeyd" "$BIN"
+      if gh attestation verify "$tmp/sankeyd-x86_64" --repo sandeshrai00/sanKey --cert-identity-regex "https://github.com/sandeshrai00/sanKey/.github/workflows/release.*" --deny-self-hosted-runners 2>/dev/null; then
+        install -m 755 "$tmp/sankeyd-x86_64" "$BIN"
         [[ -n "$source_id" ]] && echo "$source_id" > "$LIB_DIR/source.sha256"
         rm -rf "$tmp"
         echo "Installed verified prebuilt $version $arch (attested)"
@@ -50,7 +52,7 @@ try_download_verified() {
       fi
     else
       echo "warning: gh missing, using sha256sum-only prebuilt" >&2
-      install -m 755 "$tmp/sankeyd" "$BIN"
+      install -m 755 "$tmp/sankeyd-x86_64" "$BIN"
       [[ -n "$source_id" ]] && echo "$source_id" > "$LIB_DIR/source.sha256"
       rm -rf "$tmp"
       echo "Installed verified prebuilt $version $arch (sha256sum)"

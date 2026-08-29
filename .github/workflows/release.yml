@@ -22,7 +22,7 @@ jobs:
           cargo build --locked --release --manifest-path daemon/Cargo.toml
           mkdir -p dist
           cp daemon/target/release/sankeyd dist/sankeyd-x86_64
-          sha256sum dist/sankeyd-x86_64 > dist/SHA256SUMS
+          (cd dist && sha256sum sankeyd-x86_64 > SHA256SUMS)
           cat dist/SHA256SUMS
       - name: Attest binary
         uses: actions/attest-build-provenance@v2
