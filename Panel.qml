@@ -57,11 +57,13 @@ Panel {
   property var keyboardPacks: []
 
   readonly property string statusText: {
+    if (setupBusy) return "Installing…"
     if (!root.installed) return "Not installed"
     if (!root.running) return "Stopped"
     return root.muted ? "Muted" : "Playing"
   }
 
+  property bool setupBusy: false
   property bool settingsOpen: false
 
   // The bar sizes widgets by their implicit size; the base Panel is a plain
@@ -111,8 +113,10 @@ Panel {
   function restartDaemon() { root.runService(["restart", "sankey"]); root.refreshStatus() }
 
   function install() {
-    if (root.bar) root.bar.run("omarchy-launch-floating-terminal-with-presentation "
-      + Util.shellQuote(root.setupPath))
+    if (setupBusy) return
+    setupBusy = true
+    setupProc.command = ["/usr/bin/bash", root.setupPath]
+    setupProc.running = true
   }
 
   function openCustomFolder() {
@@ -197,7 +201,7 @@ Panel {
     onExited: function(exitCode) {
       root.installed = (exitCode === 0)
       if (root.installed) root.refreshStatus()
-      else if (!root.automaticSetupAttempted) {
+      else if (!root.automaticSetupAttempted && !setupBusy) {
         root.automaticSetupAttempted = true
         // Auto-run setup on first enable after URL install (like Spotify)
         Qt.callLater(function(){ root.install() })
@@ -247,6 +251,21 @@ Panel {
     stdout: StdioCollector { waitForEnd: true }
   }
 
+  // Background setup: runs sankey-setup without opening a terminal.
+  Process {
+    id: setupProc
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      root.setupBusy = false
+      if (exitCode === 0) {
+        root.installed = true
+        root.refreshStatus()
+        root.refreshPacks()
+      }
+    }
+  }
+
   // Poll only when panel open (or running needs refresh) — 0 forks when idle.
   Timer {
     interval: 5000
@@ -269,7 +288,7 @@ Panel {
   Timer {
     interval: 5000
     repeat: true
-    running: !root.installed
+    running: !root.installed && !setupBusy
     onTriggered: {
       installCheck.running = true
       root.refreshStatus()
@@ -433,11 +452,12 @@ Panel {
 
           Button {
             id: installButton
-            text: "Install Sankey"
-            iconText: "󰎓"
+            text: setupBusy ? "Installing…" : "Install Sankey"
+            iconText: setupBusy ? "⏳" : "󰎓"
             foreground: root.bar.foreground
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
+            enabled: !setupBusy
             onClicked: root.install()
           }
         }
