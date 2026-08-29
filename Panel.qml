@@ -176,6 +176,8 @@ Panel {
     packsProc.running = true
   }
 
+  property bool automaticSetupAttempted: false
+
   Component.onCompleted: {
     installCheck.running = true
     root.refreshStatus()
@@ -195,6 +197,11 @@ Panel {
     onExited: function(exitCode) {
       root.installed = (exitCode === 0)
       if (root.installed) root.refreshStatus()
+      else if (!root.automaticSetupAttempted) {
+        root.automaticSetupAttempted = true
+        // Auto-run setup on first enable after URL install (like Spotify)
+        Qt.callLater(function(){ root.install() })
+      }
     }
   }
 
