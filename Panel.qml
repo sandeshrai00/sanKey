@@ -165,8 +165,8 @@ Panel {
   }
 
   function refreshStatus() {
-    if (!root.installed) return
     if (statusProc.running) return
+    // Always try status — if daemon responds, applyStatus will set installed=true
     statusProc.running = true
   }
 
@@ -265,13 +265,15 @@ Panel {
     onTriggered: root.refreshStatus()
   }
 
-  // Re-check the binary occasionally so a manual install shows up without a
-  // shell restart.
+  // Re-check the binary quickly so auto-setup flips "Not installed" to live.
   Timer {
-    interval: 30000
+    interval: 5000
     repeat: true
     running: !root.installed
-    onTriggered: installCheck.running = true
+    onTriggered: {
+      installCheck.running = true
+      root.refreshStatus()
+    }
   }
 
   BarIconButton {
