@@ -59,17 +59,8 @@ else
   echo "    sudo usermod -aG input $USER"
 fi
 
-step "Asking bar position"
 if command -v omarchy >/dev/null 2>&1; then
-  section="right"
-  if [ -t 0 ]; then
-    printf "Where to place the bar icon? [left/center/right] (default: right): "
-    read -r ans || true
-    case "$ans" in left|center|right) section="$ans";; "") ;; *) echo "Unknown '$ans', using right";; esac
-  fi
-  omarchy plugin enable io.github.sanman.sankey --section "$section" 2>/dev/null || true
-  # enable already triggers rescanPlugins — no extra pkill needed (avoids double flash)
-  echo "Bar icon placed in: $section (change anytime in Sankey panel → POSITION)"
+  echo "Bar icon position: configure anytime in Sankey panel → POSITION (or: omarchy plugin enable io.github.sandeshrai00.sankey --section left|center|right)"
 fi
 
 step "Done"
