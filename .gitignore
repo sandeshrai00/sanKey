@@ -1,0 +1,4 @@
+daemon/target/
+build/
+dist/
+*.log

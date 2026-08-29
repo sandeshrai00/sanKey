@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.sanman.sankey",
+  "name": "Sankey",
+  "version": "1.0.0",
+  "author": "sandesh_rai",
+  "description": "Mechanical keyboard sounds driven by the sankeyd daemon: live mute, volume and soundpack controls.",
+  "activation": "on-demand",
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "Sankey",
+    "description": "Keyboard sounds: mute, volume, soundpacks",
+    "category": "Audio",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

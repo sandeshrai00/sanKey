@@ -1,0 +1,77 @@
+#!/bin/bash
+# Sankey one-click installer: build the daemon from this plugin's daemon/,
+# install the binary + soundpacks, and start the sankey user service.
+#
+# Run it from the bar panel (Install Sankey) or by hand:
+#   ~/.config/omarchy/plugins/io.github.sanman.sankey/bin/sankey-setup
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_DIR="$(dirname "$SCRIPT_DIR")"
+DAEMON_DIR="$PLUGIN_DIR/daemon"
+
+BIN="$HOME/.local/bin/sankeyd"
+SHARE="$HOME/.local/share/sankey"
+UNIT_DIR="$HOME/.config/systemd/user"
+UNIT="$UNIT_DIR/sankey.service"
+
+step() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
+die()  { printf '\n\033[1;31msankey-setup: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# ---- 1. Build the daemon (verified prebuilt or source) ------------------
+[[ -d "$DAEMON_DIR" ]] || die "daemon/ not found next to this script"
+step "Building sankeyd (verified prebuilt if available, else source)"
+"$PLUGIN_DIR/scripts/build-sankeyd.sh" || die "build failed"
+
+# ---- 2. Install soundpacks ---------------------------------------------
+step "Installing soundpacks"
+mkdir -p "$SHARE/soundpacks"
+cp -rn "$DAEMON_DIR/soundpacks/." "$SHARE/soundpacks/" 2>/dev/null || true
+
+# ---- 4. systemd user service -------------------------------------------
+step "Installing the sankey user service"
+mkdir -p "$UNIT_DIR"
+cat > "$UNIT" <<'EOF'
+[Unit]
+Description=Sankey keyboard sound daemon
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/sankeyd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload
+systemctl --user enable --now sankey || die "could not start the sankey service"
+
+# ---- 5. input group -----------------------------------------------------
+step "Checking input group (keyboard capture)"
+if id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
+  echo "input group: OK"
+else
+  echo
+  echo "You are NOT in the 'input' group, so keyboard sounds need one"
+  echo "privileged step. Run this in your terminal, then log out and back in:"
+  echo
+  echo "    sudo usermod -aG input $USER"
+fi
+
+step "Asking bar position"
+if command -v omarchy >/dev/null 2>&1; then
+  section="right"
+  if [ -t 0 ]; then
+    printf "Where to place the bar icon? [left/center/right] (default: right): "
+    read -r ans || true
+    case "$ans" in left|center|right) section="$ans";; "") ;; *) echo "Unknown '$ans', using right";; esac
+  fi
+  omarchy plugin enable io.github.sanman.sankey --section "$section" 2>/dev/null || true
+  # enable already triggers rescanPlugins — no extra pkill needed (avoids double flash)
+  echo "Bar icon placed in: $section (change anytime in Sankey panel → POSITION)"
+fi
+
+step "Done"
+echo "Sankey is installed and running. Open the Sankey bar panel to tune it."
+echo "Type a few keys — you should hear them."
