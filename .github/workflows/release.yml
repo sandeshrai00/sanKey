@@ -1,0 +1,35 @@
+name: release-sankeyd
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.87"
+          components: rustfmt, clippy
+      - name: Build sankeyd x86_64
+        run: |
+          cargo build --locked --release --manifest-path daemon/Cargo.toml
+          mkdir -p dist
+          cp daemon/target/release/sankeyd dist/sankeyd-x86_64
+          sha256sum dist/sankeyd-x86_64 > dist/SHA256SUMS
+          cat dist/SHA256SUMS
+      - name: Attest binary
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/sankeyd-x86_64"
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/sankeyd-x86_64
+            dist/SHA256SUMS
+          generate_release_notes: true

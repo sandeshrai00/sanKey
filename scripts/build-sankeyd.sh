@@ -26,8 +26,8 @@ fi
 
 # Try verified prebuilt (when releases exist)
 try_download_verified() {
-  local url="https://github.com/sanman/sankey/releases/download/v${version}/sankeyd-${arch}"
-  local sums="https://github.com/sanman/sankey/releases/download/v${version}/SHA256SUMS"
+  local url="https://github.com/sandeshrai00/sanKey/releases/download/v${version}/sankeyd-${arch}"
+  local sums="https://github.com/sandeshrai00/sanKey/releases/download/v${version}/SHA256SUMS"
   command -v curl >/dev/null 2>&1 || return 1
   command -v sha256sum >/dev/null 2>&1 || return 1
   local tmp=$(mktemp -d)
@@ -35,7 +35,7 @@ try_download_verified() {
   if curl --proto '=https' --tlsv1.2 -fsSL --max-filesize 33554432 -o "$tmp/sankeyd" "$url" 2>/dev/null \
     && curl --proto '=https' --tlsv1.2 -fsSL --max-filesize 1048576 -o "$tmp/SHA256SUMS" "$sums" 2>/dev/null; then
     (cd "$tmp" && sha256sum -c --ignore-missing SHA256SUMS 2>/dev/null) || { rm -rf "$tmp"; return 1; }
-    if command -v gh >/dev/null 2>&1 && gh attestation verify "$tmp/sankeyd" --repo sanman/sankey --cert-identity-regex "https://github.com/sanman/sankey/.github/workflows/release.*" --deny-self-hosted-runners 2>/dev/null; then
+    if command -v gh >/dev/null 2>&1 && gh attestation verify "$tmp/sankeyd" --repo sandeshrai00/sanKey --cert-identity-regex "https://github.com/sandeshrai00/sanKey/.github/workflows/release.*" --deny-self-hosted-runners 2>/dev/null; then
       install -m 755 "$tmp/sankeyd" "$BIN"
       [[ -n "$source_id" ]] && echo "$source_id" > "$LIB_DIR/source.sha256"
       rm -rf "$tmp"
