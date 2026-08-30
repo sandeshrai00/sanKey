@@ -1,6 +1,6 @@
 //! Opt-in latency tracing for the input -> engine -> UI path.
 //!
-//! Enabled by setting `SANKEY_TRACE=1` before launching. When it is unset
+//! Enabled by setting `SORAKEY_TRACE=1` before launching. When it is unset
 //! (the shipping default) every entry point below is an atomic load that fails
 //! immediately, so the hot paths pay a predictable branch and nothing else.
 //!
@@ -24,12 +24,12 @@ use std::sync::atomic::{ AtomicBool, Ordering };
 use std::time::Instant;
 
 /// Master switch, read on every trace point. True when either source of
-/// tracing is live: `SANKEY_TRACE=1` at launch, or the Settings verbose
+/// tracing is live: `SORAKEY_TRACE=1` at launch, or the Settings verbose
 /// toggle at runtime. Kept as a single flag so the hot path stays one relaxed
 /// load rather than two.
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Whether `SANKEY_TRACE=1` was set at launch. This is what gates the
+/// Whether `SORAKEY_TRACE=1` was set at launch. This is what gates the
 /// console lines and the detail file: those are a developer's tool and their
 /// behavior is deliberately unchanged by the user-facing toggle.
 static ENV_TRACING: AtomicBool = AtomicBool::new(false);
@@ -138,7 +138,7 @@ pub fn now_ms() -> f64 {
     }
 }
 
-/// Records one trace point. A no-op unless `SANKEY_TRACE=1`.
+/// Records one trace point. A no-op unless `SORAKEY_TRACE=1`.
 ///
 /// `dur_ms` is the duration of the operation for points that measure a span,
 /// and `0.0` for points that mark an instant.
@@ -192,7 +192,7 @@ fn refresh_enabled() {
 /// the life of the process - a toggle-off parks it on `recv()` rather than
 /// tearing it down, which keeps the shutdown path free of any join.
 ///
-/// `write_to_console` reflects whether `SANKEY_TRACE=1` was set, so the
+/// `write_to_console` reflects whether `SORAKEY_TRACE=1` was set, so the
 /// developer-facing console and file output stay exactly as they were and the
 /// user-facing toggle never starts printing to a console nobody is watching.
 fn ensure_writer(write_to_console: bool) -> bool {
@@ -212,12 +212,12 @@ fn ensure_writer(write_to_console: bool) -> bool {
     // writing one would break the "nothing is written to disk" promise the
     // Debug section makes.
     let path = write_to_console.then(|| {
-        std::env::temp_dir().join(format!("sankey-trace-{}.log", std::process::id()))
+        std::env::temp_dir().join(format!("sorakey-trace-{}.log", std::process::id()))
     });
 
     if let Some(path) = path.as_ref() {
         eprintln!(
-            "🔬 [trace] SANKEY_TRACE=1 - per-keystroke timings below; detail log: {}",
+            "🔬 [trace] SORAKEY_TRACE=1 - per-keystroke timings below; detail log: {}",
             path.display()
         );
         eprintln!(
@@ -230,12 +230,12 @@ fn ensure_writer(write_to_console: bool) -> bool {
     true
 }
 
-/// Turns tracing on when `SANKEY_TRACE=1` is set, spawning the writer
+/// Turns tracing on when `SORAKEY_TRACE=1` is set, spawning the writer
 /// thread. Call once, early in `main`, before any traced thread starts.
 /// Without the env var this returns immediately and the app is unchanged -
 /// the writer is then spawned lazily if the user turns on verbose logging.
 pub fn init() {
-    let on = std::env::var("SANKEY_TRACE").map(|v| v == "1").unwrap_or(false);
+    let on = std::env::var("SORAKEY_TRACE").map(|v| v == "1").unwrap_or(false);
     if !on {
         return;
     }
@@ -472,7 +472,7 @@ mod tests {
     fn the_runtime_toggle_enables_tracing_without_the_env_var() {
         // The reported bug: the Settings verbose toggle opened the buffer door
         // but left the producer dead, because only `init` with
-        // `SANKEY_TRACE=1` ever set the master switch. An installed build
+        // `SORAKEY_TRACE=1` ever set the master switch. An installed build
         // has no console to set that variable from, so the feature was
         // unreachable for the users it exists for.
         let _guard = TRACE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -511,7 +511,7 @@ mod tests {
 
     #[test]
     fn the_env_var_keeps_tracing_on_across_a_runtime_toggle_off() {
-        // A developer running with SANKEY_TRACE=1 must not have their
+        // A developer running with SORAKEY_TRACE=1 must not have their
         // console output silenced by a user-facing toggle they also flipped.
         let _guard = TRACE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_tracing();

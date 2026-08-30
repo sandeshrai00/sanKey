@@ -2,7 +2,7 @@
 
 Complete mapping of IOHook numeric keycodes → W3C Key Names.
 
-This table is the authoritative reference used by `v1-to-v2-converter.py` and `sankey-import-pack.py`, sourced from `mechvibes-dx-new`'s `config_converter.rs`.
+This table is the authoritative reference used by `v1-to-v2-converter.py` and `sorakey-import-pack.py`, sourced from `mechvibes-dx-new`'s `config_converter.rs`.
 
 ---
 

@@ -2,21 +2,21 @@
 set -euo pipefail
 PURGE=0
 if [[ "${1:-}" == "--purge" ]]; then PURGE=1; fi
-echo "== Sankey uninstall =="
-systemctl --user disable --now sankey 2>/dev/null || true
+echo "== Sorakey uninstall =="
+systemctl --user disable --now sorakey 2>/dev/null || true
 systemctl --user daemon-reload 2>/dev/null || true
-pkill -x sankeyd 2>/dev/null || true
+pkill -x sorakey 2>/dev/null || true
 if [[ $PURGE -eq 1 ]]; then
-  rm -rf ~/.local/share/sankey ~/.local/bin/sankeyd ~/.config/systemd/user/sankey.service
+  rm -rf ~/.local/share/sorakey ~/.local/bin/sorakey ~/.config/systemd/user/sorakey.service
   echo "purged data + binary"
 else
   # keep packs by moving to .bak
-  if [[ -d ~/.local/share/sankey ]]; then
-    mv ~/.local/share/sankey ~/.local/share/sankey.bak.$(date +%s) 2>/dev/null || true
+  if [[ -d ~/.local/share/sorakey ]]; then
+    mv ~/.local/share/sorakey ~/.local/share/sorakey.bak.$(date +%s) 2>/dev/null || true
     echo "moved packs to .bak (use --purge to delete)"
   fi
-  rm -f ~/.local/bin/sankeyd ~/.config/systemd/user/sankey.service
+  rm -f ~/.local/bin/sorakey ~/.config/systemd/user/sorakey.service
   systemctl --user daemon-reload 2>/dev/null || true
 fi
-# plugin folder removal is done by: omarchy plugin remove io.github.sandeshrai00.sankey --yes
-echo "run: omarchy plugin remove io.github.sandeshrai00.sankey --yes ; omarchy restart shell"
+# plugin folder removal is done by: omarchy plugin remove io.github.sandeshrai00.sorakey --yes
+echo "run: omarchy plugin remove io.github.sandeshrai00.sorakey --yes ; omarchy restart shell"

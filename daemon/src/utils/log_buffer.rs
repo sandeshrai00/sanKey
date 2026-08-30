@@ -143,7 +143,7 @@ pub fn verbose_enabled() -> bool {
 /// from the trace facility, whose points are inert unless tracing is enabled.
 /// Before this call also drove `trace::set_runtime_tracing`, turning the toggle
 /// on produced nothing at all unless the user had launched the app with
-/// `SANKEY_TRACE=1` - which an installed build gives them no way to do.
+/// `SORAKEY_TRACE=1` - which an installed build gives them no way to do.
 pub fn set_verbose(on: bool) {
     VERBOSE.store(on, Ordering::Relaxed);
     // Order matters on the way up: the producer must be live before the first
@@ -285,7 +285,7 @@ fn mask_name_in_paths(line: &str, user: &str) -> String {
 /// carries the context that would otherwise have to be asked for.
 pub fn export_header() -> String {
     format!(
-        "Sankey log export\n\
+        "Sorakey log export\n\
          App version: {}\n\
          OS: {} ({})\n\
          Exported at: {}\n\
@@ -322,17 +322,17 @@ pub fn export_contents() -> String {
 
 /// Filename for an export, stamped so repeated exports never collide.
 fn export_file_name(at: chrono::DateTime<chrono::Local>) -> String {
-    format!("sankey-log-{}.txt", at.format("%Y%m%d-%H%M%S"))
+    format!("sorakey-log-{}.txt", at.format("%Y%m%d-%H%M%S"))
 }
 
 /// Writes the whole buffer to a timestamped file under
-/// `%TEMP%/sankey-logs` and returns the path.
+/// `%TEMP%/sorakey-logs` and returns the path.
 ///
 /// The temp directory rather than the config directory: this is a transient
 /// artifact the user is about to attach to a bug report, and it should not
 /// accumulate inside the app's own data.
 pub fn export_to_file() -> Result<std::path::PathBuf, String> {
-    let dir = std::env::temp_dir().join("sankey-logs");
+    let dir = std::env::temp_dir().join("sorakey-logs");
     std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {}", dir.display(), e))?;
 
     let path = dir.join(export_file_name(chrono::Local::now()));
@@ -620,7 +620,7 @@ mod tests {
         let contents = export_contents();
 
         // Header: the context a bug report would otherwise have to ask for.
-        assert!(contents.contains("Sankey log export"), "{}", contents);
+        assert!(contents.contains("Sorakey log export"), "{}", contents);
         assert!(
             contents.contains(&format!("App version: {}", crate::utils::constants::APP_VERSION)),
             "{}",
@@ -661,8 +661,8 @@ mod tests {
             return; // No usable name here; nothing to assert.
         };
 
-        push(&format!(r"soundpack_dir: C:\Users\{}\AppData\Local\Sankey", user));
-        push(&format!("config: /home/{}/.config/sankey/config.json", user));
+        push(&format!(r"soundpack_dir: C:\Users\{}\AppData\Local\Sorakey", user));
+        push(&format!("config: /home/{}/.config/sorakey/config.json", user));
 
         let contents = export_contents();
 
@@ -673,8 +673,8 @@ mod tests {
         );
         assert!(contents.contains("[username]"), "{}", contents);
         // The rest of the path is the diagnostic part and has to survive.
-        assert!(contents.contains(r"\AppData\Local\Sankey"), "{}", contents);
-        assert!(contents.contains("/.config/sankey/config.json"), "{}", contents);
+        assert!(contents.contains(r"\AppData\Local\Sorakey"), "{}", contents);
+        assert!(contents.contains("/.config/sorakey/config.json"), "{}", contents);
     }
 
     #[test]
@@ -757,7 +757,7 @@ mod tests {
         use chrono::TimeZone;
 
         let at = chrono::Local.with_ymd_and_hms(2026, 8, 4, 15, 30, 45).unwrap();
-        assert_eq!(export_file_name(at), "sankey-log-20260804-153045.txt");
+        assert_eq!(export_file_name(at), "sorakey-log-20260804-153045.txt");
 
         let later = chrono::Local.with_ymd_and_hms(2026, 8, 4, 15, 30, 46).unwrap();
         assert_ne!(export_file_name(at), export_file_name(later));
@@ -828,7 +828,7 @@ mod tests {
         reset();
 
         assert!(
-            std::env::var("SANKEY_TRACE").is_err(),
+            std::env::var("SORAKEY_TRACE").is_err(),
             "this test must prove the toggle works with no env var set"
         );
 
@@ -941,8 +941,8 @@ mod tests {
         reset();
 
         println!(
-            "SANKEY_TRACE env var: {:?}",
-            std::env::var("SANKEY_TRACE").unwrap_or_else(|_| "<unset>".to_string())
+            "SORAKEY_TRACE env var: {:?}",
+            std::env::var("SORAKEY_TRACE").unwrap_or_else(|_| "<unset>".to_string())
         );
 
         println!("\n--- toggle OFF, simulating 50 keystrokes ---");
@@ -989,8 +989,8 @@ mod tests {
         reset();
 
         push("🐛 Debug logging enabled");
-        push("🚀 Initializing Sankey...");
-        push("📂 App root (from exe): D:\\sankey\\target\\release");
+        push("🚀 Initializing Sorakey...");
+        push("📂 App root (from exe): D:\\sorakey\\target\\release");
         push("🎧 Audio engine thread started");
         push("🎮 Starting Raw Input worker process...");
         VERBOSE.store(true, Ordering::Relaxed);
@@ -1014,7 +1014,7 @@ mod tests {
         let path = export_to_file().expect("export must succeed");
         let written = std::fs::read_to_string(&path).expect("exported file must be readable");
 
-        assert!(written.contains("Sankey log export"));
+        assert!(written.contains("Sorakey log export"));
         assert!(written.contains("a line that must survive the round trip"));
 
         let _ = std::fs::remove_file(&path);

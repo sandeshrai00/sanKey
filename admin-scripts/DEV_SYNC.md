@@ -4,7 +4,7 @@ Test edits locally before committing. No `git push` needed.
 
 ## What it does
 
-`dev-sync.sh` copies `sankey/` (dev repo) → `~/.config/omarchy/plugins/io.github.sandeshrai00.sankey/` (installed plugin), then validates and restarts the shell.
+`dev-sync.sh` copies `sorakey/` (dev repo) → `~/.config/omarchy/plugins/io.github.sandeshrai00.sorakey/` (installed plugin), then validates and restarts the shell.
 
 ```
 dev repo  (edits here)
@@ -36,15 +36,15 @@ bash admin-scripts/dev-sync.sh
 Check result:
 
 ```bash
-journalctl --user -n 100 | grep -i sankey
-systemctl --user is-active sankey
-~/.local/bin/sankeyd ctl '{"status":{}}'  # daemon alive
+journalctl --user -n 100 | grep -i sorakey
+systemctl --user is-active sorakey
+~/.local/bin/sorakey ctl '{"status":{}}'  # daemon alive
 ```
 
 ## Fresh-install simulation without push
 
 ```bash
-omarchy plugin remove io.github.sandeshrai00.sankey --yes  # wipes installed dir
+omarchy plugin remove io.github.sandeshrai00.sorakey --yes  # wipes installed dir
 ./admin-scripts/dev-sync.sh                                  # recreates it from dev repo
 ```
 
@@ -55,7 +55,7 @@ omarchy plugin remove io.github.sandeshrai00.sankey --yes  # wipes installed dir
 | Edit | Needs new release? | How dev-sync tests it |
 |------|-------------------|----------------------|
 | `Panel.qml` / `Service.qml` / `scripts/` | No | dev-sync + shell restart is enough |
-| `daemon/` (Rust) | Yes for fast prebuilt on users' machines | dev-sync + shell restart triggers `build-sankeyd.sh` freshness check: if no matching tag it builds from source (needs `cargo`), if tag exists it tries prebuilt (needs release). To force source: `SANKEY_BUILD_FROM_SOURCE=1 ./scripts/build-sankeyd.sh` |
+| `daemon/` (Rust) | Yes for fast prebuilt on users' machines | dev-sync + shell restart triggers `build-sorakey.sh` freshness check: if no matching tag it builds from source (needs `cargo`), if tag exists it tries prebuilt (needs release). To force source: `SORAKEY_BUILD_FROM_SOURCE=1 ./scripts/build-sorakey.sh` |
 
 ## Notes
 

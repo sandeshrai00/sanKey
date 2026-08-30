@@ -1,9 +1,9 @@
 MIT License
 
-Sankey — keyboard sound daemon + Omarchy plugin
+Sorakey — keyboard sound daemon + Omarchy plugin
 Copyright (c) 2026 sandesh_rai
 
-The sankeyd daemon is a fork of the MechvibesDX (v0.8.2) audio core:
+The sorakey daemon is a fork of the MechvibesDX (v0.8.2) audio core:
 Copyright (c) 2026 Hải Nguyễn
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

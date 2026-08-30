@@ -13,10 +13,10 @@ Item {
   property var manifest: null
   readonly property string pluginDir: manifest && manifest.__sourceDir
     ? String(manifest.__sourceDir)
-    : Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.sandeshrai00.sankey"
+    : Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.sandeshrai00.sorakey"
 
   readonly property string pluginId: manifest && manifest.id
-    ? String(manifest.id) : "io.github.sandeshrai00.sankey"
+    ? String(manifest.id) : "io.github.sandeshrai00.sorakey"
 
   property bool importing: false
   property string lastImportResult: ""
@@ -38,7 +38,7 @@ Item {
       lastImportError = ""
       lastImportResult = ""
       importHelper.command = ["/usr/bin/python3",
-        pluginDir + "/scripts/sankey-import-pack.py"]
+        pluginDir + "/scripts/sorakey-import-pack.py"]
       importHelper.running = true
     }
   }
@@ -82,7 +82,7 @@ Item {
   // running. Mirrors the teardown in onDestruction below: the instance is
   // dropped on disable, remove, and plugin reload, and recreated on
   // (re)enable and shell start. On a fresh install the unit does not exist
-  // yet (setup has not run); the call fails harmlessly and sankey-setup
+  // yet (setup has not run); the call fails harmlessly and sorakey-setup
   // starts the service itself.
   Process {
     id: startProc
@@ -92,7 +92,7 @@ Item {
 
   Component.onCompleted: {
     if (!startProc.running) {
-      startProc.command = ["systemctl", "--user", "enable", "--now", "sankey"]
+      startProc.command = ["systemctl", "--user", "enable", "--now", "sorakey"]
       startProc.running = true
     }
     // Re-assert after a short delay: during `omarchy restart shell` the old
@@ -110,7 +110,7 @@ Item {
     interval: 3000
     onTriggered: {
       if (startProc.running) return
-      startProc.command = ["systemctl", "--user", "enable", "--now", "sankey"]
+      startProc.command = ["systemctl", "--user", "enable", "--now", "sorakey"]
       startProc.running = true
     }
   }
@@ -121,7 +121,7 @@ Item {
   // source, else builds — and reload the daemon if a new binary landed.
   Process {
     id: freshnessCheck
-    command: ["/usr/bin/bash", root.pluginDir + "/scripts/build-sankeyd.sh"]
+    command: ["/usr/bin/bash", root.pluginDir + "/scripts/build-sorakey.sh"]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
@@ -129,9 +129,9 @@ Item {
       var out = String(stdout.text || "").trim()
       var lines = out.split("\n")
       var line = lines[lines.length - 1]
-      console.info("sankeyd freshness: " + line)
+      console.info("sorakey freshness: " + line)
       if (line.indexOf("up to date") !== -1) return
-      Quickshell.execDetached(["systemctl", "--user", "restart", "sankey"])
+      Quickshell.execDetached(["systemctl", "--user", "restart", "sorakey"])
     }
   }
 
@@ -141,12 +141,12 @@ Item {
     // import feature, and its instances come and go with every bar rebuild —
     // they must not stop the daemon.
     if (!root.shell) return
-    // Stop the sankeyd daemon when the plugin instance goes away (disabled,
+    // Stop the sorakey daemon when the plugin instance goes away (disabled,
     // removed, or reloaded from disk). Component.onCompleted restores it
     // whenever the plugin is enabled again.
-    Quickshell.execDetached(["systemctl", "--user", "stop", "sankey"])
-    Quickshell.execDetached(["systemctl", "--user", "disable", "sankey"])
-    // Fallback: kill any running sankeyd process directly
-    Quickshell.execDetached(["pkill", "-x", "sankeyd"])
+    Quickshell.execDetached(["systemctl", "--user", "stop", "sorakey"])
+    Quickshell.execDetached(["systemctl", "--user", "disable", "sorakey"])
+    // Fallback: kill any running sorakey process directly
+    Quickshell.execDetached(["pkill", "-x", "sorakey"])
   }
 }

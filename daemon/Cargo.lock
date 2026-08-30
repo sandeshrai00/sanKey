@@ -1331,30 +1331,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sankeyd"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "cpal",
- "crossbeam-channel",
- "directories",
- "env_logger",
- "evdev",
- "futures-timer",
- "hound",
- "libc",
- "once_cell",
- "rand",
- "rdev",
- "rodio",
- "rubato",
- "serde",
- "serde_json",
- "strum",
- "symphonia",
-]
-
-[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1414,6 +1390,30 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "sorakey"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "cpal",
+ "crossbeam-channel",
+ "directories",
+ "env_logger",
+ "evdev",
+ "futures-timer",
+ "hound",
+ "libc",
+ "once_cell",
+ "rand",
+ "rdev",
+ "rodio",
+ "rubato",
+ "serde",
+ "serde_json",
+ "strum",
+ "symphonia",
+]
 
 [[package]]
 name = "strength_reduce"

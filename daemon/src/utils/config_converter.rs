@@ -1246,7 +1246,7 @@ mod tests {
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env
             ::temp_dir()
-            .join(format!("sankey-converter-{}-{}", tag, std::process::id()));
+            .join(format!("sorakey-converter-{}-{}", tag, std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         dir
     }

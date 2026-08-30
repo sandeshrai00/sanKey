@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.sandeshrai00.sankey",
-  "name": "Sankey",
+  "id": "io.github.sandeshrai00.sorakey",
+  "name": "Sorakey",
   "version": "0.1.0",
   "author": "sandeshrai00",
-  "description": "Mechanical keyboard sounds driven by the sankeyd daemon: live mute, volume and soundpack controls.",
+  "description": "Mechanical keyboard sounds driven by the sorakey daemon: live mute, volume and soundpack controls.",
   "license": "MIT",
   "activation": "on-demand",
   "kinds": [
@@ -16,7 +16,7 @@
     "service": "Service.qml"
   },
   "barWidget": {
-    "displayName": "Sankey",
+    "displayName": "Sorakey",
     "description": "Keyboard sounds: mute, volume, soundpacks",
     "category": "Audio",
     "allowMultiple": false,

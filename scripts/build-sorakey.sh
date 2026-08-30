@@ -3,18 +3,18 @@ set -euo pipefail
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DAEMON_DIR="$PLUGIN_DIR/daemon"
 MANIFEST="$PLUGIN_DIR/manifest.json"
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/sankey"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/sorakey"
 TARGET_DIR="$CACHE_DIR/target"
-LIB_DIR="$HOME/.local/lib/sankey"
-BIN="$HOME/.local/bin/sankeyd"
-REPO="sandeshrai00/sanKey"
+LIB_DIR="$HOME/.local/lib/sorakey"
+BIN="$HOME/.local/bin/sorakey"
+REPO="sandeshrai00/sorakey"
 
 mkdir -p "$CACHE_DIR" "$LIB_DIR"
 
 version="$(python3 -c "import json;print(json.load(open('$MANIFEST'))['version'])" 2>/dev/null || echo "0.0.0")"
 arch="$(uname -m)"
 case "$arch" in x86_64|aarch64) ;; *) arch="x86_64";; esac
-asset="sankeyd-${arch}"
+asset="sorakey-${arch}"
 
 # source id for staleness
 source_id=""
@@ -22,7 +22,7 @@ if command -v sha256sum >/dev/null 2>&1; then
   source_id=$( { find "$DAEMON_DIR" -name "Cargo.toml" -o -name "Cargo.lock" -o -name "*.rs";
                  echo "$PLUGIN_DIR/rust-toolchain.toml"; } | sort | xargs cat 2>/dev/null | sha256sum | cut -d' ' -f1)
   if [[ -f "$LIB_DIR/source.sha256" ]] && [[ "$(cat "$LIB_DIR/source.sha256" 2>/dev/null)" == "$source_id" ]] && [[ -x "$BIN" ]]; then
-    echo "sankeyd up to date (source $source_id)"
+    echo "sorakey up to date (source $source_id)"
     exit 0
   fi
 fi
@@ -92,7 +92,7 @@ try_download_prebuilt() {
   return 1
 }
 
-if [[ "${SANKEY_BUILD_FROM_SOURCE:-}" != "1" ]]; then
+if [[ "${SORAKEY_BUILD_FROM_SOURCE:-}" != "1" ]]; then
   if try_download_prebuilt; then exit 0; fi
   echo "No usable prebuilt for this source (no release yet, or source moved past the tag) — building from source"
 fi
@@ -107,6 +107,6 @@ export SOURCE_DATE_EPOCH=$(git -C "$PLUGIN_DIR" log -1 --format=%ct 2>/dev/null 
 export CARGO_INCREMENTAL=0
 export CARGO_TERM_QUIET=true
 cargo build --locked --release --manifest-path "$DAEMON_DIR/Cargo.toml" --target-dir "$TARGET_DIR"
-install -m 755 "$TARGET_DIR/release/sankeyd" "$BIN"
+install -m 755 "$TARGET_DIR/release/sorakey" "$BIN"
 [[ -n "$source_id" ]] && echo "$source_id" > "$LIB_DIR/source.sha256"
 echo "Built and installed $BIN"

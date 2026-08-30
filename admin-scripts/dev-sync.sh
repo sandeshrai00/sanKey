@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: ./admin-scripts/dev-sync.sh [--no-restart] [--no-validate]
 
 DEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PLUGIN_ID="io.github.sandeshrai00.sankey"
+PLUGIN_ID="io.github.sandeshrai00.sorakey"
 INSTALLED="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 
 NO_RESTART=0
@@ -55,4 +55,4 @@ if [[ $NO_RESTART -eq 0 ]]; then
 fi
 
 # quick health
-systemctl --user is-active sankey >/dev/null 2>&1 && echo "sankey: active" || echo "sankey: inactive (enable plugin or check journalctl --user -u sankey)"
+systemctl --user is-active sorakey >/dev/null 2>&1 && echo "sorakey: active" || echo "sorakey: inactive (enable plugin or check journalctl --user -u sorakey)"

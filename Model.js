@@ -1,4 +1,4 @@
-// Sankey plugin model: pure helpers for the bar widget and panel. No QML.
+// Sorakey plugin model: pure helpers for the bar widget and panel. No QML.
 
 // "keyboard/cherrymx-brown-abs" -> "Cherry MX Brown ABS"
 function prettyPackName(id) {
@@ -22,7 +22,7 @@ function packOptions(ids) {
   return out
 }
 
-// Parse a `sankeyd ctl status` line. Returns null on any failure so the
+// Parse a `sorakey ctl status` line. Returns null on any failure so the
 // caller can treat it as "no reading" rather than a crash.
 function parseStatus(text) {
   try {
@@ -33,7 +33,7 @@ function parseStatus(text) {
   }
 }
 
-// Parse a `sankeyd ctl packs` line. Returns {keyboard:[]}.
+// Parse a `sorakey ctl packs` line. Returns {keyboard:[]}.
 function parsePacks(text) {
   var empty = { keyboard: [] }
   try {

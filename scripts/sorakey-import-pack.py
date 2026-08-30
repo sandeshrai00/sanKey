@@ -9,7 +9,7 @@ ZIP layout (one of):
   config.json  (no enclosing folder)
 
 The config is installed at:
-  ~/.local/share/sankey/soundpacks/keyboard/{id}/
+  ~/.local/share/sorakey/soundpacks/keyboard/{id}/
 
 with directory structure preserved relative to config.json so any
 subdirectory paths in `audio_file` (e.g. "sounds/click.ogg") still resolve.
@@ -36,7 +36,7 @@ except ImportError:
     print("ERROR:Gtk4 not available")
     sys.exit(1)
 
-SOUNDPACKS = os.path.expanduser("~/.local/share/sankey/soundpacks")
+SOUNDPACKS = os.path.expanduser("~/.local/share/sorakey/soundpacks")
 
 
 # ----- V1 -> V2 conversion -----
@@ -607,7 +607,7 @@ def import_zip(zip_path):
 
 def cli_main():
     if len(sys.argv) < 2:
-        print("Usage: sankey-import-pack.py <path-to-zip>")
+        print("Usage: sorakey-import-pack.py <path-to-zip>")
         sys.exit(1)
     path = sys.argv[1]
     if not os.path.isfile(path):

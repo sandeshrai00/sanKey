@@ -170,7 +170,7 @@ impl AppConfig {
             Ok(mut config) => {
                 let mut config_updated = false;
 
-                // Migrate old soundpack IDs to new Sankey names
+                // Migrate old soundpack IDs to new Sorakey names
                 let migrate = |old: &str, new: &str| (old.to_string(), new.to_string());
                 let renames = [
                     migrate("oreo", "keyboard/sankey-oreo"),
@@ -487,7 +487,7 @@ mod tests {
     /// path must not still hold them - it is replaced by a fresh default.
     #[test]
     fn a_truncated_config_is_preserved_rather_than_overwritten() {
-        let dir = std::env::temp_dir().join(format!("sankey-corrupt-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sorakey-corrupt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let config_path = dir.join("config.json");
 
@@ -520,7 +520,7 @@ mod tests {
     #[test]
     fn a_second_failure_does_not_clobber_the_first_rescue() {
         let dir = std::env::temp_dir().join(
-            format!("sankey-corrupt-twice-{}", std::process::id())
+            format!("sorakey-corrupt-twice-{}", std::process::id())
         );
         std::fs::create_dir_all(&dir).expect("temp dir");
         let config_path = dir.join("config.json");
@@ -551,7 +551,7 @@ mod tests {
     /// correct and must not be mistaken for a failure.
     #[test]
     fn a_missing_config_file_is_not_treated_as_a_rescue() {
-        let dir = std::env::temp_dir().join(format!("sankey-absent-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sorakey-absent-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
 
         let preserved = preserve_corrupt_config(&dir.join("config.json"));

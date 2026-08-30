@@ -770,7 +770,7 @@ mod tests {
     }
 
     fn builtin_root() -> String {
-        native_path(&["", "opt", "Sankey", "soundpacks"])
+        native_path(&["", "opt", "Sorakey", "soundpacks"])
     }
 
     fn roots() -> Vec<String> {

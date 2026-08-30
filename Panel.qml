@@ -6,29 +6,29 @@ import qs.Ui
 import qs.Commons
 import "Model.js" as Model
 
-// Sankey: keyboard sounds from the sankeyd daemon.
+// Sorakey: keyboard sounds from the sorakey daemon.
 //
 // The bar icon is the entry point and also a fast mute (right click) and a
 // volume wheel. Left click opens this panel: live status, mute, volume,
 // soundpack picker, and install/start/stop/remove.
 //
-// State comes from one `sankeyd ctl status` every 5 s plus a refresh on open;
+// State comes from one `sorakey ctl status` every 5 s plus a refresh on open;
 // commands are fire-and-forget one-shot `ctl`/`systemctl` runs. No daemon
 // state is kept in this file beyond what the last reading says.
 Panel {
   id: root
-  moduleName: "io.github.sandeshrai00.sankey"
-  ipcTarget: "io.github.sandeshrai00.sankey"
+  moduleName: "io.github.sandeshrai00.sorakey"
+  ipcTarget: "io.github.sandeshrai00.sorakey"
 
   readonly property string home: Quickshell.env("HOME")
-  readonly property string sankeydBin: home + "/.local/bin/sankeyd"
-  readonly property string pluginDir: home + "/.config/omarchy/plugins/io.github.sandeshrai00.sankey"
-  readonly property string setupPath: pluginDir + "/scripts/sankey-setup"
+  readonly property string sorakeyBin: home + "/.local/bin/sorakey"
+  readonly property string pluginDir: home + "/.config/omarchy/plugins/io.github.sandeshrai00.sorakey"
+  readonly property string setupPath: pluginDir + "/scripts/sorakey-setup"
 
   // ---- Background service: the shell-managed instance the shell creates for
   // the "service" kind, not a panel-local copy — panel instances come and go
   // with bar rebuilds, and their destruction used to stop the daemon. ----
-  readonly property var service: bar?.shell?.firstPartyServiceFor("io.github.sandeshrai00.sankey")
+  readonly property var service: bar?.shell?.firstPartyServiceFor("io.github.sandeshrai00.sorakey")
 
   property bool importing: service ? service.importing : false
   property string importStatus: {
@@ -72,7 +72,7 @@ Panel {
   function sendCtl(obj) {
     if (!root.installed) return
     if (ctlProc.running) return
-    ctlProc.command = [root.sankeydBin, "ctl", JSON.stringify(obj)]
+    ctlProc.command = [root.sorakeyBin, "ctl", JSON.stringify(obj)]
     ctlProc.running = true
   }
 
@@ -105,9 +105,9 @@ Panel {
     if (pick) root.setKeyboardPack(pick)
   }
 
-  function startDaemon() { root.runService(["start", "sankey"]); root.refreshStatus() }
-  function stopDaemon()  { root.runService(["stop", "sankey"]);  root.refreshStatus() }
-  function restartDaemon() { root.runService(["restart", "sankey"]); root.refreshStatus() }
+  function startDaemon() { root.runService(["start", "sorakey"]); root.refreshStatus() }
+  function stopDaemon()  { root.runService(["stop", "sorakey"]);  root.refreshStatus() }
+  function restartDaemon() { root.runService(["restart", "sorakey"]); root.refreshStatus() }
 
   function install() {
     if (setupBusy) return
@@ -117,7 +117,7 @@ Panel {
   }
 
   function openCustomFolder() {
-    var path = home + "/.local/share/sankey/soundpacks"
+    var path = home + "/.local/share/sorakey/soundpacks"
     Quickshell.execDetached(["xdg-open", path])
   }
 
@@ -125,7 +125,7 @@ Panel {
     var cfg = root.bar && root.bar.shell ? root.bar.shell.shellConfig : null
     var layout = cfg && cfg.bar && cfg.bar.layout ? cfg.bar.layout : null
     if (!layout) return "right"
-    var id = "io.github.sandeshrai00.sankey"
+    var id = "io.github.sandeshrai00.sorakey"
     for (var s of ["left","center","right"]) {
       var arr = layout[s]
       if (!Array.isArray(arr)) continue
@@ -136,14 +136,14 @@ Panel {
 
   function moveToSection(section) {
     if (["left","center","right"].indexOf(section)===-1) return
-    Quickshell.execDetached(["omarchy","plugin","enable","io.github.sandeshrai00.sankey","--section",section])
+    Quickshell.execDetached(["omarchy","plugin","enable","io.github.sandeshrai00.sorakey","--section",section])
     // Remember the choice: Omarchy drops the layout entry on disable and
     // re-inserts at the manifest default (right) on re-enable, so the panel
     // restores the user's section from this file (sectionRead).
     if (!sectionWrite.running) {
       sectionWrite.command = ["/bin/sh", "-c",
-        "mkdir -p " + root.home + "/.local/share/sankey && printf %s " + section +
-        " > " + root.home + "/.local/share/sankey/bar-section"]
+        "mkdir -p " + root.home + "/.local/share/sorakey && printf %s " + section +
+        " > " + root.home + "/.local/share/sorakey/bar-section"]
       sectionWrite.running = true
     }
   }
@@ -152,7 +152,7 @@ Panel {
   // No file = user never chose = leave the manifest default in place.
   Process {
     id: sectionRead
-    command: ["/bin/sh", "-c", "cat " + root.home + "/.local/share/sankey/bar-section 2>/dev/null"]
+    command: ["/bin/sh", "-c", "cat " + root.home + "/.local/share/sorakey/bar-section 2>/dev/null"]
     stdout: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       var saved = String(stdout.text || "").trim()
@@ -169,8 +169,8 @@ Panel {
 
   function remove() {
     // Omarchy-native: plugin removal via CLI, daemon via systemd — no bar.run rm -rf
-    Quickshell.execDetached(["systemctl", "--user", "disable", "--now", "sankey"])
-    Quickshell.execDetached(["omarchy", "plugin", "remove", "io.github.sandeshrai00.sankey", "--yes"])
+    Quickshell.execDetached(["systemctl", "--user", "disable", "--now", "sorakey"])
+    Quickshell.execDetached(["omarchy", "plugin", "remove", "io.github.sandeshrai00.sorakey", "--yes"])
     root.installed = false
     root.running = false
   }
@@ -223,7 +223,7 @@ Panel {
   // Detect (re)install without a daemon: is the binary there?
   Process {
     id: installCheck
-    command: ["test", "-x", root.sankeydBin]
+    command: ["test", "-x", root.sorakeyBin]
     onExited: function(exitCode) {
       root.installed = (exitCode === 0)
       if (root.installed) {
@@ -244,7 +244,7 @@ Panel {
 
   Process {
     id: statusProc
-    command: [root.sankeydBin, "ctl", "{\"cmd\":\"status\"}"]
+    command: [root.sorakeyBin, "ctl", "{\"cmd\":\"status\"}"]
     onExited: function(exitCode) {
       if (exitCode === 0) {
         root.applyStatus(stdout.text)
@@ -259,7 +259,7 @@ Panel {
 
   Process {
     id: packsProc
-    command: [root.sankeydBin, "ctl", "{\"cmd\":\"packs\"}"]
+    command: [root.sorakeyBin, "ctl", "{\"cmd\":\"packs\"}"]
     onExited: function(exitCode) {
       if (exitCode !== 0) return
       var p = Model.parsePacks(stdout.text)
@@ -271,7 +271,7 @@ Panel {
   // Fire-and-forget command channel to the daemon.
   Process {
     id: ctlProc
-    command: [root.sankeydBin, "ctl", "{}"]
+    command: [root.sorakeyBin, "ctl", "{}"]
     onExited: function() { root.refreshStatus() }
     stdout: StdioCollector { waitForEnd: true }
   }
@@ -284,7 +284,7 @@ Panel {
     stdout: StdioCollector { waitForEnd: true }
   }
 
-  // Background setup: runs sankey-setup without opening a terminal.
+  // Background setup: runs sorakey-setup without opening a terminal.
   Process {
     id: setupProc
     stdout: StdioCollector { waitForEnd: true }
@@ -358,7 +358,7 @@ Panel {
     text: "󰌌"
     dimmed: !root.running
     active: root.running && root.muted
-    tooltipText: "Sankey — " + root.statusText
+    tooltipText: "Sorakey — " + root.statusText
     onPressed: function(b) {
       if (b === Qt.RightButton) {
         if (root.running) root.setMuted(!root.muted)
@@ -429,7 +429,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: "Sankey"
+              text: "Sorakey"
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title
@@ -515,7 +515,7 @@ Panel {
 
           Button {
             id: installButton
-            text: setupBusy ? "Installing…" : "Install Sankey"
+            text: setupBusy ? "Installing…" : "Install Sorakey"
             iconText: setupBusy ? "⏳" : "󰎓"
             foreground: root.bar.foreground
             anchors.left: parent.left
@@ -668,7 +668,7 @@ Panel {
               iconText: "󰑐"
               foreground: root.bar.foreground
               bordered: true
-              tooltipText: "Restart sankeyd"
+              tooltipText: "Restart sorakey"
               onClicked: root.restartDaemon()
             }
 

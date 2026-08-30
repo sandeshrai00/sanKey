@@ -1,8 +1,8 @@
-//! Fixed installation layout. Sankey is always installed under
-//! `~/.local/share/sankey` - no AppImage, no system dirs, no ambiguity.
+//! Fixed installation layout. Sorakey is always installed under
+//! `~/.local/share/sorakey` - no AppImage, no system dirs, no ambiguity.
 //!
 //! ```text
-//! ~/.local/share/sankey/
+//! ~/.local/share/sorakey/
 //! ├── data/                      config.json, soundpack_cache.json, images/
 //! └── soundpacks/                keyboard soundpacks (built-in + imported)
 //! ```
@@ -12,12 +12,12 @@ use std::sync::OnceLock;
 
 fn data_dir() -> PathBuf {
     match directories::BaseDirs::new() {
-        Some(b) => b.data_dir().join("sankey"),
-        None => PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".local/share/sankey"),
+        Some(b) => b.data_dir().join("sorakey"),
+        None => PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".local/share/sorakey"),
     }
 }
 
-/// Writable state directory: `~/.local/share/sankey/data`.
+/// Writable state directory: `~/.local/share/sorakey/data`.
 pub fn get_writable_data_dir() -> &'static PathBuf {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
     DIR.get_or_init(|| data_dir().join("data"))

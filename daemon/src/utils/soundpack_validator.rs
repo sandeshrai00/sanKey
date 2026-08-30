@@ -116,7 +116,7 @@ pub fn validate_soundpack_config(config_path: &str) -> SoundpackValidationResult
             detected_version: package_version,
             is_valid_v2: false,
             can_be_converted: false,
-            message: "This soundpack requires a newer version of Sankey".to_string(),
+            message: "This soundpack requires a newer version of Sorakey".to_string(),
         }
     } else if config_version == Some(2) {
         // Explicitly marked as V2, validate V2 structure
@@ -274,7 +274,7 @@ mod tests {
             "config_version": "2",
             "created_at": "2025-06-17T12:23:39.537516300+00:00",
             "definition_method": "single",
-            "author": "sankey",
+            "author": "sorakey",
             "definitions": {
                 "AltLeft": { "timing": [[45750.0, 45832.0], [45832.0, 45914.0]] },
                 "Escape": { "timing": [[2894.0, 3007.0], [3007.0, 3120.0]] }
@@ -289,7 +289,7 @@ mod tests {
     fn validate_json(contents: &str) -> SoundpackValidationResult {
         let path = std::env
             ::temp_dir()
-            .join(format!("sankey-validator-{}-{}.json", std::process::id(), format!("{}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), std::process::id())));
+            .join(format!("sorakey-validator-{}-{}.json", std::process::id(), format!("{}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), std::process::id())));
         std::fs::write(&path, contents).expect("write temp config");
         let result = validate_soundpack_config(path.to_str().expect("utf-8 temp path"));
         std::fs::remove_file(&path).ok();
@@ -406,7 +406,7 @@ mod tests {
                 raw,
                 result.status
             );
-            assert_eq!(result.message, "This soundpack requires a newer version of Sankey");
+            assert_eq!(result.message, "This soundpack requires a newer version of Sorakey");
             assert!(!result.can_be_converted, "a future format cannot be converted by this build");
             assert!(!result.is_valid_v2);
         }

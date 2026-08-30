@@ -1,31 +1,31 @@
-# Sankey Cleanup Checklist
+# Sorakey Cleanup Checklist
 
-Run this command to check if all Sankey files are removed:
+Run this command to check if all Sorakey files are removed:
 
 ```bash
-find ~/.config ~/.local ~/.cache -name "*sankey*" -o -name "*Sankey*" -o -name "*SANKEY*" 2>/dev/null
+find ~/.config ~/.local ~/.cache -name "*sorakey*" -o -name "*Sorakey*" -o -name "*SORAKEY*" 2>/dev/null
 ```
 
 ## Files/Locations to Check
 
 | Path | Description |
 |------|-------------|
-| `~/.config/omarchy/plugins/*sankey*` | Plugin files |
-| `~/.local/bin/sankeyd` | Binary |
-| `~/.local/share/sankey/` | Soundpacks |
-| `~/.local/lib/sankey/` | Build cache |
-| `~/.cache/sankey/` | Temp cache |
-| `~/.config/systemd/user/sankey.service` | Systemd service |
+| `~/.config/omarchy/plugins/*sorakey*` | Plugin files |
+| `~/.local/bin/sorakey` | Binary |
+| `~/.local/share/sorakey/` | Soundpacks |
+| `~/.local/lib/sorakey/` | Build cache |
+| `~/.cache/sorakey/` | Temp cache |
+| `~/.config/systemd/user/sorakey.service` | Systemd service |
 
 ## Services to Check
 
 ```bash
-systemctl --user list-units --all | grep sankey
-systemctl --user list-unit-files | grep sankey
+systemctl --user list-units --all | grep sorakey
+systemctl --user list-unit-files | grep sorakey
 ```
 
 If any output appears, run:
 ```bash
-systemctl --user disable --now sankey
+systemctl --user disable --now sorakey
 systemctl --user daemon-reload
 ```

@@ -1,27 +1,27 @@
 #!/bin/bash
-# Sankey one-click installer: build the daemon from this plugin's daemon/,
-# install the binary + soundpacks, and start the sankey user service.
+# Sorakey one-click installer: build the daemon from this plugin's daemon/,
+# install the binary + soundpacks, and start the sorakey user service.
 #
-# Run it from the bar panel (Install Sankey) or by hand:
-#   ~/.config/omarchy/plugins/io.github.sandeshrai00.sankey/scripts/sankey-setup
+# Run it from the bar panel (Install Sorakey) or by hand:
+#   ~/.config/omarchy/plugins/io.github.sandeshrai00.sorakey/scripts/sorakey-setup
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(dirname "$SCRIPT_DIR")"
 DAEMON_DIR="$PLUGIN_DIR/daemon"
 
-BIN="$HOME/.local/bin/sankeyd"
-SHARE="$HOME/.local/share/sankey"
+BIN="$HOME/.local/bin/sorakey"
+SHARE="$HOME/.local/share/sorakey"
 UNIT_DIR="$HOME/.config/systemd/user"
-UNIT="$UNIT_DIR/sankey.service"
+UNIT="$UNIT_DIR/sorakey.service"
 
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
-die()  { printf '\n\033[1;31msankey-setup: %s\033[0m\n' "$*" >&2; exit 1; }
+die()  { printf '\n\033[1;31msorakey-setup: %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ---- 1. Build the daemon (verified prebuilt or source) ------------------
 [[ -d "$DAEMON_DIR" ]] || die "daemon/ not found next to this script"
-step "Building sankeyd (verified prebuilt if available, else source)"
-"$PLUGIN_DIR/scripts/build-sankeyd.sh" || die "build failed"
+step "Building sorakey (verified prebuilt if available, else source)"
+"$PLUGIN_DIR/scripts/build-sorakey.sh" || die "build failed"
 
 # ---- 2. Install soundpacks ---------------------------------------------
 step "Installing soundpacks"
@@ -29,15 +29,15 @@ mkdir -p "$SHARE/soundpacks"
 cp -rn "$DAEMON_DIR/soundpacks/." "$SHARE/soundpacks/" 2>/dev/null || true
 
 # ---- 3. systemd user service -------------------------------------------
-step "Installing the sankey user service"
+step "Installing the sorakey user service"
 mkdir -p "$UNIT_DIR"
 cat > "$UNIT" <<'EOF'
 [Unit]
-Description=Sankey keyboard sound daemon
+Description=Sorakey keyboard sound daemon
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/sankeyd
+ExecStart=%h/.local/bin/sorakey
 Restart=on-failure
 RestartSec=2
 
@@ -45,7 +45,7 @@ RestartSec=2
 WantedBy=default.target
 EOF
 systemctl --user daemon-reload
-systemctl --user enable --now sankey || die "could not start the sankey service"
+systemctl --user enable --now sorakey || die "could not start the sorakey service"
 
 # ---- 4. input group -----------------------------------------------------
 step "Checking input group (keyboard capture)"
@@ -60,9 +60,9 @@ else
 fi
 
 if command -v omarchy >/dev/null 2>&1; then
-  echo "Bar icon position: configure anytime in Sankey panel → POSITION (or: omarchy plugin enable io.github.sandeshrai00.sankey --section left|center|right)"
+  echo "Bar icon position: configure anytime in Sorakey panel → POSITION (or: omarchy plugin enable io.github.sandeshrai00.sorakey --section left|center|right)"
 fi
 
 step "Done"
-echo "Sankey is installed and running. Open the Sankey bar panel to tune it."
+echo "Sorakey is installed and running. Open the Sorakey bar panel to tune it."
 echo "Type a few keys — you should hear them."

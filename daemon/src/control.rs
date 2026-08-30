@@ -4,7 +4,7 @@
 //! the GUI uses, so a socket write can never drift from the hotkey or a
 //! future GUI.
 //!
-//! Socket: `$XDG_RUNTIME_DIR/sankey.sock`
+//! Socket: `$XDG_RUNTIME_DIR/sorakey.sock`
 
 use crate::libs::audio::{ AudioCommand, AudioEngineHandle };
 use crate::libs::cli_args::qualify_soundpack_id;
@@ -15,8 +15,8 @@ use std::path::PathBuf;
 
 pub fn socket_path() -> PathBuf {
     match std::env::var("XDG_RUNTIME_DIR") {
-        Ok(dir) => PathBuf::from(dir).join("sankey.sock"),
-        Err(_) => PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".sankey.sock"),
+        Ok(dir) => PathBuf::from(dir).join("sorakey.sock"),
+        Err(_) => PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".sorakey.sock"),
     }
 }
 
@@ -168,7 +168,7 @@ fn fail(e: &str) -> String {
     serde_json::json!({ "ok": false, "error": e }).to_string()
 }
 
-/// `sankeyd ctl '<json>'` client: one request, one response line on stdout.
+/// `sorakey ctl '<json>'` client: one request, one response line on stdout.
 pub fn ctl_client(request: &str) -> i32 {
     let path = socket_path();
     let mut stream = match UnixStream::connect(&path) {
