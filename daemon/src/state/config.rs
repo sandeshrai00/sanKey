@@ -151,10 +151,14 @@ impl AppConfig {
             && self.per_pack_volume == other.per_pack_volume
     }
 
-    /// Effective volume for current pack: global * per-pack (defaults 1.0)
+    /// Effective volume for current pack: per-pack if present, else global volume.
+    /// Keyboard volume is per-pack — the slider is per-pack.
     pub fn effective_volume(&self) -> f32 {
-        let per = self.per_pack_volume.get(&self.keyboard_soundpack).copied().unwrap_or(1.0);
-        (self.volume * per.clamp(0.0, 1.0)).clamp(0.0, 1.0)
+        if let Some(per) = self.per_pack_volume.get(&self.keyboard_soundpack) {
+            per.clamp(0.0, 1.0)
+        } else {
+            self.volume.clamp(0.0, 1.0)
+        }
     }
 
     pub fn load() -> Self {

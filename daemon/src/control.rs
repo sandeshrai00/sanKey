@@ -90,9 +90,16 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
             ok(serde_json::json!({ "muted": muted }))
         }
         "volume" => {
+            // Keyboard volume is per-pack: if a pack is active, store per-pack; else global fallback
             let v = match clamp_percent(req.get("value")) { Some(v) => v, None => return fail("value must be 0-100") };
             let f = v / 100.0;
-            crate::state::config_writer::apply(|c| c.volume = f);
+            let cur = crate::state::config_writer::current();
+            if !cur.keyboard_soundpack.is_empty() {
+                let id = cur.keyboard_soundpack.clone();
+                crate::state::config_writer::apply(|c| { c.per_pack_volume.insert(id.clone(), f); });
+            } else {
+                crate::state::config_writer::apply(|c| c.volume = f);
+            }
             let eff = crate::state::config_writer::current().effective_volume();
             engine.send(AudioCommand::SetVolume(eff));
             ok(serde_json::json!({ "volume": v }))
@@ -115,11 +122,12 @@ fn clamp_percent(v: Option<&serde_json::Value>) -> Option<f32> {
 
 fn status() -> String {
     let c = crate::state::config_writer::current();
-    let per = c.per_pack_volume.get(&c.keyboard_soundpack).copied().unwrap_or(1.0);
+    let eff = c.effective_volume();
+    let per = c.per_pack_volume.get(&c.keyboard_soundpack).copied().unwrap_or(eff);
     ok(serde_json::json!({
         "running": true,
         "muted": !c.enable_sound,
-        "volume": (c.volume * 100.0).round(),
+        "volume": (eff * 100.0).round(),
         "per_pack_volume": (per * 100.0).round(),
         "keyboard_pack": c.keyboard_soundpack,
     }))
