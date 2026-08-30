@@ -76,10 +76,29 @@ Item {
     }
   }
 
+  // (Re)enable = the plugin is on in shell.json, so the daemon should be
+  // running. Mirrors the teardown in onDestruction below: the instance is
+  // dropped on disable, remove, and plugin reload, and recreated on
+  // (re)enable and shell start. On a fresh install the unit does not exist
+  // yet (setup has not run); the call fails harmlessly and sankey-setup
+  // starts the service itself.
+  Process {
+    id: startProc
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+  }
+
+  Component.onCompleted: {
+    if (!startProc.running) {
+      startProc.command = ["systemctl", "--user", "enable", "--now", "sankey"]
+      startProc.running = true
+    }
+  }
+
   Component.onDestruction: {
-    // Stop the sankeyd daemon when the plugin is unloaded/removed.
-    // This handles both user-initiated removal via the menu and
-    // programmatic removal via omarchy-plugin-remove.
+    // Stop the sankeyd daemon when the plugin instance goes away (disabled,
+    // removed, or reloaded from disk). Component.onCompleted restores it
+    // whenever the plugin is enabled again.
     Quickshell.execDetached(["systemctl", "--user", "stop", "sankey"])
     Quickshell.execDetached(["systemctl", "--user", "disable", "sankey"])
     // Fallback: kill any running sankeyd process directly
