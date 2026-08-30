@@ -43,7 +43,13 @@ Panel {
   }
 
   function triggerImport() {
-    if (service) service.importSoundpack()
+    if (!service) return
+    // Close first: the GTK file dialog opens as a normal window BELOW this
+    // layer-shell overlay, so the full-screen dismissArea would swallow the
+    // first click meant for the dialog. The result handlers below reopen the
+    // panel so the status text is visible; cancel leaves it closed.
+    root.close()
+    service.importSoundpack()
   }
 
   // Pack list refresh after an import is covered by the 5 s open-panel poll.
@@ -229,12 +235,18 @@ Panel {
   }
 
   // Auto-select a freshly imported pack: the service already carries the id
-  // from the importer's OK:<id> line, so selecting is one ctl away.
+  // from the importer's OK:<id> line, so selecting is one ctl away. The panel
+  // was closed when the import started (see triggerImport), so reopen it to
+  // show the status text; a cancel emits neither signal and stays closed.
   Connections {
     target: root.service
     function onPacksImported(packId) {
       root.refreshPacks()
       if (packId) root.setKeyboardPack("keyboard/" + packId)
+      root.open()
+    }
+    function onImportFailed(reason) {
+      root.open()
     }
   }
 

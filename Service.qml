@@ -64,6 +64,8 @@ Item {
         root.lastImportResult = last.substring(3).trim()
         root.lastImportError = ""
         root.packsImported(root.lastImportResult)
+        Quickshell.execDetached(["notify-send", "-a", "Sorakey",
+          "Soundpack imported", root.lastImportResult])
         clearImportTimer.restart()
       } else if (last.startsWith("ERROR:")) {
         var msg = last.substring(6).trim()
@@ -75,16 +77,22 @@ Item {
         root.lastImportError = msg
         root.lastImportResult = ""
         root.importFailed(root.lastImportError)
+        Quickshell.execDetached(["notify-send", "-a", "Sorakey",
+          "Import failed", msg])
         clearImportTimer.restart()
       } else if (exitCode !== 0) {
         root.lastImportError = errOutput || "Import failed — try again."
         root.lastImportResult = ""
         root.importFailed(root.lastImportError)
+        Quickshell.execDetached(["notify-send", "-a", "Sorakey",
+          "Import failed", root.lastImportError])
         clearImportTimer.restart()
       } else {
         root.lastImportError = "Import failed — try again."
         root.lastImportResult = ""
         root.importFailed(root.lastImportError)
+        Quickshell.execDetached(["notify-send", "-a", "Sorakey",
+          "Import failed", root.lastImportError])
         clearImportTimer.restart()
       }
     }
