@@ -1,5 +1,13 @@
 # Admin Scripts
 
+## dev-sync — local test without push
+
+Sync dev repo → installed plugin, validate, restart shell. See `DEV_SYNC.md`.
+
+```bash
+./admin-scripts/dev-sync.sh
+```
+
 ## V1 → V2 Converter
 
 Converts V1 soundpack config files to V2 format.
