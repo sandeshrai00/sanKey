@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls as QQC
 import qs.Commons
+import qs.Ui
 
 // Sorakey fork of SearchableDropdown with inline delete per row.
 // Search stays inside popup; delete icon sits at row end.
