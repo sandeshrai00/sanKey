@@ -3,6 +3,7 @@ use crate::state::paths;
 use crate::utils::{ data, path };
 use chrono::{ DateTime, Utc };
 use serde::{ Deserialize, Serialize };
+use std::collections::HashMap;
 
 /// Every field defaults independently, so one bad or absent entry costs the
 /// user that single setting instead of the whole document. Without this a
@@ -25,6 +26,9 @@ pub struct AppConfig {
     pub volume: f32,
     pub enable_sound: bool,
     pub enable_keyboard_sound: bool,
+    // Per-pack volume overrides (0.0-1.0 multiplier, 1.0 = pack's recommended_volume)
+    #[serde(default)]
+    pub per_pack_volume: HashMap<String, f32>,
     // Device settings
     pub selected_audio_device: Option<String>,
     // System settings
@@ -144,6 +148,13 @@ impl AppConfig {
             && self.enable_keyboard_sound == other.enable_keyboard_sound
             && self.selected_audio_device == other.selected_audio_device
             && self.auto_start == other.auto_start
+            && self.per_pack_volume == other.per_pack_volume
+    }
+
+    /// Effective volume for current pack: global * per-pack (defaults 1.0)
+    pub fn effective_volume(&self) -> f32 {
+        let per = self.per_pack_volume.get(&self.keyboard_soundpack).copied().unwrap_or(1.0);
+        (self.volume * per.clamp(0.0, 1.0)).clamp(0.0, 1.0)
     }
 
     pub fn load() -> Self {
@@ -318,6 +329,7 @@ impl Default for AppConfig {
             volume: 0.6,
             enable_sound: true,
             enable_keyboard_sound: true,
+            per_pack_volume: HashMap::new(),
             selected_audio_device: None,
             auto_start: false,
         }

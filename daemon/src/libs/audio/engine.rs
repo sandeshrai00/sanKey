@@ -199,7 +199,7 @@ impl EngineState {
             multi_key_audio_map: HashMap::new(),
             key_pressed: HashMap::new(),
             key_sinks: Vec::new(),
-            volume: config.volume,
+            volume: config.effective_volume(),
             sound_enabled: config.enable_sound,
         }
     }

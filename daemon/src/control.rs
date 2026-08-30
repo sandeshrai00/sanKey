@@ -93,9 +93,12 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
             let v = match clamp_percent(req.get("value")) { Some(v) => v, None => return fail("value must be 0-100") };
             let f = v / 100.0;
             crate::state::config_writer::apply(|c| c.volume = f);
-            engine.send(AudioCommand::SetVolume(f));
+            let eff = crate::state::config_writer::current().effective_volume();
+            engine.send(AudioCommand::SetVolume(eff));
             ok(serde_json::json!({ "volume": v }))
         }
+        "per_pack_volume" => per_pack_volume(&req, engine),
+        "delete_pack" => delete_pack(&req, engine),
         "keyboard_pack" => load_pack(&req, engine),
         "packs" => packs(),
         other => fail(&format!("unknown cmd: {other}")),
@@ -112,12 +115,21 @@ fn clamp_percent(v: Option<&serde_json::Value>) -> Option<f32> {
 
 fn status() -> String {
     let c = crate::state::config_writer::current();
+    let per = c.per_pack_volume.get(&c.keyboard_soundpack).copied().unwrap_or(1.0);
     ok(serde_json::json!({
         "running": true,
         "muted": !c.enable_sound,
         "volume": (c.volume * 100.0).round(),
+        "per_pack_volume": (per * 100.0).round(),
         "keyboard_pack": c.keyboard_soundpack,
     }))
+}
+
+fn recommended_volume_for(id: &str) -> Option<f32> {
+    let path = paths::soundpacks::config_json(id);
+    let content = std::fs::read_to_string(&path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    v.get("options")?.get("recommended_volume")?.as_f64().map(|n| n as f32)
 }
 
 fn load_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
@@ -129,10 +141,112 @@ fn load_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
         return fail("invalid id");
     }
     let id = qualify_soundpack_id(&raw, "keyboard/");
+    let rec = recommended_volume_for(&id);
 
+    crate::state::config_writer::apply(|c| {
+        c.keyboard_soundpack = id.clone();
+        if !c.per_pack_volume.contains_key(&id) {
+            if let Some(v) = rec {
+                let v = v.clamp(0.1, 1.0);
+                if (v - 1.0).abs() > 0.001 {
+                    c.per_pack_volume.insert(id.clone(), v);
+                }
+            }
+        }
+    });
+    let eff = crate::state::config_writer::current().effective_volume();
     engine.send(AudioCommand::LoadKeyboardPack { soundpack_id: id.clone(), update_cache_on_error: true });
-    crate::state::config_writer::apply(|c| c.keyboard_soundpack = id.clone());
+    engine.send(AudioCommand::SetVolume(eff));
     ok(serde_json::json!({ "id": id }))
+}
+
+fn per_pack_volume(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
+    let raw = match req.get("id").and_then(|v| v.as_str()) {
+        Some(id) => id.to_string(),
+        None => return fail("missing id"),
+    };
+    if raw.contains('\0') || raw.contains("..") {
+        return fail("invalid id");
+    }
+    let id = qualify_soundpack_id(&raw, "keyboard/");
+    let v = match clamp_percent(req.get("value")) { Some(v) => v, None => return fail("value must be 0-100") };
+    let f = (v / 100.0).clamp(0.0, 1.0);
+    crate::state::config_writer::apply(|c| {
+        c.per_pack_volume.insert(id.clone(), f);
+    });
+    let cur = crate::state::config_writer::current();
+    if cur.keyboard_soundpack == id {
+        let eff = cur.effective_volume();
+        engine.send(AudioCommand::SetVolume(eff));
+    }
+    ok(serde_json::json!({ "id": id, "per_pack_volume": v }))
+}
+
+fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
+    let raw = match req.get("id").and_then(|v| v.as_str()) {
+        Some(id) => id.to_string(),
+        None => return fail("missing id"),
+    };
+    if raw.contains('\0') || raw.contains("..") || raw.contains('/') && raw.matches('/').count() > 1 {
+        return fail("invalid id");
+    }
+    let id = qualify_soundpack_id(&raw, "keyboard/");
+    let name = id.strip_prefix("keyboard/").unwrap_or(&id).to_string();
+    if name.is_empty() || name.contains('/') || name.contains('\\') {
+        return fail("invalid id");
+    }
+    let base = paths::soundpacks::get_builtin_soundpacks_dir();
+    let target = base.join("keyboard").join(&name);
+    if !target.join("config.json").exists() {
+        return fail("pack not found");
+    }
+    // Safety: ensure target is under base
+    let canon_base = base.canonicalize().unwrap_or(base.clone());
+    let canon_target = target.canonicalize().unwrap_or(target.clone());
+    if !canon_target.starts_with(&canon_base) {
+        return fail("invalid path");
+    }
+    if let Err(e) = std::fs::remove_dir_all(&target) {
+        return fail(&format!("delete failed: {}", e));
+    }
+    // Refresh cache
+    let mut cache = crate::state::soundpack::SoundpackCache::load();
+    cache.refresh_from_directory();
+    cache.save();
+
+    // Fallback if active pack was deleted — pick first remaining pack
+    let was_active = crate::state::config_writer::current().keyboard_soundpack == id;
+    crate::state::config_writer::apply(|c| {
+        c.per_pack_volume.remove(&id);
+    });
+    if was_active {
+        let base2 = paths::soundpacks::get_builtin_soundpacks_dir();
+        let mut ids = collect_packs(&base2, "keyboard");
+        ids.sort();
+        let next = ids.first().cloned().unwrap_or_default();
+        let rec = if !next.is_empty() { recommended_volume_for(&next) } else { None };
+        crate::state::config_writer::apply(|c| {
+            c.keyboard_soundpack = next.clone();
+            if !next.is_empty() && !c.per_pack_volume.contains_key(&next) {
+                if let Some(v) = rec {
+                    let v = v.clamp(0.1, 1.0);
+                    if (v - 1.0).abs() > 0.001 {
+                        c.per_pack_volume.insert(next.clone(), v);
+                    }
+                }
+            }
+        });
+        let eff = crate::state::config_writer::current().effective_volume();
+        if !next.is_empty() {
+            engine.send(AudioCommand::LoadKeyboardPack { soundpack_id: next.clone(), update_cache_on_error: true });
+            engine.send(AudioCommand::SetVolume(eff));
+        } else {
+            engine.send(AudioCommand::SetVolume(crate::state::config_writer::current().volume));
+        }
+        ok(serde_json::json!({ "deleted": id, "fallback": next }))
+    } else {
+        ok(serde_json::json!({ "deleted": id }))
+    }
 }
 
 /// Available pack ids. A pack is a directory containing config.json.

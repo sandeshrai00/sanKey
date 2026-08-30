@@ -55,6 +55,14 @@ Panel {
   property real volume: 100
   property string keyboardPack: ""
   property var keyboardPacks: []
+  property real perPackVolume: 100
+  property string packSearch: ""
+  property string deleteConfirmId: ""
+  readonly property var filteredPacks: {
+    if (!root.packSearch) return root.keyboardPacks
+    var q = root.packSearch.toLowerCase()
+    return root.keyboardPacks.filter(function(id){ return Model.prettyPackName(id).toLowerCase().indexOf(q) !== -1 })
+  }
 
   readonly property string statusText: {
     if (setupBusy) return "Installing…"
@@ -106,6 +114,17 @@ Panel {
   function setKeyboardPack(id) {
     root.keyboardPack = id
     root.sendCtl({ cmd: "keyboard_pack", id: id })
+  }
+
+  function setPerPackVolume(v) {
+    root.perPackVolume = v
+    if (root.keyboardPack) root.sendCtl({ cmd: "per_pack_volume", id: root.keyboardPack, value: v })
+  }
+
+  function deletePack(id) {
+    if (!id) return
+    root.sendCtl({ cmd: "delete_pack", id: id })
+    root.deleteConfirmId = ""
   }
 
   function pickRandomPack() {
@@ -240,6 +259,7 @@ Panel {
       root.installed = true
       root.muted = o.muted === true
       root.volume = (typeof o.volume === "number") ? o.volume : root.volume
+      root.perPackVolume = (typeof o.per_pack_volume === "number") ? o.per_pack_volume : root.perPackVolume
       root.keyboardPack = String(o.keyboard_pack || "")
     } else {
       root.running = false
@@ -673,15 +693,27 @@ Panel {
 
             PanelSectionHeader { text: "SOUNDPACKS"; foreground: root.bar.foreground }
 
+            // Pack search — filters the dropdown without touching daemon
+            TextField {
+              visible: root.keyboardPacks.length > 2
+              width: parent.width
+              placeholderText: "Search packs…"
+              text: root.packSearch
+              onTextChanged: root.packSearch = text
+              enabled: root.running
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
             Row {
               width: parent.width
               spacing: Style.space(8)
               Dropdown {
                 id: kbPack
-                width: parent.width - randomButton.width - parent.spacing
+                width: parent.width - randomButton.width - deleteButton.width - parent.spacing*2
                 label: "Keyboard"
                 value: root.keyboardPack
-                options: Model.packOptions(root.keyboardPacks)
+                options: Model.packOptions(root.filteredPacks)
                 foreground: root.bar.foreground
                 rowHeight: Style.spacing.controlHeight
                 enabled: root.running
@@ -700,6 +732,56 @@ Panel {
                 horizontalPadding: Style.spacing.controlPaddingX
                 enabled: root.running && root.keyboardPacks.length > 1
                 onClicked: root.pickRandomPack()
+              }
+              Button {
+                id: deleteButton
+                text: ""
+                iconText: ""
+                foreground: root.bar.foreground
+                bordered: true
+                opacity: root.keyboardPack ? 0.7 : 0.3
+                y: Style.space(18)
+                height: Style.spacing.controlHeight
+                verticalPadding: Style.spacing.controlPaddingY
+                horizontalPadding: Style.spacing.controlPaddingX
+                enabled: root.running && root.keyboardPack !== ""
+                tooltipText: root.keyboardPack ? "Delete " + Model.prettyPackName(root.keyboardPack) : "No pack selected"
+                onClicked: {
+                  if (root.deleteConfirmId === root.keyboardPack) root.deleteConfirmId = ""
+                  else root.deleteConfirmId = root.keyboardPack
+                }
+              }
+            }
+
+            // Delete confirm — fallback to another pack is handled by daemon
+            Column {
+              visible: root.deleteConfirmId !== ""
+              width: parent.width
+              spacing: Style.space(6)
+              Text {
+                width: parent.width
+                text: "Delete \"" + Model.prettyPackName(root.deleteConfirmId) + "\"? This cannot be undone."
+                color: root.bar.foreground
+                opacity: 0.7
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+              Row {
+                spacing: Style.space(8)
+                Button {
+                  text: "Delete"
+                  iconText: ""
+                  foreground: "#ff6b6b"
+                  bordered: true
+                  onClicked: root.deletePack(root.deleteConfirmId)
+                }
+                Button {
+                  text: "Cancel"
+                  foreground: root.bar.foreground
+                  bordered: true
+                  onClicked: root.deleteConfirmId = ""
+                }
               }
             }
 
@@ -727,12 +809,80 @@ Panel {
 
             Text {
               visible: root.importStatus !== ""
+              width: parent.width
               text: root.importStatus
               color: root.bar.foreground
               opacity: 0.6
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
+            }
+
+            // Per-pack volume — global * per-pack = effective, auto-seeded from recommended_volume
+            Column {
+              visible: root.keyboardPack !== ""
+              width: parent.width
+              spacing: Style.space(6)
+              Row {
+                width: parent.width
+                PanelSectionHeader {
+                  text: "PACK VOLUME"
+                  foreground: root.bar.foreground
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Item { width: 1 }
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: Math.round(root.perPackVolume) + "%"
+                  color: root.bar.foreground
+                  opacity: 0.6
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+              Item {
+                width: parent.width
+                implicitHeight: Style.spacing.controlHeight
+                PanelSlider {
+                  bar: root.bar
+                  anchors.fill: parent
+                  minimum: 0
+                  maximum: 100
+                  integer: true
+                  value: root.perPackVolume
+                  enabled: root.running
+                  onReleased: root.setPerPackVolume(liveValue)
+                }
+              }
+              Text {
+                width: parent.width
+                text: "Effective: " + Math.round(root.volume * root.perPackVolume / 100) + "% (global × pack)"
+                color: root.bar.foreground
+                opacity: 0.45
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            // Key tester — global evdev listener already hears keys while this has focus
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+              PanelSectionHeader { text: "TEST TYPING"; foreground: root.bar.foreground }
+              TextField {
+                width: parent.width
+                placeholderText: "Click here and type — hear keys"
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              Text {
+                width: parent.width
+                text: "Uses system listener, no extra process."
+                color: root.bar.foreground
+                opacity: 0.45
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
             }
           }
 

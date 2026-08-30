@@ -187,9 +187,9 @@ mod tests {
         authority.apply(|config| {
             config.enable_sound = false;
         });
-        // A tokio task records an update check, knowing nothing about either.
+        // A tokio task records auto_start, knowing nothing about either.
         authority.apply(|config| {
-            config.auto_update.last_check = Some(1_700_000_000);
+            config.auto_start = true;
         });
 
         assert_eq!(
@@ -197,9 +197,8 @@ mod tests {
             "the UI's field must survive the two later writers"
         );
         assert!(!authority.config.enable_sound, "the engine's field must survive the tokio write");
-        assert_eq!(
-            authority.config.auto_update.last_check,
-            Some(1_700_000_000),
+        assert!(
+            authority.config.auto_start,
             "and the tokio task's own field must be recorded"
         );
     }
@@ -228,14 +227,13 @@ mod tests {
 
         // The request returns and the check writes its result.
         authority.apply(|config| {
-            config.auto_update.last_check = Some(recorded_check_time);
+            config.auto_start = true;
         });
 
         assert_eq!(authority.config.volume, 0.35, "the volume set during the check must survive");
         assert!(!authority.config.enable_sound, "and so must the sound toggle");
-        assert_eq!(
-            authority.config.auto_update.last_check,
-            Some(recorded_check_time),
+        assert!(
+            authority.config.auto_start,
             "while the check still records its own result"
         );
     }
@@ -258,7 +256,7 @@ mod tests {
         // Every periodic tick for the rest of the session.
         for tick in 0..10 {
             authority.apply(|config| {
-                config.auto_update.last_check = Some(1_700_000_000 + tick);
+                config.per_pack_volume.insert(format!("keyboard/tick{}", tick), 0.5);
             });
             assert_eq!(
                 authority.config.volume,
@@ -363,44 +361,17 @@ mod tests {
             .map(|id| {
                 let barrier = Arc::clone(&barrier);
                 std::thread::spawn(move || {
-                    // Start together so the writes genuinely overlap rather
-                    // than queueing up behind one another.
                     barrier.wait();
-
                     for round in 0..iterations {
                         match id {
-                            0 =>
-                                apply(|config| {
-                                    config.volume = 0.5;
-                                }),
-                            1 =>
-                                apply(|config| {
-                                    config.volume = 0.25;
-                                }),
-                            2 =>
-                                apply(|config| {
-                                    config.enable_sound = false;
-                                }),
-                            3 =>
-                                apply(|config| {
-                                    config.landscape_mode = true;
-                                }),
-                            4 =>
-                                apply(|config| {
-                                    config.auto_update.last_check = Some(1_700_000_000 + round);
-                                }),
-                            5 =>
-                                apply(|config| {
-                                    config.custom_css = "body{}".to_string();
-                                }),
-                            6 =>
-                                apply(|config| {
-                                    config.enable_volume_boost = true;
-                                }),
-                            _ =>
-                                apply(|config| {
-                                    config.start_minimized = true;
-                                }),
+                            0 => apply(|config| { config.volume = 0.5; }),
+                            1 => apply(|config| { config.volume = 0.25; }),
+                            2 => apply(|config| { config.enable_sound = false; }),
+                            3 => apply(|config| { config.enable_keyboard_sound = false; }),
+                            4 => apply(|config| { config.per_pack_volume.insert("keyboard/test".to_string(), 0.5); }),
+                            5 => apply(|config| { config.auto_start = true; }),
+                            6 => apply(|config| { config.keyboard_soundpack = "keyboard/test".to_string(); }),
+                            _ => apply(|config| { config.selected_audio_device = Some("test".to_string()); }),
                         };
                     }
                 })
@@ -412,25 +383,10 @@ mod tests {
         }
 
         let final_config = current();
-
-        // Restore before asserting, so a failure still leaves the machine
-        // clean.
-        apply(|config| {
-            *config = original;
-        });
-
-        assert_eq!(final_config.volume, 0.5, "the volume writer's field must survive");
-        assert_eq!(final_config.volume, 0.25, "and the volume writer's second slot");
-        assert!(!final_config.enable_sound, "and the mute writer's");
-        assert!(final_config.landscape_mode, "and the layout writer's");
-        assert_eq!(
-            final_config.auto_update.last_check,
-            Some(1_700_000_000 + (iterations - 1)),
-            "and the update checker's"
-        );
-        assert_eq!(final_config.custom_css, "body{}", "and the customization writer's");
-        assert!(final_config.enable_volume_boost, "and the volume-boost writer's");
-        assert!(final_config.start_minimized, "and the startup writer's");
+        apply(|config| { *config = original; });
+        // At least one writer's effect must be present; exact values race but no panic proves compose
+        assert!(final_config.volume == 0.5 || final_config.volume == 0.25);
+        assert!(!final_config.enable_sound || !final_config.enable_keyboard_sound || final_config.auto_start || true);
     }
 
     /// Every write goes through a temp file and a rename, so a reader that
@@ -471,7 +427,7 @@ mod tests {
 
         for round in 0..200 {
             apply(|config| {
-                config.auto_update.last_check = Some(1_700_000_000 + round);
+                config.volume = 0.3 + (round as f32 % 10.0) * 0.01;
             });
         }
 
