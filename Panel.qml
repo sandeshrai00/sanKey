@@ -26,11 +26,8 @@ Panel {
   readonly property string setupPath: pluginDir + "/scripts/sankey-setup"
 
   // ---- Background service: the shell-managed instance the shell creates for
-  // the "service" kind. Never a panel-local copy — panel instances come and
-  // go with bar rebuilds, the shell's does not. ----
-  // Shell-managed instance (same one the shell creates for the service kind)
-  // — the panel must not create its own copy; it comes and goes with bar
-  // rebuilds and its destruction used to stop the daemon.
+  // the "service" kind, not a panel-local copy — panel instances come and go
+  // with bar rebuilds, and their destruction used to stop the daemon. ----
   readonly property var service: bar?.shell?.firstPartyServiceFor("io.github.sandeshrai00.sankey")
 
   property bool importing: service ? service.importing : false
@@ -46,12 +43,7 @@ Panel {
     if (service) service.importSoundpack()
   }
 
-  // When import completes, refresh the pack list so the new pack appears.
-  Connections {
-    target: service
-    function onPacksImported(packId) { root.refreshPacks() }
-    function onImportFailed(reason) { }
-  }
+  // Pack list refresh after an import is covered by the 5 s open-panel poll.
 
   // ---- State from the last reading ----
   property bool installed: false
