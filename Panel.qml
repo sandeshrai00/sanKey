@@ -210,6 +210,16 @@ Panel {
     onTriggered: root.updateStatus = ""
   }
 
+  // Auto-select a freshly imported pack: the service already carries the id
+  // from the importer's OK:<id> line, so selecting is one ctl away.
+  Connections {
+    target: root.service
+    function onPacksImported(packId) {
+      root.refreshPacks()
+      if (packId) root.setKeyboardPack("keyboard/" + packId)
+    }
+  }
+
   function remove() {
     // Omarchy-native: plugin removal via CLI, daemon via systemd — no bar.run rm -rf
     Quickshell.execDetached(["systemctl", "--user", "disable", "--now", "sorakey"])
