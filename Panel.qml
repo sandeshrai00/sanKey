@@ -140,6 +140,34 @@ Panel {
   function moveToSection(section) {
     if (["left","center","right"].indexOf(section)===-1) return
     Quickshell.execDetached(["omarchy","plugin","enable","io.github.sandeshrai00.sankey","--section",section])
+    // Remember the choice: Omarchy drops the layout entry on disable and
+    // re-inserts at the manifest default (right) on re-enable, so the panel
+    // restores the user's section from this file (sectionRead).
+    if (!sectionWrite.running) {
+      sectionWrite.command = ["/bin/sh", "-c",
+        "mkdir -p " + root.home + "/.local/share/sankey && printf %s " + section +
+        " > " + root.home + "/.local/share/sankey/bar-section"]
+      sectionWrite.running = true
+    }
+  }
+
+  // Restore the user's last bar section when the panel is (re)created.
+  // No file = user never chose = leave the manifest default in place.
+  Process {
+    id: sectionRead
+    command: ["/bin/sh", "-c", "cat " + root.home + "/.local/share/sankey/bar-section 2>/dev/null"]
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      var saved = String(stdout.text || "").trim()
+      if (exitCode === 0 && saved && saved !== root.currentBarSection)
+        root.moveToSection(saved)
+    }
+  }
+
+  Process {
+    id: sectionWrite
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
   }
 
   function remove() {
@@ -185,6 +213,7 @@ Panel {
   Component.onCompleted: {
     installCheck.running = true
     root.refreshStatus()
+    sectionRead.running = true
   }
 
   onOpenedChanged: {

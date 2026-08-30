@@ -93,9 +93,28 @@ Item {
       startProc.command = ["systemctl", "--user", "enable", "--now", "sankey"]
       startProc.running = true
     }
+    // Re-assert after a short delay: during `omarchy restart shell` the old
+    // process's teardown can land after this start and leave the daemon dead
+    // while the plugin stays enabled.
+    restartAssertTimer.restart()
+  }
+
+  Timer {
+    id: restartAssertTimer
+    interval: 3000
+    onTriggered: {
+      if (startProc.running) return
+      startProc.command = ["systemctl", "--user", "enable", "--now", "sankey"]
+      startProc.running = true
+    }
   }
 
   Component.onDestruction: {
+    // Only the shell-managed instance (one with `shell` injected by the shell)
+    // owns the daemon lifecycle. The panel inlines this component for the
+    // import feature, and its instances come and go with every bar rebuild —
+    // they must not stop the daemon.
+    if (!root.shell) return
     // Stop the sankeyd daemon when the plugin instance goes away (disabled,
     // removed, or reloaded from disk). Component.onCompleted restores it
     // whenever the plugin is enabled again.
