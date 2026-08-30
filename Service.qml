@@ -43,6 +43,8 @@ Item {
     }
   }
 
+  Timer { id: clearImportTimer; interval: 8000; onTriggered: root.lastImportError = "" }
+
   Process {
     id: importHelper
     stdout: StdioCollector { waitForEnd: true }
@@ -63,17 +65,26 @@ Item {
         root.lastImportError = ""
         root.packsImported(root.lastImportResult)
       } else if (last.startsWith("ERROR:")) {
-        root.lastImportError = last.substring(6).trim()
+        var msg = last.substring(6).trim()
+        if (msg === "Cancelled" || msg.toLowerCase().indexOf("cancel") !== -1) {
+          root.lastImportError = ""
+          root.lastImportResult = ""
+          return
+        }
+        root.lastImportError = msg
         root.lastImportResult = ""
         root.importFailed(root.lastImportError)
+        clearImportTimer.restart()
       } else if (exitCode !== 0) {
-        root.lastImportError = errOutput || ("Import failed (exit " + exitCode + ")")
+        root.lastImportError = errOutput || "Import failed — try again."
         root.lastImportResult = ""
         root.importFailed(root.lastImportError)
+        clearImportTimer.restart()
       } else {
-        root.lastImportError = "Unexpected output: " + last
+        root.lastImportError = "Import failed — try again."
         root.lastImportResult = ""
         root.importFailed(root.lastImportError)
+        clearImportTimer.restart()
       }
     }
   }

@@ -512,18 +512,26 @@ def validate_v2(cfg):
 
 
 def import_zip(zip_path):
-    with zipfile.ZipFile(zip_path, "r") as zf:
+    try:
+        zf = zipfile.ZipFile(zip_path, "r")
+    except zipfile.BadZipFile:
+        return None, "Not a valid ZIP — is it .rar/.7z?"
+    except Exception:
+        return None, "Not a valid ZIP — is it .rar/.7z?"
+    with zf:
         config_path, config_bytes = find_config_in_zip(zf)
         if not config_path:
-            return None, "No config.json found in ZIP"
+            return None, "Not a soundpack — no config found."
 
         try:
             cfg = json.loads(config_bytes)
-        except Exception as e:
-            return None, f"Invalid JSON in config.json: {e}"
+        except Exception:
+            return None, "Config is damaged — try re-downloading."
 
         strip_folder = strip_enclosing_folder(zf, config_path)
         available_files = list_files_in_zip(zf, config_path, strip_folder)
+        if not available_files:
+            return None, "ZIP is empty or damaged."
 
         zip_slug, zip_label = derive_name_from_zip(zip_path)
         if looks_auto_generated_id(cfg.get("id")):
@@ -546,24 +554,24 @@ def import_zip(zip_path):
         else:
             err = validate_v2(cfg)
             if err:
-                return None, f"Invalid soundpack: {err}"
+                return None, "Soundpack is incomplete — missing required info."
 
         # Validate audio files exist before destroying old install (for both methods)
         if cfg.get("definition_method") == "single":
             audio_rel = cfg.get("audio_file", "")
             if audio_rel and audio_rel not in available_files and not _case_insensitive_match(audio_rel, available_files):
-                return None, f"audio_file not found in ZIP: {audio_rel}"
+                return None, "Audio file missing from ZIP."
         elif cfg.get("definition_method") == "multi":
             missing = [d.get("audio_file") for d in cfg.get("definitions", {}).values() if d.get("audio_file") and d.get("audio_file") not in available_files and not _case_insensitive_match(d.get("audio_file"), available_files)]
             if missing:
-                return None, f"audio_file not found in ZIP: {missing[0]}"
+                return None, "Audio file missing from ZIP."
 
         import shutil, pathlib
         # Zip bomb guard: cap total uncompressed
         try:
             total = sum(zf.getinfo(n).file_size for n in zf.namelist())
             if total > 300*1024*1024:
-                return None, "ZIP too large (>300MB uncompressed)"
+                return None, "ZIP too large (300MB limit)."
         except Exception:
             pass
         tmp_dir = install_dir + ".tmp." + str(os.getpid())
@@ -616,7 +624,11 @@ def cli_main():
     try:
         soundpack_id, err = import_zip(path)
     except Exception as e:
-        print(f"ERROR:Import failed: {e}", flush=True)
+        msg = str(e)
+        if "BadZipFile" in type(e).__name__ or "not a zip" in msg.lower():
+            print("ERROR:Not a valid ZIP — is it .rar/.7z?", flush=True)
+        else:
+            print("ERROR:Import failed — try again.", flush=True)
         sys.exit(1)
     if err:
         print(f"ERROR:{err}", flush=True)
@@ -666,7 +678,11 @@ def gui_main():
         try:
             sid, err = import_zip(path)
         except Exception as e:
-            fail_and_quit(f"Import failed: {e}")
+            msg = str(e)
+            if "BadZipFile" in type(e).__name__ or "not a zip" in msg.lower():
+                fail_and_quit("Not a valid ZIP — is it .rar/.7z?")
+            else:
+                fail_and_quit("Import failed — try again.")
             return
         if err:
             fail_and_quit(err)
