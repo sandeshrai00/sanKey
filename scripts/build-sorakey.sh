@@ -7,7 +7,7 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/sorakey"
 TARGET_DIR="$CACHE_DIR/target"
 LIB_DIR="$HOME/.local/lib/sorakey"
 BIN="$HOME/.local/bin/sorakey"
-REPO="sandeshrai00/sorakey"
+REPO="sandeshrai00/soraKey"
 
 mkdir -p "$CACHE_DIR" "$LIB_DIR"
 

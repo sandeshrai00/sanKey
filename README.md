@@ -18,7 +18,7 @@ set volume.
 ## Install
 
 ```sh
-omarchy plugin add https://github.com/sandeshrai00/sorakey.git --enable
+omarchy plugin add https://github.com/sandeshrai00/soraKey.git --enable
 ```
 
 1. Open the Sorakey panel on your bar and click **Install Sorakey**. It installs
