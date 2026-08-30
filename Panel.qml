@@ -29,6 +29,9 @@ Panel {
   // the "service" kind, not a panel-local copy — panel instances come and go
   // with bar rebuilds, and their destruction used to stop the daemon. ----
   readonly property var service: bar?.shell?.firstPartyServiceFor("io.github.sandeshrai00.sorakey")
+  // ponytail: reuse shell-injected manifest, 0 fork; commit fetched on demand when Settings opens
+  readonly property string pluginVersion: service && service.manifest && service.manifest.version ? String(service.manifest.version) : ""
+  property string pluginCommit: ""
 
   property bool importing: service ? service.importing : false
   property string importStatus: {
@@ -62,6 +65,10 @@ Panel {
 
   property bool setupBusy: false
   property bool settingsOpen: false
+  onSettingsOpenChanged: {
+    if (settingsOpen && root.pluginCommit === "" && !commitProc.running)
+      commitProc.running = true
+  }
 
   // The bar sizes widgets by their implicit size; the base Panel is a plain
   // Item that does not inherit it, so report the button's.
@@ -165,6 +172,16 @@ Panel {
     id: sectionWrite
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
+  }
+
+  // ponytail: one git fork only when Settings opened, no poll
+  Process {
+    id: commitProc
+    command: ["git", "-C", root.pluginDir, "rev-parse", "--short", "HEAD"]
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.pluginCommit = String(stdout.text || "").trim()
+    }
   }
 
   function remove() {
@@ -504,6 +521,26 @@ Panel {
               foreground: root.bar.foreground
               onChanged: function(v){ root.moveToSection(v) }
             }
+            PanelSeparator { foreground: root.bar.foreground }
+            Button {
+              text: "Update"
+              iconText: "󰚰"
+              foreground: root.bar.foreground
+              bordered: true
+              width: parent.width
+              tooltipText: "Update Sorakey plugin"
+              onClicked: Quickshell.execDetached(["omarchy","plugin","update","io.github.sandeshrai00.sorakey","--yes"])
+            }
+            Text {
+              visible: root.pluginVersion !== ""
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: root.pluginCommit !== "" ? "v" + root.pluginVersion + " · " + root.pluginCommit : "v" + root.pluginVersion
+              color: root.bar.foreground
+              opacity: 0.45
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
           }
         }
 
@@ -672,7 +709,17 @@ Panel {
               onClicked: root.restartDaemon()
             }
 
-            Item { width: Math.max(0, parent.width - startStopButton.width - restartButton.width - removeButton.width - parent.spacing*2 - Style.space(8)); height: 1 }
+            Button {
+              id: updateButton
+              text: "Update"
+              iconText: "󰚰"
+              foreground: root.bar.foreground
+              bordered: true
+              tooltipText: "Update Sorakey plugin"
+              onClicked: Quickshell.execDetached(["omarchy","plugin","update","io.github.sandeshrai00.sorakey","--yes"])
+            }
+
+            Item { width: Math.max(0, parent.width - startStopButton.width - restartButton.width - updateButton.width - removeButton.width - parent.spacing*3 - Style.space(8)); height: 1 }
 
             Button {
               id: removeButton
