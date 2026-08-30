@@ -126,8 +126,9 @@ Item {
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       if (exitCode !== 0) return
-      var out = String(stdout.text || "")
-      var line = out.split("\n").pop()
+      var out = String(stdout.text || "").trim()
+      var lines = out.split("\n")
+      var line = lines[lines.length - 1]
       console.info("sankeyd freshness: " + line)
       if (line.indexOf("up to date") !== -1) return
       Quickshell.execDetached(["systemctl", "--user", "restart", "sankey"])
