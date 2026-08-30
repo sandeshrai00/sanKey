@@ -22,9 +22,13 @@ omarchy plugin add https://github.com/sandeshrai00/sanKey.git --enable
 ```
 
 1. Open the Sankey panel on your bar and click **Install Sankey**. It installs
-   `sankeyd` (verified prebuilt from GitHub Releases when available, else built
-   from `daemon/` source) and starts the service. A source build needs a Rust
-   toolchain and takes a few minutes.
+   `sankeyd` and starts the service. The installer prefers the **prebuilt
+   binary from GitHub Releases** (a few seconds): it verifies the release
+   checksum, and when `gh` is logged in (or `GH_TOKEN` is set) also the GitHub
+   attestation proving CI built it from the tagged commit. Without a `gh`
+   login the checksum check alone is accepted. It only builds from source
+   (needs Rust, a few minutes) when no release matches the current daemon
+   source — e.g. you changed `daemon/` but haven't tagged a new version yet.
 2. For **keyboard** sounds on Wayland your user needs the `input` group. The
    installer tells you when it is missing:
 
@@ -58,8 +62,15 @@ disable/re-enable.
 omarchy plugin update io.github.sandeshrai00.sankey --yes
 ```
 
-Updates the plugin code; the daemon binary is re-verified/rebuilt the next
-time **Install Sankey** runs (or `scripts/build-sankeyd.sh` by hand).
+The QML updates in place. If the daemon source changed, the next shell start
+(or plugin reload) re-runs the installer — verified prebuilt when one matches
+the tagged source, else a source build — and restarts the daemon with the new
+binary automatically.
+
+Updates the plugin code. The daemon binary follows automatically: on the next
+shell start (or re-enable) the plugin re-checks the installed binary against
+the daemon source and swaps in the matching release prebuilt — or rebuilds if
+the source moved past the last tag — then restarts the daemon if it changed.
 
 ## Remove
 

@@ -99,6 +99,10 @@ Item {
     // process's teardown can land after this start and leave the daemon dead
     // while the plugin stays enabled.
     restartAssertTimer.restart()
+    // Keep the daemon binary in step with the plugin source: the script is
+    // self-gating (instant exit when the installed binary matches the source
+    // hash), so this costs ~one hash check per shell start.
+    freshnessCheck.running = true
   }
 
   Timer {
@@ -108,6 +112,25 @@ Item {
       if (startProc.running) return
       startProc.command = ["systemctl", "--user", "enable", "--now", "sankey"]
       startProc.running = true
+    }
+  }
+
+  // After `omarchy plugin update` the daemon source may be newer than the
+  // installed binary (or a release prebuilt may be available for it). Re-run
+  // the build script — it downloads a verified prebuilt when one matches the
+  // source, else builds — and reload the daemon if a new binary landed.
+  Process {
+    id: freshnessCheck
+    command: ["/usr/bin/bash", root.pluginDir + "/scripts/build-sankeyd.sh"]
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) return
+      var out = String(stdout.text || "")
+      var line = out.split("\n").pop()
+      console.info("sankeyd freshness: " + line)
+      if (line.indexOf("up to date") !== -1) return
+      Quickshell.execDetached(["systemctl", "--user", "restart", "sankey"])
     }
   }
 
