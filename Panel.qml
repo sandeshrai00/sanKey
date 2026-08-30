@@ -58,6 +58,8 @@ Panel {
   property real perPackVolume: 100
   property string deleteConfirmId: ""
   property bool deleting: false
+  property string deleteToast: ""
+  Timer { id: clearDeleteToast; interval: 3000; onTriggered: root.deleteToast = "" }
 
   readonly property string statusText: {
     if (setupBusy) return "Installing…"
@@ -351,8 +353,20 @@ Panel {
     command: [root.sorakeyBin, "ctl", "{}"]
     onExited: function() {
       root.refreshStatus()
-      if (root.deleting) root.refreshPacks()
-      else if (root.deleteConfirmId !== "" && stdout.text.indexOf("deleted") !== -1) root.refreshPacks()
+      // delete flow: parse fallback for pretty toast
+      if (root.deleting || (root.deleteConfirmId !== "" && stdout.text.indexOf("deleted") !== -1)) {
+        try {
+          var o = JSON.parse(String(stdout.text || "").trim())
+          if (o && o.deleted) {
+            var delPretty = Model.prettyPackName(String(o.deleted))
+            var fb = o.fallback ? String(o.fallback) : ""
+            if (fb) root.deleteToast = "Deleted \"" + delPretty + "\" → \"" + Model.prettyPackName(fb) + "\""
+            else root.deleteToast = "Deleted \"" + delPretty + "\""
+            clearDeleteToast.restart()
+          }
+        } catch(e) {}
+        root.refreshPacks()
+      }
     }
     stdout: StdioCollector { waitForEnd: true }
   }
@@ -717,11 +731,12 @@ Panel {
                 foreground: root.bar.foreground
                 rowHeight: Style.spacing.controlHeight
                 placeholderText: "Search packs…"
+                deleteConfirmId: root.deleteConfirmId
+                deleting: root.deleting
                 onChanged: function(v) { root.setKeyboardPack(v) }
-                onDeleteRequested: function(v) {
-                  kbPack.close()
-                  root.deleteConfirmId = v
-                }
+                onDeleteRequested: function(v) { root.deleteConfirmId = v }
+                onConfirmDelete: function(v) { root.deletePack(v) }
+                onCancelDelete: function() { root.deleteConfirmId = "" }
               }
               Button {
                 id: randomButton
@@ -739,38 +754,15 @@ Panel {
               }
             }
 
-            // Delete confirm — delete icon is inside dropdown rows; fallback handled by daemon
-            Column {
-              visible: root.deleteConfirmId !== ""
+            Text {
+              visible: root.deleteToast !== ""
               width: parent.width
-              spacing: Style.space(6)
-              Text {
-                width: parent.width
-                text: "Delete \"" + Model.prettyPackName(root.deleteConfirmId) + "\"? This cannot be undone."
-                color: root.bar.foreground
-                opacity: 0.7
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
-              }
-              Row {
-                spacing: Style.space(8)
-                Button {
-                  text: root.deleting ? "Deleting…" : "Delete"
-                  iconText: root.deleting ? "⏳" : ""
-                  foreground: "#ff6b6b"
-                  bordered: true
-                  enabled: !root.deleting
-                  onClicked: root.deletePack(root.deleteConfirmId)
-                }
-                Button {
-                  text: "Cancel"
-                  foreground: root.bar.foreground
-                  bordered: true
-                  enabled: !root.deleting
-                  onClicked: root.deleteConfirmId = ""
-                }
-              }
+              text: root.deleteToast
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
 
             Row {

@@ -34,7 +34,18 @@ Item {
 
   signal changed(string value)
   signal deleteRequested(string value)
+  signal confirmDelete(string value)
+  signal cancelDelete()
   signal hovered(bool isHovered)
+
+  property string deleteConfirmId: ""
+  property bool deleting: false
+  function prettyForValue(v) {
+    for (var i = 0; i < options.length; i++) if (optionValue(options[i]) === v) return optionLabel(options[i])
+    // fallback pretty like Model.prettyPackName
+    var s = String(v); var slash = s.lastIndexOf("/"); if (slash >= 0) s = s.slice(slash+1)
+    s = s.replace(/[-_]+/g, " "); s = s.replace(/\b\w/g, function(c){return c.toUpperCase()}); return s
+  }
 
   function optionValue(o) {
     return (o && typeof o === "object") ? String(o.value) : String(o)
@@ -153,9 +164,10 @@ Item {
         x: 0
         y: trigger.height + Style.spacing.xxs
         width: trigger.width
+        property int confirmH: root.deleteConfirmId !== "" ? 76 : 0
         implicitHeight: Math.max(root.popupMinHeight,
-                                 Math.min(resultList.contentHeight + Style.space(50),
-                                          root.popupRowHeight * 6 + 5 * Style.spacing.labelGap + Style.space(50)))
+                                 Math.min(resultList.contentHeight + Style.space(50) + confirmH,
+                                          root.popupRowHeight * 6 + 5 * Style.spacing.labelGap + Style.space(50) + confirmH))
         padding: Style.spacing.hairline
         leftPadding: Border.left(root.popupBorderSpec) + Style.spacing.hairline
         rightPadding: Border.right(root.popupBorderSpec) + Style.spacing.hairline
@@ -174,7 +186,10 @@ Item {
           root.recomputeFiltered()
           Qt.callLater(function() { searchField.forceActiveFocus() })
         }
-        onClosed: searchField.text = ""
+        onClosed: {
+          searchField.text = ""
+          // keep confirmId so Panel can see it; Panel clears it
+        }
 
         contentItem: Column {
           spacing: 0
@@ -250,6 +265,7 @@ Item {
               keyNavigationEnabled: false
 
               function selectCurrent() {
+                if (root.deleteConfirmId !== "") { root.deleteConfirmId = ""; root.cancelDelete(); return }
                 if (currentIndex < 0 || currentIndex >= root.filtered.length) return
                 var v = root.optionValue(root.filtered[currentIndex])
                 root.value = v
@@ -260,6 +276,7 @@ Item {
               Keys.priority: Keys.BeforeItem
               Keys.onPressed: function(event) {
                 if (event.key === Qt.Key_Escape) {
+                  if (root.deleteConfirmId !== "") { root.deleteConfirmId = ""; root.cancelDelete(); event.accepted = true; return }
                   popup.close(); event.accepted = true
                 } else if (event.key === Qt.Key_Down || event.text === "j") {
                   if (resultList.currentIndex >= resultList.count - 1) {
@@ -361,6 +378,64 @@ Item {
                   onClicked: resultList.selectCurrent()
                 }
               }
+            }
+
+            // Inline confirm footer — inside popup, with icon+text+busy
+            Rectangle {
+              visible: root.deleteConfirmId !== ""
+              width: parent.width
+              height: 1
+              color: Util.alpha(root.foreground, 0.10)
+            }
+            Column {
+              visible: root.deleteConfirmId !== ""
+              width: parent.width
+              spacing: Style.spacing.xs
+              // ponytail: inside-popup confirm, no extra popup
+              property string pretty: root.prettyForValue(root.deleteConfirmId)
+              Item { width: 1; height: Style.spacing.xs }
+              Row {
+                width: parent.width - Style.spacing.md*2
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: Style.spacing.xs
+                Text {
+                  text: ""
+                  color: "#ff6b6b"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+                Text {
+                  textFormat: Text.PlainText
+                  text: "Delete \"" + parent.parent.pretty + "\"?"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                  width: parent.width - 20
+                  wrapMode: Text.WordWrap
+                }
+              }
+              Row {
+                width: parent.width - Style.spacing.md*2
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: Style.spacing.sm
+                Button {
+                  text: root.deleting ? "Deleting…" : "Delete"
+                  iconText: root.deleting ? "⏳" : ""
+                  foreground: "#ff6b6b"
+                  bordered: true
+                  enabled: !root.deleting
+                  onClicked: root.confirmDelete(root.deleteConfirmId)
+                }
+                Button {
+                  text: "Cancel"
+                  foreground: root.foreground
+                  bordered: true
+                  enabled: !root.deleting
+                  onClicked: { root.deleteConfirmId = ""; root.cancelDelete() }
+                }
+              }
+              Item { width: 1; height: Style.spacing.xs }
             }
           }
         }
