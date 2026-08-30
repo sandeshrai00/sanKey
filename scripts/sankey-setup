@@ -3,7 +3,7 @@
 # install the binary + soundpacks, and start the sankey user service.
 #
 # Run it from the bar panel (Install Sankey) or by hand:
-#   ~/.config/omarchy/plugins/io.github.sanman.sankey/bin/sankey-setup
+#   ~/.config/omarchy/plugins/io.github.sandeshrai00.sankey/scripts/sankey-setup
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +28,7 @@ step "Installing soundpacks"
 mkdir -p "$SHARE/soundpacks"
 cp -rn "$DAEMON_DIR/soundpacks/." "$SHARE/soundpacks/" 2>/dev/null || true
 
-# ---- 4. systemd user service -------------------------------------------
+# ---- 3. systemd user service -------------------------------------------
 step "Installing the sankey user service"
 mkdir -p "$UNIT_DIR"
 cat > "$UNIT" <<'EOF'
@@ -47,7 +47,7 @@ EOF
 systemctl --user daemon-reload
 systemctl --user enable --now sankey || die "could not start the sankey service"
 
-# ---- 5. input group -----------------------------------------------------
+# ---- 4. input group -----------------------------------------------------
 step "Checking input group (keyboard capture)"
 if id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
   echo "input group: OK"

@@ -25,8 +25,13 @@ Panel {
   readonly property string pluginDir: home + "/.config/omarchy/plugins/io.github.sandeshrai00.sankey"
   readonly property string setupPath: pluginDir + "/scripts/sankey-setup"
 
-  // ---- Background service (import, future backend logic) ----
-  property var service: Service { pluginDir: root.pluginDir }
+  // ---- Background service: the shell-managed instance the shell creates for
+  // the "service" kind. Never a panel-local copy — panel instances come and
+  // go with bar rebuilds, the shell's does not. ----
+  // Shell-managed instance (same one the shell creates for the service kind)
+  // — the panel must not create its own copy; it comes and goes with bar
+  // rebuilds and its destruction used to stop the daemon.
+  readonly property var service: bar?.shell?.firstPartyServiceFor("io.github.sandeshrai00.sankey")
 
   property bool importing: service ? service.importing : false
   property string importStatus: {
@@ -385,6 +390,13 @@ Panel {
     gap: Style.gapsOut + Style.space(6)
     contentWidth: panel.fittedContentWidth(Style.space(340))
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(520))
+    focusTarget: keyCatcher
+
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      onCloseRequested: root.close()
+      onTabRequested: function(direction) { root.switchPanel(direction) }
 
     ScrollView {
       id: scrollArea
@@ -682,6 +694,7 @@ Panel {
           }
         }
       }
+    }
     }
   }
 }

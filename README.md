@@ -17,34 +17,59 @@ set volume.
 
 ## Install
 
-Local-only repo (no GitHub remote). Copy the folder to `~/.config/omarchy/plugins/io.github.sanman.sankey/` and enable it in Omarchy.
+```sh
+omarchy plugin add https://github.com/sandeshrai00/sanKey.git --enable
+```
 
-1. Open the Sankey panel on your bar and click **Install Sankey**. It builds
-   `sankeyd` from `daemon/`, installs it, and starts the service. First build
-   needs a Rust toolchain (the installer offers to set one up) and takes a few
-   minutes.
-
-3. For **keyboard** sounds on Wayland your user needs the `input` group. The
+1. Open the Sankey panel on your bar and click **Install Sankey**. It installs
+   `sankeyd` (verified prebuilt from GitHub Releases when available, else built
+   from `daemon/` source) and starts the service. A source build needs a Rust
+   toolchain and takes a few minutes.
+2. For **keyboard** sounds on Wayland your user needs the `input` group. The
    installer tells you when it is missing:
 
    ```
    sudo usermod -aG input $USER
    ```
 
-    then log out and back in.
+   then log out and back in.
 
-## Files
+## Usage
 
-| Path | What |
-|---|---|
-| `manifest.json` | Omarchy plugin manifest (bar-widget, panel, service) |
-| `Panel.qml` | Bar icon + popup panel (with **Import pack…** button) |
-| `Service.qml` | Hidden background service (owns the import flow) |
-| `Model.js` | Status/pack parsing helpers |
-| `bin/sankey-setup` | One-click installer |
-| `bin/sankey-import-pack.py` | GTK4 file-picker + ZIP extractor (called by Service) |
-| `daemon/` | The `sankeyd` Rust daemon (trimmed MechvibesDX core) |
-| `daemon/soundpacks/` | Built-in V2 soundpacks |
+- **Left-click** the keyboard icon → panel: mute switch, volume slider,
+  soundpack dropdown, **Random**, **Import pack…**, **Open folder**,
+  Start/Stop/Restart, and Settings (bar icon position).
+- **Right-click** → toggle mute. **Scroll** on the icon → volume.
+- **Escape** closes the panel, **Tab** / **Shift+Tab** switches panels.
+
+## Configure
+
+```sh
+omarchy bar move io.github.sandeshrai00.sankey --section center
+```
+
+Mute, volume and soundpack persist across restarts
+(`~/.local/share/sankey/data/config.json`); the icon section persists across
+disable/re-enable.
+
+## Update
+
+```sh
+omarchy plugin update io.github.sandeshrai00.sankey --yes
+```
+
+Updates the plugin code; the daemon binary is re-verified/rebuilt the next
+time **Install Sankey** runs (or `scripts/build-sankeyd.sh` by hand).
+
+## Remove
+
+```sh
+# stops the daemon, removes binary + service file, keeps soundpacks as .bak
+~/.config/omarchy/plugins/io.github.sandeshrai00.sankey/scripts/uninstall.sh
+omarchy plugin remove io.github.sandeshrai00.sankey --yes
+```
+
+`uninstall.sh --purge` deletes the soundpacks too.
 
 ## Import a soundpack
 
@@ -64,20 +89,34 @@ contain a `config.json` (V2 format).
 - `keyboard_pack {"id": "keyboard/..."}`
 - `packs` — list available packs
 
-Mute is also the `Ctrl+Alt+M` hotkey, and persists.
+## Files
+
+| Path | What |
+|---|---|
+| `manifest.json` | Omarchy plugin manifest (bar-widget + service) |
+| `Panel.qml` | Bar icon + popup panel (with **Import pack…** button) |
+| `Service.qml` | Headless service (daemon lifecycle + import flow) |
+| `Model.js` | Status/pack parsing helpers |
+| `scripts/sankey-setup` | One-click installer |
+| `scripts/sankey-import-pack.py` | GTK4 file-picker + ZIP extractor |
+| `scripts/build-sankeyd.sh` | Verified-prebuilt-or-source daemon build |
+| `scripts/uninstall.sh` | Removes daemon, unit file, binary (`--purge`: packs too) |
+| `daemon/` | The `sankeyd` Rust daemon (trimmed MechvibesDX core) |
+| `daemon/soundpacks/` | Built-in V2 soundpacks |
 
 ## Layout
 
 ```
 ~/.local/bin/sankeyd                 binary
-~/.local/share/sankey/soundpacks/    built-in packs
+~/.local/share/sankey/soundpacks/    built-in + imported packs
 ~/.local/share/sankey/data/config.json   settings (persisted by ctl)
+~/.local/share/sankey/bar-section    last bar section chosen in Settings
 $XDG_RUNTIME_DIR/sankey.sock         control socket
 ```
 
 ## Build the daemon by hand
 
-```
+```sh
 cargo build --release --manifest-path daemon/Cargo.toml
 ```
 

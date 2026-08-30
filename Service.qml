@@ -11,7 +11,9 @@ Item {
 
   property var shell: null
   property var manifest: null
-  property string pluginDir: ""
+  readonly property string pluginDir: manifest && manifest.__sourceDir
+    ? String(manifest.__sourceDir)
+    : Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.sandeshrai00.sankey"
 
   readonly property string pluginId: manifest && manifest.id
     ? String(manifest.id) : "io.github.sandeshrai00.sankey"
