@@ -40,6 +40,7 @@ Item {
 
   property string deleteConfirmId: ""
   property bool deleting: false
+  property string toast: ""
   function prettyForValue(v) {
     for (var i = 0; i < options.length; i++) if (optionValue(options[i]) === v) return optionLabel(options[i])
     // fallback pretty like Model.prettyPackName
@@ -164,10 +165,11 @@ Item {
         x: 0
         y: trigger.height + Style.spacing.xxs
         width: trigger.width
-        property int confirmH: root.deleteConfirmId !== "" ? 76 : 0
+        property int confirmH: root.deleteConfirmId !== "" ? confirmFooter.height + 1 : 0
+        property int toastH: root.toast !== "" ? toastFooter.height + 1 : 0
         implicitHeight: Math.max(root.popupMinHeight,
-                                 Math.min(resultList.contentHeight + Style.space(50) + confirmH,
-                                          root.popupRowHeight * 6 + 5 * Style.spacing.labelGap + Style.space(50) + confirmH))
+                                 Math.min(resultList.contentHeight + Style.space(50) + confirmH + toastH,
+                                          root.popupRowHeight * 6 + 5 * Style.spacing.labelGap + Style.space(50) + confirmH + toastH))
         padding: Style.spacing.hairline
         leftPadding: Border.left(root.popupBorderSpec) + Style.spacing.hairline
         rightPadding: Border.right(root.popupBorderSpec) + Style.spacing.hairline
@@ -243,7 +245,7 @@ Item {
           Item {
             id: listContainer
             width: parent.width
-            height: popup.height - searchHeader.height - 1 - (confirmFooter.visible ? confirmFooter.height + 1 : 0) - Style.spacing.xxs
+            height: popup.height - searchHeader.height - 1 - (confirmFooter.visible ? confirmFooter.height + 1 : 0) - (toastFooter.visible ? toastFooter.height + 1 : 0) - Style.spacing.xxs
 
             Text {
               textFormat: Text.PlainText
@@ -440,9 +442,33 @@ Item {
               }
             }
             Item { width: 1; height: Style.spacing.xs }
+           }
+          Column {
+            id: toastFooter
+            visible: root.toast !== ""
+            width: parent.width
+            spacing: Style.spacing.xs
+            Rectangle {
+              width: parent.width
+              height: 1
+              color: Util.alpha(root.foreground, 0.10)
+            }
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width - Style.spacing.md*2
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: root.toast
+              color: root.foreground
+              opacity: 0.7
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+              horizontalAlignment: Text.AlignHCenter
+            }
+            Item { width: 1; height: Style.spacing.xs }
           }
-        }
-      }
-    }
-  }
-}
+         }
+       }
+     }
+   }
+ }

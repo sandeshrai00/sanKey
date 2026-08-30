@@ -733,6 +733,7 @@ Panel {
                 placeholderText: "Search packs…"
                 deleteConfirmId: root.deleteConfirmId
                 deleting: root.deleting
+                toast: root.deleteToast
                 onChanged: function(v) { root.setKeyboardPack(v) }
                 onDeleteRequested: function(v) { root.deleteConfirmId = v }
                 onConfirmDelete: function(v) { root.deletePack(v) }
@@ -752,17 +753,6 @@ Panel {
                 enabled: root.running && root.keyboardPacks.length > 1
                 onClicked: root.pickRandomPack()
               }
-            }
-
-            Text {
-              visible: root.deleteToast !== ""
-              width: parent.width
-              text: root.deleteToast
-              color: root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
             }
 
             Row {
