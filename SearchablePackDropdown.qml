@@ -241,8 +241,9 @@ Item {
           }
 
           Item {
+            id: listContainer
             width: parent.width
-            height: popup.height - searchHeader.height - Style.spacing.xxs - 1
+            height: popup.height - searchHeader.height - 1 - (confirmFooter.visible ? confirmFooter.height + 1 : 0) - Style.spacing.xxs
 
             Text {
               textFormat: Text.PlainText
@@ -379,64 +380,66 @@ Item {
                 }
               }
             }
+          }
 
-            // Inline confirm footer — inside popup, with icon+text+busy
-            Rectangle {
-              visible: root.deleteConfirmId !== ""
-              width: parent.width
-              height: 1
-              color: Util.alpha(root.foreground, 0.10)
-            }
-            Column {
-              visible: root.deleteConfirmId !== ""
-              width: parent.width
+          // Inline confirm footer — inside popup, below list (not overlapping)
+          Rectangle {
+            id: confirmSep
+            visible: root.deleteConfirmId !== ""
+            width: parent.width
+            height: 1
+            color: Util.alpha(root.foreground, 0.10)
+          }
+          Column {
+            id: confirmFooter
+            visible: root.deleteConfirmId !== ""
+            width: parent.width
+            spacing: Style.spacing.xs
+            // ponytail: inside-popup confirm, no extra popup
+            property string pretty: root.prettyForValue(root.deleteConfirmId)
+            Item { width: 1; height: Style.spacing.xs }
+            Row {
+              width: parent.width - Style.spacing.md*2
+              anchors.horizontalCenter: parent.horizontalCenter
               spacing: Style.spacing.xs
-              // ponytail: inside-popup confirm, no extra popup
-              property string pretty: root.prettyForValue(root.deleteConfirmId)
-              Item { width: 1; height: Style.spacing.xs }
-              Row {
-                width: parent.width - Style.spacing.md*2
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Style.spacing.xs
-                Text {
-                  text: ""
-                  color: "#ff6b6b"
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                }
-                Text {
-                  textFormat: Text.PlainText
-                  text: "Delete \"" + parent.parent.pretty + "\"?"
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-                  width: parent.width - 20
-                  wrapMode: Text.WordWrap
-                }
+              Text {
+                text: ""
+                color: "#ff6b6b"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
               }
-              Row {
-                width: parent.width - Style.spacing.md*2
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Style.spacing.sm
-                Button {
-                  text: root.deleting ? "Deleting…" : "Delete"
-                  iconText: root.deleting ? "⏳" : ""
-                  foreground: "#ff6b6b"
-                  bordered: true
-                  enabled: !root.deleting
-                  onClicked: root.confirmDelete(root.deleteConfirmId)
-                }
-                Button {
-                  text: "Cancel"
-                  foreground: root.foreground
-                  bordered: true
-                  enabled: !root.deleting
-                  onClicked: { root.deleteConfirmId = ""; root.cancelDelete() }
-                }
+              Text {
+                textFormat: Text.PlainText
+                text: "Delete \"" + parent.parent.pretty + "\"?"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+                width: parent.width - 20
+                wrapMode: Text.WordWrap
               }
-              Item { width: 1; height: Style.spacing.xs }
             }
+            Row {
+              width: parent.width - Style.spacing.md*2
+              anchors.horizontalCenter: parent.horizontalCenter
+              spacing: Style.spacing.sm
+              Button {
+                text: root.deleting ? "Deleting…" : "Delete"
+                iconText: root.deleting ? "⏳" : ""
+                foreground: "#ff6b6b"
+                bordered: true
+                enabled: !root.deleting
+                onClicked: root.confirmDelete(root.deleteConfirmId)
+              }
+              Button {
+                text: "Cancel"
+                foreground: root.foreground
+                bordered: true
+                enabled: !root.deleting
+                onClicked: { root.deleteConfirmId = ""; root.cancelDelete() }
+              }
+            }
+            Item { width: 1; height: Style.spacing.xs }
           }
         }
       }
