@@ -70,6 +70,10 @@ Panel {
       commitProc.running = true
   }
 
+  // ponytail: one fork per click, no poll - reused install pattern
+  property bool updateBusy: false
+  property string updateStatus: ""
+
   // The bar sizes widgets by their implicit size; the base Panel is a plain
   // Item that does not inherit it, so report the button's.
   implicitWidth: button.implicitWidth
@@ -182,6 +186,28 @@ Panel {
     onExited: function(exitCode) {
       if (exitCode === 0) root.pluginCommit = String(stdout.text || "").trim()
     }
+  }
+
+  Process {
+    id: updateProc
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      root.updateBusy = false
+      var out = String(stdout.text || "").trim()
+      var err = String(stderr.text || "").trim()
+      if (out.indexOf("is up to date") !== -1) root.updateStatus = "Up to date."
+      else if (out.indexOf("Updated") !== -1) root.updateStatus = "Updated."
+      else if (exitCode !== 0) root.updateStatus = err !== "" ? err.split("\n").pop() : "Update failed."
+      else root.updateStatus = out !== "" ? out.split("\n").pop() : "Done."
+      clearUpdateTimer.restart()
+    }
+  }
+
+  Timer {
+    id: clearUpdateTimer
+    interval: 5000
+    onTriggered: root.updateStatus = ""
   }
 
   function remove() {
@@ -523,13 +549,31 @@ Panel {
             }
             PanelSeparator { foreground: root.bar.foreground }
             Button {
-              text: "Update"
-              iconText: "󰚰"
+              text: root.updateBusy ? "Updating…" : "Update"
+              iconText: root.updateBusy ? "⏳" : "󰚰"
               foreground: root.bar.foreground
               bordered: true
               width: parent.width
               tooltipText: "Update Sorakey plugin"
-              onClicked: Quickshell.execDetached(["omarchy","plugin","update","io.github.sandeshrai00.sorakey","--yes"])
+              enabled: !root.updateBusy
+              onClicked: {
+                if (root.updateBusy) return
+                root.updateBusy = true
+                root.updateStatus = "Updating…"
+                updateProc.command = ["omarchy","plugin","update","io.github.sandeshrai00.sorakey","--yes"]
+                updateProc.running = true
+              }
+            }
+            Text {
+              visible: root.updateStatus !== ""
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: root.updateStatus
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
             }
             Text {
               visible: root.pluginVersion !== ""
@@ -711,12 +755,19 @@ Panel {
 
             Button {
               id: updateButton
-              text: "Update"
-              iconText: "󰚰"
+              text: root.updateBusy ? "Updating…" : "Update"
+              iconText: root.updateBusy ? "⏳" : "󰚰"
               foreground: root.bar.foreground
               bordered: true
               tooltipText: "Update Sorakey plugin"
-              onClicked: Quickshell.execDetached(["omarchy","plugin","update","io.github.sandeshrai00.sorakey","--yes"])
+              enabled: !root.updateBusy
+              onClicked: {
+                if (root.updateBusy) return
+                root.updateBusy = true
+                root.updateStatus = "Updating…"
+                updateProc.command = ["omarchy","plugin","update","io.github.sandeshrai00.sorakey","--yes"]
+                updateProc.running = true
+              }
             }
 
             Item { width: Math.max(0, parent.width - startStopButton.width - restartButton.width - updateButton.width - removeButton.width - parent.spacing*3 - Style.space(8)); height: 1 }
@@ -731,6 +782,18 @@ Panel {
               onClicked: root.remove()
             }
           }
+
+            Text {
+              visible: root.updateStatus !== ""
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: root.updateStatus
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
         }
       }
     }
