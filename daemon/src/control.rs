@@ -229,9 +229,13 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     });
     if was_active {
         let base2 = paths::soundpacks::get_builtin_soundpacks_dir();
-        let mut ids = collect_packs(&base2, "keyboard");
-        ids.sort();
-        let next = ids.first().cloned().unwrap_or_default();
+        let ids = collect_packs(&base2, "keyboard");
+        // Random fallback, not alphabetically first
+        let next = {
+            use rand::seq::IndexedRandom;
+            let mut rng = rand::rng();
+            ids.choose(&mut rng).cloned().unwrap_or_default()
+        };
         let rec = if !next.is_empty() { recommended_volume_for(&next) } else { None };
         crate::state::config_writer::apply(|c| {
             c.keyboard_soundpack = next.clone();

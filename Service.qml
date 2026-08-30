@@ -43,7 +43,7 @@ Item {
     }
   }
 
-  Timer { id: clearImportTimer; interval: 8000; onTriggered: root.lastImportError = "" }
+  Timer { id: clearImportTimer; interval: 4000; onTriggered: { root.lastImportError = ""; root.lastImportResult = "" } }
 
   Process {
     id: importHelper
@@ -64,6 +64,7 @@ Item {
         root.lastImportResult = last.substring(3).trim()
         root.lastImportError = ""
         root.packsImported(root.lastImportResult)
+        clearImportTimer.restart()
       } else if (last.startsWith("ERROR:")) {
         var msg = last.substring(6).trim()
         if (msg === "Cancelled" || msg.toLowerCase().indexOf("cancel") !== -1) {

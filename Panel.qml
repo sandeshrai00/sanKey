@@ -57,6 +57,7 @@ Panel {
   property var keyboardPacks: []
   property real perPackVolume: 100
   property string deleteConfirmId: ""
+  property bool deleting: false
 
   readonly property string statusText: {
     if (setupBusy) return "Installing…"
@@ -118,9 +119,9 @@ Panel {
   }
 
   function deletePack(id) {
-    if (!id) return
+    if (!id || root.deleting) return
+    root.deleting = true
     root.sendCtl({ cmd: "delete_pack", id: id })
-    root.deleteConfirmId = ""
   }
 
   function pickRandomPack() {
@@ -330,9 +331,16 @@ Panel {
     id: packsProc
     command: [root.sorakeyBin, "ctl", "{\"cmd\":\"packs\"}"]
     onExited: function(exitCode) {
-      if (exitCode !== 0) return
+      if (exitCode !== 0) {
+        if (root.deleting) { root.deleting = false }
+        return
+      }
       var p = Model.parsePacks(stdout.text)
       root.keyboardPacks = p.keyboard
+      if (root.deleting) {
+        root.deleting = false
+        root.deleteConfirmId = ""
+      }
     }
     stdout: StdioCollector { waitForEnd: true }
   }
@@ -341,7 +349,11 @@ Panel {
   Process {
     id: ctlProc
     command: [root.sorakeyBin, "ctl", "{}"]
-    onExited: function() { root.refreshStatus() }
+    onExited: function() {
+      root.refreshStatus()
+      if (root.deleting) root.refreshPacks()
+      else if (root.deleteConfirmId !== "" && stdout.text.indexOf("deleted") !== -1) root.refreshPacks()
+    }
     stdout: StdioCollector { waitForEnd: true }
   }
 
@@ -707,6 +719,7 @@ Panel {
                 placeholderText: "Search packs…"
                 onChanged: function(v) { root.setKeyboardPack(v) }
                 onDeleteRequested: function(v) {
+                  kbPack.close()
                   root.deleteConfirmId = v
                 }
               }
@@ -743,16 +756,18 @@ Panel {
               Row {
                 spacing: Style.space(8)
                 Button {
-                  text: "Delete"
-                  iconText: ""
+                  text: root.deleting ? "Deleting…" : "Delete"
+                  iconText: root.deleting ? "⏳" : ""
                   foreground: "#ff6b6b"
                   bordered: true
+                  enabled: !root.deleting
                   onClicked: root.deletePack(root.deleteConfirmId)
                 }
                 Button {
                   text: "Cancel"
                   foreground: root.bar.foreground
                   bordered: true
+                  enabled: !root.deleting
                   onClicked: root.deleteConfirmId = ""
                 }
               }
