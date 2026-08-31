@@ -5,15 +5,7 @@ use chrono::{ DateTime, Utc };
 use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
 
-/// Every field defaults independently, so one bad or absent entry costs the
-/// user that single setting instead of the whole document. Without this a
-/// hand-edited `"volume": "loud"` fails the entire parse, and the load path
-/// then writes defaults over the file - theme, customizations and device
-/// choices included.
-///
-/// `deserialize_lenient` additionally absorbs a wrong-typed *value* (`null`,
-/// `[]`, a string where a number belongs), which a bare `#[serde(default)]`
-/// does not: `default` covers a missing key, not a present-but-invalid one.
+/// Each field defaults on its own — one bad entry doesn't wipe the file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppConfig {
@@ -35,17 +27,7 @@ pub struct AppConfig {
     pub auto_start: bool,
 }
 
-/// Parse a config document, discarding only the entries that cannot be read.
-///
-/// Each key is tried on its own against a default document; one that fails to
-/// deserialize is dropped, and `#[serde(default)]` on the struct then fills
-/// that field from `AppConfig::default()`. This matters over a per-field
-/// `unwrap_or_default()`: the fallback for a damaged `volume` has to be the
-/// config's 1.0, not `f32::default()`, which would silently leave the app
-/// inaudible.
-///
-/// Only a document that is not a JSON object at all - truncated, or not JSON -
-/// still fails here, which is what routes the caller to the preserve path.
+/// Parse config leniently — drop bad fields, keep the rest.
 pub fn parse_lenient(contents: &str) -> Result<AppConfig, String> {
     let value: serde_json::Value = serde_json
         ::from_str(contents)
@@ -55,13 +37,10 @@ pub fn parse_lenient(contents: &str) -> Result<AppConfig, String> {
         return Err("config is not a JSON object".to_string());
     };
 
-    // Probe each entry against an otherwise-default document, so a key is
-    // judged only on its own merits and cannot be failed by a bad neighbour.
+    // try each key against a default document
     let mut accepted = serde_json::Map::new();
     for (key, entry) in object {
-        // A null soundpack reads as "no pack" rather than as a damaged entry:
-        // "" is the engine's supported no-sound state, so honouring the user's
-        // null is closer to their intent than restoring the default pack.
+        // null soundpack means "no sound", not an error
         let entry = if
             entry.is_null() &&
             key.as_str() == "keyboard_soundpack"
@@ -86,7 +65,7 @@ pub fn parse_lenient(contents: &str) -> Result<AppConfig, String> {
         .map_err(|e| format!("config could not be rebuilt: {}", e))
 }
 
-/// Outcome of trying to move an unparseable config out of the way.
+/// Result of trying to preserve a corrupt config.
 enum Preserved {
     /// There was no file to preserve - a first run, or it was deleted.
     Nothing,
@@ -96,14 +75,7 @@ enum Preserved {
     Failed(String),
 }
 
-/// Move an unparseable config aside so its bytes survive, returning where it
-/// went.
-///
-/// Renaming rather than copying means the original path is free for a fresh
-/// default file without a window where both are half-written. An existing
-/// `.corrupt` from an earlier failure is never clobbered - the first failure
-/// usually holds the settings worth recovering, so later ones get a numbered
-/// suffix instead.
+/// Move corrupt config aside so user data survives.
 fn preserve_corrupt_config(config_path: &std::path::Path) -> Preserved {
     if !config_path.exists() {
         return Preserved::Nothing;
@@ -115,8 +87,7 @@ fn preserve_corrupt_config(config_path: &std::path::Path) -> Preserved {
         std::path::PathBuf::from(name)
     };
 
-    // First failure gets the plain `.corrupt` name; later ones are numbered so
-    // no earlier rescue is overwritten.
+    // numbered suffix so first rescue isn't overwritten
     let mut target = base.clone();
     let mut attempt = 1;
     while target.exists() {
@@ -125,7 +96,7 @@ fn preserve_corrupt_config(config_path: &std::path::Path) -> Preserved {
         target = std::path::PathBuf::from(name);
         attempt += 1;
 
-        // Refuse to spin forever if something is generating these.
+        // avoid infinite loop
         if attempt > 100 {
             return Preserved::Failed(
                 "too many saved copies of a damaged config already exist".to_string()
@@ -140,7 +111,7 @@ fn preserve_corrupt_config(config_path: &std::path::Path) -> Preserved {
 }
 
 impl AppConfig {
-    /// Check if config data has changed (excluding metadata fields)
+    /// Has data changed (ignoring metadata)?
     pub fn data_equals(&self, other: &Self) -> bool {
         self.keyboard_soundpack == other.keyboard_soundpack
             && self.volume == other.volume
@@ -151,8 +122,7 @@ impl AppConfig {
             && self.per_pack_volume == other.per_pack_volume
     }
 
-    /// Effective volume for current pack: per-pack if present, else global volume.
-    /// Keyboard volume is per-pack — the slider is per-pack.
+    /// Effective volume for the current pack.
     pub fn effective_volume(&self) -> f32 {
         if let Some(per) = self.per_pack_volume.get(&self.keyboard_soundpack) {
             per.clamp(0.0, 1.0)
@@ -164,7 +134,6 @@ impl AppConfig {
     pub fn load() -> Self {
         let config_path = paths::data::config_json();
 
-        // Ensure data directory exists
         if let Some(parent) = config_path.parent() {
             if let Err(_) = path::ensure_directory_exists(parent) {
                 crate::always_eprint!("⚠️  Could not create data directory");
@@ -173,9 +142,7 @@ impl AppConfig {
 
         debug_print!("📖 Loading config from: {}", config_path.display());
 
-        // Read and parse separately: a read failure (first run) and a parse
-        // failure (damaged document) need different handling, and only the
-        // latter has bytes worth preserving.
+        // read then parse — different errors, different handling
         let parsed = std::fs
             ::read_to_string(&config_path)
             .map_err(|e| format!("could not read '{}': {}", config_path.display(), e))
@@ -185,7 +152,7 @@ impl AppConfig {
             Ok(mut config) => {
                 let mut config_updated = false;
 
-                // Migrate old soundpack IDs to new Sorakey names
+                // migrate old pack IDs
                 let migrate = |old: &str, new: &str| (old.to_string(), new.to_string());
                 let renames = [
                     migrate("oreo", "keyboard/sankey-oreo"),
@@ -210,23 +177,8 @@ impl AppConfig {
                     }
                 }
 
-                // Drop index-based audio device IDs, reverting to the system
-                // default.
-                //
-                // `output_{index}` resolved by enumeration position, which is
-                // not an identity: unplugging any device shifts everything
-                // after it down a slot, so the saved index may already point at
-                // a different device than the one the user picked. Resolving it
-                // one last time would only launder that guess into a
-                // permanent-looking name-based ID, so a selection that can no
-                // longer be trusted is discarded instead. The user picks again,
-                // and from then on the name-based ID stays put.
-                //
-                // Deliberately does not enumerate devices: that costs hundreds
-                // of ms on a path that runs during `config_writer`'s
-                // `get_or_init`. Nothing reachable from here may call
-                // `config_writer::current()` either - that would re-enter the
-                // initialising `OnceLock` and deadlock.
+                // drop index-based device IDs — they're unstable, revert to default
+
                 if let Some(device_id) = config.selected_audio_device.clone() {
                     if crate::libs::device_manager::is_legacy_index_device_id(&device_id) {
                         crate::always_print!(
@@ -238,14 +190,14 @@ impl AppConfig {
                     }
                 }
 
-                // Migrate default volume from 1.0 (100%) to 0.6 (60%)
+                // migrate default volume 1.0 -> 0.6
                 if config.volume == 1.0 {
                     crate::always_print!("🔄 Migrating default volume: 1.0 → 0.6");
                     config.volume = 0.6;
                     config_updated = true;
                 }
 
-                // Sync auto_start with actual registry state
+                // sync auto_start with system
                 let actual_auto_start = crate::utils::auto_startup::get_auto_startup_state();
                 if config.auto_start != actual_auto_start {
                     crate::always_print!(
@@ -257,7 +209,7 @@ impl AppConfig {
                     config_updated = true;
                 }
 
-                // Save if any migrations were applied
+                // save if migrated
                 if config_updated {
                     config.last_updated = chrono::Utc::now();
                     let _ = config.save();
@@ -266,20 +218,14 @@ impl AppConfig {
                 config
             }
             Err(e) => {
-                // Per-field tolerance above means reaching here needs the
-                // document itself to be unreadable (truncated, not JSON, or
-                // unreadable from disk) - not merely one bad setting.
+                // here means the whole document is unreadable
                 crate::always_eprint!("❌ Failed to load config file: {}", e);
                 crate::always_eprint!("   Config path: {}", config_path.display());
 
-                // Never overwrite the user's file in place: it is the only
-                // copy of their theme, customizations and device choices, and
-                // a hand-editing slip is recoverable only while those bytes
-                // still exist. Move it aside first, and if it cannot be moved,
-                // do not write defaults over it at all.
+                // don't overwrite corrupt file — move it aside first
                 match preserve_corrupt_config(&config_path) {
                     Preserved::Nothing => {
-                        // No file to lose (first run, or it was deleted).
+                        // first run, nothing to preserve
                         let default_config = Self::default();
                         let _ = default_config.save();
                         default_config
@@ -307,14 +253,7 @@ impl AppConfig {
         }
     }
 
-    /// Write this struct over `config.json`, replacing every field.
-    ///
-    /// Deliberately **not** public. Reaching this from a subsystem means
-    /// holding an `AppConfig` across time and writing it back, which reverts
-    /// whatever another subsystem changed in between - the defect that shipped
-    /// three times from three unrelated call sites. `config_writer::apply` is
-    /// the only caller outside this module's own load path, and it always
-    /// writes state it owns and has just mutated.
+    /// Write config to disk — only via `config_writer::apply` outside this module.
     pub(in crate::state) fn save(&self) -> Result<(), String> {
         let config_path = paths::data::config_json();
         debug_print!("💾 Saving config to: {}", config_path.display());
@@ -344,28 +283,19 @@ impl Default for AppConfig {
 mod tests {
     use super::*;
 
-    /// Why `save()` is `pub(in crate::state)` and `config_writer::apply` is the
-    /// only public way to write.
-    ///
-    /// `save()` rewrites the entire struct, so a writer that mutates a copy it
-    /// captured earlier reverts every field someone else changed in between.
-    /// This is the mute bug: the volume path held a config from before the mute
-    /// click and wrote `enable_sound: true` back over it. The shape is
-    /// reproduced here on plain structs because it can no longer be expressed
-    /// against the real API - there is no public function that accepts an
-    /// `AppConfig` to persist, so a caller has nothing to hold and write back.
+    /// Stale save reverts concurrent changes.
     #[test]
     fn holding_a_struct_and_writing_it_back_is_what_reverts_a_concurrent_change() {
         let on_disk = AppConfig::default();
 
-        // Volume path reads the config...
+        // volume path reads config
         let mut volume_writer_copy = on_disk.clone();
 
-        // ...then the user mutes, and that write lands on disk first.
+        // user mutes
         let mut after_mute = on_disk.clone();
         after_mute.enable_sound = false;
 
-        // Volume path now saves the copy it captured before the mute.
+        // volume path saves stale copy
         volume_writer_copy.volume = 0.5;
         let persisted = volume_writer_copy;
 
@@ -377,25 +307,20 @@ mod tests {
         );
     }
 
-    /// load path resets *every* setting on a deserialize error, so a missing
-    /// `#[serde(default)]` here would wipe the user's whole config on upgrade.
     #[test]
 
-    /// `data_equals` drives whether a change is persisted at all. A field
-    /// missing from it means the Settings toggle appears to work and is
-    /// silently forgotten on restart.
+    /// Missing field in `data_equals` silently drops the change.
     #[test]
 
-    /// The fix: re-read immediately before mutating, so the concurrent change
-    /// is already present in the struct that gets written back.
+    /// Reload before mutate to keep concurrent changes.
     #[test]
     fn reloading_before_mutating_preserves_a_concurrent_change() {
         let mut on_disk = AppConfig::default();
 
-        // User mutes first.
+        // user mutes
         on_disk.enable_sound = false;
 
-        // Volume path re-reads *now* rather than reusing an older copy.
+        // re-read before mutating
         let mut fresh = on_disk.clone();
         fresh.volume = 0.5;
 
@@ -403,8 +328,7 @@ mod tests {
         assert_eq!(fresh.volume, 0.5, "the volume change must still apply");
     }
 
-    /// Build a config document from the defaults, then apply edits, the way a
-    /// user hand-editing `config.json` would.
+    /// Helper: build config JSON with edits.
     fn config_json_with(edits: &[(&str, serde_json::Value)]) -> String {
         let mut value = serde_json::to_value(AppConfig::default()).expect("config serializes");
         let object = value.as_object_mut().expect("config is a json object");
@@ -414,9 +338,7 @@ mod tests {
         value.to_string()
     }
 
-    /// A null where a string belongs used to fail the whole document, which
-    /// sent the load path down the arm that wrote defaults over the file.
-    /// It must now cost only that one field.
+    /// Null string field should only affect that field.
     #[test]
     fn a_null_soundpack_costs_only_that_field() {
         let document = config_json_with(
@@ -440,10 +362,7 @@ mod tests {
         assert!(restored.auto_start, "and so must the rest");
     }
 
-    /// The other shapes a hand-edit produces: an array or a string where a
-    /// number belongs, and an outright unknown key. None may cost more than
-    /// the field it appears on - and a dropped field must fall back to the
-    /// config's own default, not the type's.
+    /// Wrong types and unknown keys only affect their field.
     #[test]
     fn wrong_typed_and_unknown_fields_do_not_fail_the_document() {
         let document = config_json_with(
@@ -466,8 +385,7 @@ mod tests {
         assert!(restored.auto_start, "a valid neighbouring setting must survive");
     }
 
-    /// A missing field is the upgrade case: an older config lacking a newer
-    /// key must load with that key defaulted, not reset everything.
+    /// Missing field defaults without losing the rest.
     #[test]
     fn a_missing_field_defaults_without_losing_the_rest() {
         let mut value = serde_json::to_value(AppConfig::default()).expect("config serializes");
@@ -487,10 +405,7 @@ mod tests {
         );
     }
 
-    /// An empty array in place of the whole document, and other non-object
-    /// shapes, cannot be salvaged field-by-field - they must be reported as a
-    /// parse failure so the caller preserves the file rather than parsing it
-    /// into silent defaults.
+    /// Non-object document is a parse failure.
     #[test]
     fn a_non_object_document_is_a_parse_failure() {
         assert!(parse_lenient("[]").is_err(), "a bare array is not a config");
@@ -498,9 +413,7 @@ mod tests {
         assert!(parse_lenient("{\"volume\": 0.5").is_err(), "a truncated document must fail");
     }
 
-    /// The destructive case the fix targets: a document too damaged to parse
-    /// at all. The user's bytes must end up in `.corrupt`, and the original
-    /// path must not still hold them - it is replaced by a fresh default.
+    /// Truncated config is preserved, not overwritten.
     #[test]
     fn a_truncated_config_is_preserved_rather_than_overwritten() {
         let dir = std::env::temp_dir().join(format!("sorakey-corrupt-{}", std::process::id()));
@@ -531,8 +444,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// A second failure must not erase the first rescue, which is usually the
-    /// one still holding the user's real settings.
+    /// Second failure doesn't clobber first rescue.
     #[test]
     fn a_second_failure_does_not_clobber_the_first_rescue() {
         let dir = std::env::temp_dir().join(
@@ -563,8 +475,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// Nothing on disk means nothing to rescue - writing defaults there is
-    /// correct and must not be mistaken for a failure.
+    /// Missing file needs no rescue.
     #[test]
     fn a_missing_config_file_is_not_treated_as_a_rescue() {
         let dir = std::env::temp_dir().join(format!("sorakey-absent-{}", std::process::id()));
@@ -579,9 +490,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// Guards the "skip redundant writes" half of the fix: re-asserting a value
-    /// that already matches must not count as a change, or mount effects will
-    /// rewrite the config continuously.
+    /// Reasserting same value is not a change.
     #[test]
     fn reasserting_an_identical_value_is_not_a_change() {
         let config = AppConfig::default();
@@ -594,10 +503,7 @@ mod tests {
         assert!(!same.data_equals(&config), "a real change must still be detected");
     }
 
-    /// A device saved as `output_{index}` cannot be trusted: the index is a
-    /// position in the enumeration, so unplugging anything ahead of it makes
-    /// it point somewhere else. Config load drops it rather than resolving it,
-    /// which would only launder the guess into a permanent-looking id.
+    /// Index-based device ID is legacy.
     #[test]
     fn an_index_based_device_id_is_recognised_as_legacy_and_droppable() {
         use crate::libs::device_manager::is_legacy_index_device_id;
@@ -605,8 +511,7 @@ mod tests {
         assert!(is_legacy_index_device_id("output_2"));
         assert!(is_legacy_index_device_id("output_0"));
 
-        // Name-based ids and the default sentinel survive: they are stable, so
-        // there is nothing to drop.
+        // stable IDs survive
         assert!(!is_legacy_index_device_id("output_name:0b3a976597860826"));
         assert!(!is_legacy_index_device_id("output_default"));
     }

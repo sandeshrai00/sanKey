@@ -1,15 +1,5 @@
-//! UI-side half of the Windows input worker: spawns the worker process,
-//! reads its event stream, and feeds the existing keyboard/mouse/hotkey
-//! channels so the audio engine (`audio/engine.rs`) sees exactly what it saw
-//! when rdev produced those events.
-//!
-//! Everything that needs `AppConfig` lives here rather than in the worker:
-//! per-device filtering and the Ctrl+Alt+M hotkey. That keeps config in one
-//! process and the pipe one-directional.
-//!
-//! If the worker cannot be kept alive (spawn failure, or it dies
-//! `MAX_RESTARTS` times), this falls back to the old rdev + device_query
-//! listeners: the focus bug comes back, but the app still makes sound.
+//! Host side of the Windows input worker. Spawns the worker, reads its
+//! events, and feeds the audio engine. Falls back to rdev if it dies.
 #![cfg(target_os = "windows")]
 
 use crossbeam_channel::Sender;
@@ -22,44 +12,29 @@ use std::time::{ Duration, Instant };
 
 use crate::libs::input_worker::WORKER_ARG;
 
-/// `CREATE_NO_WINDOW` - keeps the worker from flashing a console window.
-/// Not exposed by the winapi features this crate enables, and it is a stable
-/// documented constant.
+/// Hide worker console window.
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-/// After this many failed starts in a row we stop trying and fall back.
+/// Max consecutive failures before giving up.
 const MAX_RESTARTS: u32 = 5;
 
-/// A worker that stayed up at least this long counts as healthy, so the
-/// restart backoff resets. Without this, a worker that runs fine for hours
-/// and then dies once would be treated as the 2nd of 5 strikes forever.
+/// Uptime that counts as healthy — resets the failure count.
 const HEALTHY_UPTIME: Duration = Duration::from_secs(30);
 
-/// Bumped whenever Settings changes `enabled_keyboards`/`enabled_mice`, so
-/// the reader thread notices its cached filter is stale.
+/// Bumped when enabled keyboards/mice change.
 static CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// The lists themselves, published alongside the generation so the reader
-/// thread never has to go looking for them. Reading them from the config
-/// authority costs a clone; the `AppConfig::load()` this replaced parsed JSON,
-/// read the registry for the auto-start state and could rewrite the file - none
-/// of which belongs on the thread draining the worker's pipe, because stalling
-/// that reader back-pressures the pipe and, through it, the worker's WndProc.
+/// Cached enabled-device lists for the reader thread.
 static ENABLED_DEVICES: Mutex<Option<(Vec<String>, Vec<String>)>> = Mutex::new(None);
 
-/// Call after `AppConfig`'s enabled-device lists change (from
-/// `device_selector.rs`) to make filtering take effect immediately.
+/// Notify the reader thread that the enabled-device lists changed.
 pub fn notify_config_changed() {
     let config = crate::state::config_writer::current();
     *ENABLED_DEVICES.lock().unwrap() = Some((config.enabled_keyboards, config.enabled_mice));
-    // Published after the lists, so a reader that sees the new generation is
-    // guaranteed to find the new lists behind it.
     CONFIG_GENERATION.fetch_add(1, Ordering::Release);
 }
 
-/// Cached copy of the enabled-device filter, refreshed only when
-/// `CONFIG_GENERATION` moves - re-reading config per keystroke is what the
-/// audio path was fixed away from in Phase 1/2.
+/// Cached filter for the reader thread.
 struct DeviceFilter {
     generation: u64,
     enabled_keyboards: Vec<String>,
@@ -67,8 +42,6 @@ struct DeviceFilter {
 }
 
 impl DeviceFilter {
-    /// Reads config from disk. Called once when a worker starts, from the
-    /// supervisor thread before the read loop begins - never from inside it.
     fn load() -> Self {
         let generation = CONFIG_GENERATION.load(Ordering::Acquire);
         let (enabled_keyboards, enabled_mice) = ENABLED_DEVICES.lock()
@@ -93,12 +66,7 @@ impl DeviceFilter {
         self.generation = generation;
     }
 
-    /// Empty list = all devices allowed, matching
-    /// `InputDeviceManager::should_process_device`'s convention and what
-    /// Settings persists by default (`config.rs` defaults both to empty).
-    /// A device whose id the worker could not resolve (`-`) is allowed
-    /// through: going silent on a lookup failure would be a worse failure
-    /// mode than an unfilterable device making sound.
+    /// Empty list means all devices allowed. Unknown id ("-") also passes through.
     fn allows(&self, kind: char, device_id: &str) -> bool {
         let enabled = match kind {
             'K' => &self.enabled_keyboards,
@@ -108,8 +76,7 @@ impl DeviceFilter {
     }
 }
 
-/// Tracks Ctrl/Alt so Ctrl+Alt+M can be recognized, mirroring
-/// `input_listener.rs`'s rdev hotkey logic.
+/// Tracks Ctrl/Alt for the Ctrl+Alt+M hotkey.
 #[derive(Default)]
 struct HotkeyState {
     ctrl_pressed: bool,
@@ -117,8 +84,7 @@ struct HotkeyState {
 }
 
 impl HotkeyState {
-    /// Returns true when this event was the hotkey itself and should not
-    /// also be played as a normal key.
+    /// Returns true if this event was the hotkey and shouldn't play as a normal key.
     fn observe(&mut self, code: &str, is_down: bool) -> bool {
         match code {
             "ControlLeft" | "ControlRight" => {
@@ -136,12 +102,7 @@ impl HotkeyState {
     }
 }
 
-/// Updates the consecutive-failure count after one worker attempt.
-///
-/// A worker that stayed up for `HEALTHY_UPTIME` was clearly working, so its
-/// eventual death starts the count over instead of adding to it. Without
-/// that, a worker restarted once every few hours would still accumulate
-/// strikes and eventually trip the permanent fallback.
+/// Update failure count after one worker run.
 fn next_failure_count(failures: u32, uptime: Option<Duration>) -> u32 {
     match uptime {
         Some(uptime) if uptime >= HEALTHY_UPTIME => 0,
@@ -149,22 +110,12 @@ fn next_failure_count(failures: u32, uptime: Option<Duration>) -> u32 {
     }
 }
 
-/// How long to wait before starting the next worker: 1s, 2s, 4s, 8s, capped.
-/// Keeps a crash-looping worker from spinning the CPU.
-///
-/// `failures` is 0 when the worker that just died had been up long enough to
-/// count as healthy, and that case has to wait the *shortest* time, not the
-/// longest - a healthy worker dying once is the "user killed it in Task
-/// Manager" case, where input should come back immediately.
+/// Backoff before next restart: 1s, 2s, 4s, 8s capped.
 fn restart_delay(failures: u32) -> Duration {
     Duration::from_secs(1u64 << failures.saturating_sub(1).min(3))
 }
 
-/// Starts the worker supervision thread. Returns immediately; input starts
-/// flowing once the worker is up.
-///
-/// `on_fallback` runs if the worker can't be sustained, and should start the
-/// legacy rdev/device_query listeners. It is called at most once.
+/// Start the worker supervision thread. Calls `on_fallback` if the worker can't be kept alive.
 pub fn start_input_worker_host(
     keyboard_tx: Sender<String>,
     mouse_tx: Sender<String>,
@@ -182,9 +133,6 @@ pub fn start_input_worker_host(
                     let exit = pump_worker(child, &keyboard_tx, &mouse_tx, &hotkey_tx);
 
                     if exit == PumpExit::ChannelClosed {
-                        // The audio engine is gone, so the app is shutting
-                        // down. Restarting a worker to feed a dead channel
-                        // would just spawn a process nobody reads.
                         return;
                     }
 
@@ -202,9 +150,6 @@ pub fn start_input_worker_host(
                     "❌ [InputWorker] Giving up after {} attempts - falling back to rdev (keyboard input will not work while the app window is focused)",
                     failures
                 );
-                // Safe to start rdev now: pump_worker only returns once the
-                // worker process has been reaped, so nothing else can still
-                // be feeding these channels and doubling every sound.
                 on_fallback();
                 return;
             }
@@ -214,18 +159,10 @@ pub fn start_input_worker_host(
     });
 }
 
-/// Why `pump_worker` stopped reading, which is what decides whether a
-/// restart makes sense.
 #[derive(PartialEq)]
 enum PumpExit {
-    /// The worker's stdout closed - it exited on its own and should be
-    /// restarted.
     WorkerGone,
-    /// A local problem (pipe error, or stdout was not captured) ended the
-    /// read. The worker was killed; a restart is still worth trying.
     ReaderFailed,
-    /// The audio engine's receivers are gone, so there is nothing left to
-    /// feed. The worker was killed and no restart should follow.
     ChannelClosed,
 }
 
@@ -234,18 +171,14 @@ fn spawn_worker() -> std::io::Result<Child> {
 
     Command::new(exe)
         .arg(WORKER_ARG)
-        .stdin(Stdio::piped()) // never written to - it is the worker's EOF lifeline
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
 }
 
-/// Forwards the worker's stderr into this process's log. Without it, the
-/// `RegisterRawInputDevices`/`CreateWindowExW` error behind a permanent
-/// failure would be lost, leaving only "gave up, falling back" with no
-/// indication of why - the difference between a diagnosable field report and
-/// a dead end.
+/// Forward worker stderr to our log.
 fn drain_worker_stderr(stderr: std::process::ChildStderr) {
     std::thread::spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
@@ -254,24 +187,13 @@ fn drain_worker_stderr(stderr: std::process::ChildStderr) {
     });
 }
 
-/// Reads the worker's event lines, forwarding each to the audio channels.
-///
-/// Always leaves the worker process dead and reaped before returning, on
-/// every exit path. That matters twice over: an orphaned worker would linger
-/// in Task Manager holding a global input registration, and if the caller
-/// went on to start the rdev fallback while it still ran, every keystroke
-/// would play twice.
+/// Read worker events and forward to audio channels. Ensures worker is reaped on exit.
 fn pump_worker(
     mut child: Child,
     keyboard_tx: &Sender<String>,
     mouse_tx: &Sender<String>,
     hotkey_tx: &Sender<String>
 ) -> PumpExit {
-    // Taken (not dropped) for as long as we want the worker alive: closing
-    // this pipe is what trips the worker's stdin-EOF lifeline. `reap` below
-    // drops it deliberately - note that `Child::wait` would normally close
-    // it for us to avoid deadlocking, but it cannot once it has been moved
-    // out here, so the drop has to be explicit.
     let stdin = child.stdin.take();
 
     if let Some(stderr) = child.stderr.take() {
@@ -286,11 +208,7 @@ fn pump_worker(
     let mut filter = DeviceFilter::load();
     let mut hotkey = HotkeyState::default();
     let mut exit = PumpExit::WorkerGone;
-    // Keys/buttons the engine currently believes are held. If the worker
-    // dies while one is down, its release never arrives, and the engine's
-    // debounce would then swallow the next press of that key as a duplicate
-    // - leaving it silent until pressed twice. Releases are synthesized on
-    // the way out to keep the two sides in agreement.
+    // Track held keys so we can synthesize releases if the worker dies mid-press.
     let mut held: Vec<(char, String)> = Vec::new();
 
     for line in BufReader::new(stdout).lines() {
@@ -306,9 +224,7 @@ fn pump_worker(
         filter.refresh_if_stale();
 
         if event.kind == 'K' {
-            // Hotkey tracking runs before the device filter on purpose: the
-            // global mute toggle should work from any keyboard, even one the
-            // user disabled for soundpack playback.
+            // Check hotkey before filtering — mute should work from any keyboard.
             if hotkey.observe(event.code, event.is_down) {
                 let _ = hotkey_tx.send("TOGGLE_SOUND".to_string());
                 continue;
@@ -347,9 +263,7 @@ fn pump_worker(
     exit
 }
 
-/// Makes sure the worker is gone: closes its lifeline, then kills it in case
-/// it is wedged somewhere that ignores EOF, then waits so it does not linger
-/// as a zombie.
+/// Ensure worker is gone: close lifeline, kill, wait.
 fn reap(child: &mut Child, stdin: Option<std::process::ChildStdin>) {
     drop(stdin);
     let _ = child.kill();
@@ -363,16 +277,7 @@ struct WorkerEvent<'a> {
     is_down: bool,
 }
 
-/// Decides what to put on the wire for one event, updating `held` to match.
-/// `None` means the event is dropped and nothing is sent.
-///
-/// The device filter gates presses only. A release is forwarded whenever its
-/// press was forwarded, whatever the filter says by then: disabling a keyboard
-/// while one of its keys is held would otherwise swallow the release, and the
-/// engine's debounce would treat the next press of that key as a duplicate and
-/// stay silent. Keying the decision off `held` rather than off the filter also
-/// stops a disabled device from leaking a lone keyup sound, which testing the
-/// filter on the down alone would not.
+/// Decide what to send for one event. Filters presses; releases follow held state.
 fn wire_for_event(
     event: &WorkerEvent<'_>,
     filter: &DeviceFilter,
@@ -394,8 +299,7 @@ fn wire_for_event(
     Some(format!("UP:{}", event.code))
 }
 
-/// Parses one `K\t{device_id}\t{code}\t{down|up}` line. Returns `None` for
-/// anything malformed so a garbled line can never be mistaken for input.
+/// Parse one `K\t{device_id}\t{code}\t{down|up}` line.
 fn parse_worker_line(line: &str) -> Option<WorkerEvent<'_>> {
     let mut parts = line.split('\t');
     let kind = match parts.next()? {
@@ -445,10 +349,10 @@ mod tests {
             "",
             "K",
             "K\tabc\tKeyA",
-            "X\tabc\tKeyA\tdown", // unknown kind
-            "K\tabc\tKeyA\tsideways", // unknown direction
-            "K\tabc\t\tdown", // empty code
-            "K\tabc\tKeyA\tdown\textra", // trailing field
+            "X\tabc\tKeyA\tdown",
+            "K\tabc\tKeyA\tsideways",
+            "K\tabc\t\tdown",
+            "K\tabc\tKeyA\tdown\textra",
         ] {
             assert!(parse_worker_line(line).is_none(), "should reject {:?}", line);
         }
@@ -476,7 +380,6 @@ mod tests {
         assert!(!filter.allows('K', "kb2"));
         assert!(filter.allows('M', "m1"));
         assert!(!filter.allows('M', "m2"));
-        // Unresolvable device id fails open rather than going silent.
         assert!(filter.allows('K', "-"));
     }
 
@@ -493,8 +396,6 @@ mod tests {
             failures = next_failure_count(failures, Some(Duration::from_secs(1)));
             assert_eq!(failures, expected);
         }
-        // Only now, after MAX_RESTARTS consecutive quick deaths, does the
-        // supervisor give up and fall back to rdev.
         assert!(failures >= MAX_RESTARTS);
     }
 
@@ -506,10 +407,6 @@ mod tests {
 
     #[test]
     fn healthy_worker_death_retries_immediately_rather_than_underflowing() {
-        // A worker up longer than HEALTHY_UPTIME resets the count to 0, and
-        // that 0 reaches the backoff. Computing `failures - 1` here panicked
-        // in debug builds and wrapped to the 8s cap in release, which is the
-        // opposite of what a healthy worker's first death deserves.
         let failures = next_failure_count(4, Some(HEALTHY_UPTIME));
         assert_eq!(failures, 0);
         assert_eq!(restart_delay(failures), Duration::from_secs(1));
@@ -521,7 +418,6 @@ mod tests {
         assert_eq!(restart_delay(2), Duration::from_secs(2));
         assert_eq!(restart_delay(3), Duration::from_secs(4));
         assert_eq!(restart_delay(4), Duration::from_secs(8));
-        // Capped, and never shifts past what a u64 can hold.
         assert_eq!(restart_delay(5), Duration::from_secs(8));
         assert_eq!(restart_delay(u32::MAX), Duration::from_secs(8));
     }
@@ -542,18 +438,15 @@ mod tests {
     fn release_survives_the_device_being_disabled_mid_hold() {
         let mut held = Vec::new();
 
-        // Key goes down while the keyboard is still enabled.
         let allowed = filter_for(vec![]);
         assert_eq!(wire_for_event(&event("kb1", "KeyX", true), &allowed, &mut held).as_deref(), Some("KeyX"));
 
-        // User disables that keyboard in Settings while the key is still held.
         let disabled = filter_for(vec!["kb2"]);
         assert_eq!(
             wire_for_event(&event("kb1", "KeyX", false), &disabled, &mut held).as_deref(),
             Some("UP:KeyX"),
-            "release of an already-forwarded press must not be filtered away"
         );
-        assert!(held.is_empty(), "release must clear the held entry");
+        assert!(held.is_empty());
     }
 
     #[test]
@@ -563,8 +456,6 @@ mod tests {
 
         assert!(wire_for_event(&event("kb2", "KeyX", true), &filter, &mut held).is_none());
         assert!(held.is_empty());
-        // No matching press was forwarded, so the release is dropped too -
-        // a lone keyup would otherwise reach the engine from a muted device.
         assert!(wire_for_event(&event("kb2", "KeyX", false), &filter, &mut held).is_none());
     }
 
@@ -585,7 +476,6 @@ mod tests {
         wire_for_event(&mouse_down, &filter, &mut held);
         assert_eq!(held.len(), 2);
 
-        // Releasing the mouse "KeyX" must not clear the keyboard's entry.
         let mouse_up = WorkerEvent { kind: 'M', device_id: "m1", code: "KeyX", is_down: false };
         assert_eq!(wire_for_event(&mouse_up, &filter, &mut held).as_deref(), Some("UP:KeyX"));
         assert_eq!(held, vec![('K', "KeyX".to_string())]);
@@ -602,7 +492,6 @@ mod tests {
         state.observe("AltLeft", true);
         assert!(state.observe("KeyM", true));
 
-        // Releasing a modifier disarms it again.
         state.observe("ControlLeft", false);
         assert!(!state.observe("KeyM", true));
     }

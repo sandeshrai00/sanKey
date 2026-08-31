@@ -1,5 +1,4 @@
-//! Shared Symphonia decoder — single source for loader + converter.
-//! ponytail: dedup 2× `load_audio_with_symphonia` / `load_audio_file_samples` (~400 LOC -> 80)
+//! Shared Symphonia decoder for the loader and converter.
 
 use std::path::Path;
 

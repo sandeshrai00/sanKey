@@ -1,22 +1,8 @@
 #!/usr/bin/env python3
-"""
-Import a soundpack from a ZIP file.
+"""Import a soundpack from a ZIP.
 
-ZIP layout (one of):
-  pack-name/config.json
-  pack-name/config.json + pack-name/sound.ogg
-  pack-name/sounds/keydown.ogg  (multi-method, will be auto-converted)
-  config.json  (no enclosing folder)
-
-The config is installed at:
-  ~/.local/share/sorakey/soundpacks/keyboard/{id}/
-
-with directory structure preserved relative to config.json so any
-subdirectory paths in `audio_file` (e.g. "sounds/click.ogg") still resolve.
-
-V1 configs (no `definition_method` field) are converted to V2 before
-installing. The daemon has a V1-aware metadata loader, but the pack
-loader is V2-only, so conversion has to happen at import time.
+Handles V1→V2 conversion; preserves paths relative to config.json.
+Installs to ~/.local/share/sorakey/soundpacks/keyboard/{id}/.
 """
 
 import json
@@ -37,22 +23,21 @@ except ImportError:
 
 SOUNDPACKS = os.path.expanduser("~/.local/share/sorakey/soundpacks")
 
-# Zip bomb guard: cap total uncompressed
+# zip bomb guard
 MAX_PACK_SIZE = 20 * 1024 * 1024
 
-# Non-zip container formats the file dialog's "All Files" filter can surface
+# non-zip extensions for dialog filter
 NON_ZIP_EXTS = (".7z", ".rar", ".tar", ".gz", ".bz2", ".xz")
 
 
 def _short(value, limit=50):
-    """One-line, whitespace-collapsed, length-capped error text for messages."""
+    """Short one-line error text."""
     s = " ".join(str(value).split())
     if len(s) > limit:
         s = s[:limit - 1] + "…"
     return s or "unknown error"
 
 
-# ponytail: V1 tables deduped → _v1_shared.py (single source with admin-scripts converter)
 import importlib.util as _ilu
 import pathlib as _pl
 _spec = _ilu.spec_from_file_location("_v1_shared", str(_pl.Path(__file__).with_name("_v1_shared.py")))
@@ -63,7 +48,7 @@ _fill_missing_keys = _mod._fill_missing_keys
 
 
 def is_v1_config(cfg):
-    """V1 configs use `defines` (numeric keys) and `sound`, not V2 fields."""
+    """V1 uses `defines` + `sound`, no V2 fields."""
     if not isinstance(cfg, dict):
         return False
     if "definition_method" in cfg or "definitions" in cfg or "defs" in cfg:
@@ -74,7 +59,7 @@ def is_v1_config(cfg):
 
 
 def is_v1_multi(defines):
-    """V1 multi-method packs have string values per key (file paths)."""
+    """V1 multi-method — string file paths per key."""
     if not defines:
         return False
     string_values = sum(1 for v in defines.values() if isinstance(v, str) and v)
@@ -82,7 +67,7 @@ def is_v1_multi(defines):
 
 
 def looks_auto_generated_id(s):
-    """True when the id looks like a placeholder or machine-generated string."""
+    """Check if id looks auto-generated."""
     if not s:
         return True
     s = str(s).strip()
@@ -96,8 +81,7 @@ def looks_auto_generated_id(s):
 
 
 def derive_name_from_zip(zip_path):
-    """Turn a path like '/home/user/My Cool Pack.zip' into
-    ('my-cool-pack', 'My Cool Pack') — slug + human label."""
+    """Zip path -> (slug, label)."""
     base = os.path.basename(zip_path)
     if base.lower().endswith(".zip"):
         base = base[:-4]
@@ -111,11 +95,7 @@ def derive_name_from_zip(zip_path):
 
 
 def get_audio_duration_ms(audio_path, zf=None, zip_prefix=None):
-    """Get audio duration in ms for any audio format.
-
-    Uses ffprobe for non-WAV formats (MP3, OGG, FLAC, etc.).
-    Falls back to Python stdlib wave module for WAV files.
-    Returns None on failure."""
+    """Audio duration in ms. ffprobe for most, wave for WAV."""
     try:
         if zf is not None and zip_prefix is not None:
             zip_path = zip_prefix + audio_path
@@ -130,7 +110,7 @@ def get_audio_duration_ms(audio_path, zf=None, zip_prefix=None):
     except Exception:
         return None
 
-    # Check if WAV
+    # check WAV
     is_wav = data[:4] == b'RIFF' and data[8:12] == b'WAVE'
     if is_wav:
         try:
@@ -153,7 +133,7 @@ def get_audio_duration_ms(audio_path, zf=None, zip_prefix=None):
                 capture_output=True, text=True, timeout=10
             )
         except Exception:
-            # ffprobe missing/timed out — fall back to the 100ms default
+            # ffprobe missing — fallback to 100ms
             return None
     finally:
         if tmp:
@@ -170,7 +150,7 @@ def get_audio_duration_ms(audio_path, zf=None, zip_prefix=None):
 
 
 def _case_insensitive_match(filename, file_list):
-    """Find filename in file_list case-insensitively. Also matches basename."""
+    """Case-insensitive file lookup."""
     filename_lower = filename.lower()
     base_lower = os.path.basename(filename).lower()
     for f in file_list:
@@ -181,11 +161,10 @@ def _case_insensitive_match(filename, file_list):
     return None
 
 
-# ponytail: SMART_DONOR + _fill_missing_keys now in _v1_shared.py — see above
 
 
 def convert_v1_to_v2(cfg, available_files, soundpack_dir=None, zf=None, zip_prefix=None):
-    """Convert a V1 soundpack config dict in place to V2."""
+    """Convert V1 config to V2."""
     defines = cfg.pop("defines", {})
     sound = cfg.pop("sound", None)
 
@@ -252,7 +231,7 @@ def convert_v1_to_v2(cfg, available_files, soundpack_dir=None, zf=None, zip_pref
             definition_method = "multi"
             audio_file = None
     else:
-        # Single-method: defines are [start_ms, duration_ms] sprite regions.
+        # single-method: sprite regions
         for code, timing in defines.items():
             w3c_name = V1_KEY_TABLE.get(str(code))
             if not w3c_name:
@@ -296,8 +275,7 @@ def convert_v1_to_v2(cfg, available_files, soundpack_dir=None, zf=None, zip_pref
 
 
 def find_config_in_zip(zf):
-    """Find config.json anywhere in the ZIP. Returns (config_path, config_bytes)
-    or (None, None). Prefers config.json at the shallowest level."""
+    """Find config.json in ZIP — shallowest wins."""
     candidates = []
     for name in zf.namelist():
         if name.endswith("/") or not name.endswith("config.json"):
@@ -312,7 +290,7 @@ def find_config_in_zip(zf):
 
 
 def list_files_in_zip(zf, config_path, strip_folder):
-    """List of file paths (relative to config) in ZIP after stripping enclosing folder."""
+    """List files relative to config."""
     prefix = ""
     if strip_folder:
         top = config_path.split("/")[0]
@@ -324,15 +302,12 @@ def list_files_in_zip(zf, config_path, strip_folder):
         rel = name[len(prefix):] if prefix and name.startswith(prefix) else name
         if not rel:
             continue
-        # Keep nested paths (sounds/click.ogg) but store as relative
         out.append(rel)
     return out
 
 
 def strip_enclosing_folder(zf, config_path):
-    """If everything in the ZIP lives under a single top-level folder that
-    also contains the config, return names relative to that folder. Otherwise
-    return False."""
+    """Check if ZIP has single enclosing folder."""
     names = [n for n in zf.namelist() if not n.endswith("/")]
     if not names:
         return False
@@ -348,7 +323,7 @@ def strip_enclosing_folder(zf, config_path):
 
 
 def validate_v2(cfg):
-    """Return None on success, or a short human-readable error reason."""
+    """Validate V2 config — None ok, else reason."""
     if not cfg.get("name"):
         return "no name"
     if not cfg.get("author"):
@@ -410,7 +385,7 @@ def import_zip(zip_path):
             if err:
                 return None, f"Bad config: {err}"
 
-        # Validate audio files exist before destroying old install (for both methods)
+        # validate audio exists before replacing install
         if cfg.get("definition_method") == "single":
             audio_rel = cfg.get("audio_file", "")
             if audio_rel and audio_rel not in available_files and not _case_insensitive_match(audio_rel, available_files):
@@ -426,7 +401,7 @@ def import_zip(zip_path):
                 return None, f"Missing audio: {names}"
 
         import shutil, pathlib
-        # Zip bomb guard: cap total uncompressed
+        # zip bomb guard
         try:
             total = sum(zf.getinfo(n).file_size for n in zf.namelist())
             if total > MAX_PACK_SIZE:
@@ -448,11 +423,11 @@ def import_zip(zip_path):
                 rel = name[len(prefix):] if prefix and name.startswith(prefix) else name
                 if not rel:
                     continue
-                # ZIP traversal guard
+                # guard against traversal
                 if rel.startswith("/") or ".." in pathlib.PurePosixPath(rel).parts or "\\" in rel:
                     continue
                 target = os.path.join(tmp_dir, rel)
-                # ensure target stays under tmp_dir
+                # keep inside tmp_dir
                 if not os.path.abspath(target).startswith(os.path.abspath(tmp_dir)):
                     continue
                 os.makedirs(os.path.dirname(target), exist_ok=True)

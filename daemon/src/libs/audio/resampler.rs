@@ -23,7 +23,6 @@ pub fn resample_interleaved(
         }
     }
 
-    // ponytail: super advance — Cubic 64/32 is Hydrogen top tier (Fft-equivalent), Linear 16/8 was fast but lower HF
     let params = SincInterpolationParameters {
         sinc_len: 64,
         f_cutoff: 0.95,

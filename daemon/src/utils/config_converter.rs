@@ -3,9 +3,8 @@ use serde_json::{ Map, Value };
 use std::collections::HashMap;
 use std::path::{ Path, PathBuf };
 
-/// Get the duration of an audio file in milliseconds using Symphonia
+/// Get audio duration in ms.
 fn get_audio_duration_ms(file_path: &str) -> Result<f64, Box<dyn std::error::Error>> {
-    // Check if file exists first
     if !Path::new(file_path).exists() {
         return Err("File does not exist".into());
     } // Use symphonia for audio duration detection
@@ -16,19 +15,17 @@ fn get_audio_duration_ms(file_path: &str) -> Result<f64, Box<dyn std::error::Err
     }
 }
 
-/// Get duration using Symphonia — ponytail: reuse shared helper
+/// Get duration via shared Symphonia helper.
 fn get_duration_with_symphonia(file_path: &str) -> Result<f64, Box<dyn std::error::Error>> {
     Ok(crate::utils::symphonia::duration_ms(file_path).unwrap_or(100.0))
 }
 
-/// Convert soundpack config from version 1 to version 2
-/// Converts a V1 soundpack config to V2 in place.
+/// Convert V1 config to V2.
 pub fn convert_v1_to_v2(
     v1_config_path: &str,
     output_path: &str,
     soundpack_dir: Option<&str>
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Determine soundpack directory - use provided or infer from config path
     let soundpack_dir = if let Some(dir) = soundpack_dir {
         dir
     } else {
@@ -39,7 +36,6 @@ pub fn convert_v1_to_v2(
         inferred_dir
     };
 
-    // Read the V1 config
     let content = path
         ::read_file_contents(v1_config_path)
         .map_err(|e| format!("Failed to read V1 config: {}", e))?;
@@ -47,7 +43,6 @@ pub fn convert_v1_to_v2(
 
     let mut converted_config = Map::new();
 
-    // Copy basic fields with new V2 format
     if let Some(id) = config.get("id") {
         converted_config.insert("id".to_string(), id.clone());
     }
@@ -56,7 +51,6 @@ pub fn convert_v1_to_v2(
         converted_config.insert("name".to_string(), name.clone());
     }
 
-    // Optional fields
     if let Some(description) = config.get("description") {
         converted_config.insert("description".to_string(), description.clone());
     }
@@ -69,7 +63,6 @@ pub fn convert_v1_to_v2(
         converted_config.insert("version".to_string(), version.clone());
     }
 
-    // Convert config_version to string format
     converted_config.insert("config_version".to_string(), Value::String("2".to_string()));
 
     if let Some(icon) = config.get("icon") {
@@ -80,11 +73,8 @@ pub fn convert_v1_to_v2(
         converted_config.insert("tags".to_string(), tags.clone());
     }
 
-    // Add created_at field with current timestamp
     let now = chrono::Utc::now();
     converted_config.insert("created_at".to_string(), Value::String(now.to_rfc3339())); // Determine definition_method from V1 key_define_type or sound structure
-    // IMPORTANT: Always convert to "single" method for V2
-    // This means we'll use one main audio file with timing segments
     let v1_define_type = config
         .get("key_define_type")
         .and_then(|v| v.as_str())
@@ -96,13 +86,10 @@ pub fn convert_v1_to_v2(
         Value::String(definition_method.to_string())
     ); // Handle audio_file for "single" method
     let (audio_file_name, audio_file_info) = if v1_define_type == "multi" {
-        // For V1 multi method, we need to create a concatenated audio file
-        // First, collect all unique audio files from defines
         let mut audio_files_ordered = Vec::new();
         let mut seen_files = std::collections::HashSet::new();
 
         if let Some(defines) = config.get("defines").and_then(|d| d.as_object()) {
-            // Sort keys to ensure consistent order
             let mut sorted_keys: Vec<_> = defines.keys().collect();
             sorted_keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));
 
@@ -114,7 +101,6 @@ pub fn convert_v1_to_v2(
                             filename != "null" &&
                             !seen_files.contains(filename)
                         {
-                            // Just collect the files, we'll get timing from concatenation
                             audio_files_ordered.push(filename.to_string());
                             seen_files.insert(filename.to_string());
                         }
@@ -125,11 +111,9 @@ pub fn convert_v1_to_v2(
 
         crate::always_print!("🔧 Found {} unique audio files in V1 multi method", audio_files_ordered.len());
 
-        // Create a concatenated audio file name
         let concat_filename = "concatenated_audio.wav";
         crate::always_print!("🎵 Creating concatenated audio file: {}", concat_filename);
 
-        // Actually concatenate the audio files and get accurate timing
         let audio_file_info = match
             concatenate_audio_files_with_timing(
                 &audio_files_ordered,
@@ -146,7 +130,6 @@ pub fn convert_v1_to_v2(
 
         (concat_filename.to_string(), audio_file_info)
     } else {
-        // For V1 single method, use the main sound file
         let main_file = if let Some(sound) = config.get("sound") {
             if let Some(sound_str) = sound.as_str() {
                 crate::always_print!("🎵 Using main audio file from V1 single method: {}", sound_str);
@@ -155,7 +138,6 @@ pub fn convert_v1_to_v2(
                 return Err("Invalid sound field in V1 config".into());
             }
         } else {
-            // If no main sound file, we need to find one from the soundpack directory
             let audio_extensions = ["ogg", "mp3", "wav", "flac"];
             let mut found_audio = None;
 
@@ -189,7 +171,6 @@ pub fn convert_v1_to_v2(
 
     converted_config.insert("audio_file".to_string(), Value::String(audio_file_name.clone()));
 
-    // Add default options
     let mut options = Map::new();
     options.insert(
         "recommended_volume".to_string(),
@@ -202,13 +183,8 @@ pub fn convert_v1_to_v2(
         let key_mappings = create_iohook_to_web_key_mapping();
         crate::always_print!("🔧 Converting {} key definitions to new format (single method)", defines.len());
         if v1_define_type == "multi" {
-            // V1 multi method: defines contains IOHook code -> audio filename mappings
-            // We need to create timing based on concatenated audio file offsets
             crate::always_print!("🔧 Processing V1 multi method defines");
 
-            // Presses before releases, so a button's segments end up in that
-            // order regardless of how the JSON object was written. Within each
-            // group the code orders them, keeping the output stable.
             let mut ordered: Vec<(&String, &Value)> = defines.iter().collect();
             ordered.sort_by_key(|(code, _)| {
                 let (num, is_press) = iohook_code_and_press(code).unwrap_or((u32::MAX, true));
@@ -222,14 +198,12 @@ pub fn convert_v1_to_v2(
                             if !audio_filename.is_empty() && audio_filename != "null" {
                                 let mut key_def = Map::new();
 
-                                // Get offset and duration for this audio file
                                 if
                                     let Some(&(offset, duration)) =
                                         audio_file_info.get(audio_filename)
                                 {
                                     let end_time = offset + duration;
 
-                                    // Special debug for Enter key
                                     if key_name == "Enter" {
                                         crate::always_print!("🔍 [ENTER DEBUG] Key: {}", key_name);
                                         crate::always_print!("🔍 [ENTER DEBUG] IOHook code: {}", iohook_num);
@@ -238,7 +212,6 @@ pub fn convert_v1_to_v2(
                                         crate::always_print!("🔍 [ENTER DEBUG] Duration: {}ms", duration);
                                         crate::always_print!("🔍 [ENTER DEBUG] End time: {}ms", end_time);
 
-                                        // Check concatenated audio file duration
                                         let concat_path =
                                             format!("{}/concatenated_audio.wav", soundpack_dir);
                                         if
@@ -257,7 +230,6 @@ pub fn convert_v1_to_v2(
                                         }
                                     }
 
-                                    // Create timing based on offset in concatenated file
                                     let timing = vec![
                                         Value::Array(
                                             vec![
@@ -272,8 +244,6 @@ pub fn convert_v1_to_v2(
                                     ];
                                     key_def.insert("timing".to_string(), Value::Array(timing.clone()));
 
-                                    // Append rather than replace. A V1 pack defines each key twice - "30" for the press and "030" for the release -
-                                    // and both land on the same key here, so inserting would drop one. V2 timing is a list precisely so a key can carry both.
                                     match definitions.get_mut(key_name.as_str()) {
                                         Some(Value::Object(existing)) => {
                                             if
@@ -311,7 +281,6 @@ pub fn convert_v1_to_v2(
                 }
             }
         } else {
-            // V1 single method: defines contains IOHook code -> timing array mappings
             crate::always_print!("🔧 Processing V1 single method defines");
 
             for (iohook_code, value) in defines {
@@ -319,14 +288,12 @@ pub fn convert_v1_to_v2(
                     if let Some(key_name) = key_mappings.get(&iohook_num) {
                         let mut key_def = Map::new();
 
-                        // For single method, use timing from defines
                         if let Some(timing_array) = value.as_array() {
                             if timing_array.len() >= 2 {
                                 let start = timing_array[0].as_f64().unwrap_or(0.0) as f32;
                                 let duration = timing_array[1].as_f64().unwrap_or(100.0) as f32;
                                 let end = start + duration;
 
-                                // Create timing array with keydown and keyup
                                 let timing = vec![
                                     Value::Array(
                                         vec![
@@ -355,7 +322,6 @@ pub fn convert_v1_to_v2(
 
     converted_config.insert("definitions".to_string(), Value::Object(definitions));
 
-    // Write the converted config
     let output_json = serde_json::to_string_pretty(&converted_config)?;
     std::fs::write(output_path, output_json)?;
 
@@ -365,19 +331,16 @@ pub fn convert_v1_to_v2(
     Ok(())
 }
 
-/// Convert V2 config from multi method to single method
-/// This ensures all V2 configs use the single method format
+/// Convert V2 multi to single.
 pub fn convert_v2_multi_to_single(
     config_path: &str,
     soundpack_dir: &str
 ) -> Result<(), Box<dyn std::error::Error>> {
     crate::always_print!("🔄 Converting V2 multi method to single method...");
 
-    // Read the existing V2 config
     let content = std::fs::read_to_string(config_path)?;
     let mut config: Value = serde_json::from_str(&content)?;
 
-    // Check if this is already single method
     if let Some(definition_method) = config.get("definition_method").and_then(|v| v.as_str()) {
         if definition_method == "single" {
             crate::always_print!("✅ Already using single method, no conversion needed");
@@ -387,7 +350,6 @@ pub fn convert_v2_multi_to_single(
 
     crate::always_print!("🔧 Converting from multi method to single method");
 
-    // Analyze audio files used in definitions to find the most common one
     let mut audio_file_usage = std::collections::HashMap::new();
     if let Some(definitions) = config.get("definitions").and_then(|d| d.as_object()) {
         for (key_name, key_def) in definitions {
@@ -399,14 +361,12 @@ pub fn convert_v2_multi_to_single(
             }
         }
     }
-    // Find the most commonly used audio file
     let main_audio_file = if
         let Some((audio_file, count)) = audio_file_usage.iter().max_by_key(|(_, count)| *count)
     {
         crate::always_print!("🎵 Most used audio file: {} (used by {} keys)", audio_file, count);
         audio_file.clone()
     } else {
-        // Fallback: find any audio file in the directory
         let audio_extensions = ["ogg", "mp3", "wav", "flac"];
         let mut found_audio = None;
 
@@ -432,7 +392,6 @@ pub fn convert_v2_multi_to_single(
 
     crate::always_print!("🎵 Using main audio file for single method: {}", main_audio_file);
 
-    // Update config to single method
     config
         .as_object_mut()
         .unwrap()
@@ -443,7 +402,6 @@ pub fn convert_v2_multi_to_single(
         .unwrap()
         .insert("audio_file".to_string(), Value::String(main_audio_file.clone()));
 
-    // Convert definitions from multi to single format
     if
         let Some(definitions) = config
             .get("definitions")
@@ -456,19 +414,16 @@ pub fn convert_v2_multi_to_single(
             if let Some(key_obj) = key_def.as_object() {
                 let mut new_key_def = serde_json::Map::new();
 
-                // Check if this key was using the main audio file
                 let key_audio_file = key_obj
                     .get("audio_file")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
                 if key_audio_file == main_audio_file {
-                    // This key uses the main audio file, keep its timing
                     if let Some(timing) = key_obj.get("timing") {
                         new_key_def.insert("timing".to_string(), timing.clone());
                         crate::always_print!("✅ Key '{}' kept timing (uses main audio file)", key_name);
                     } else {
-                        // Create default timing for the whole audio file
                         let audio_path = format!("{}/{}", soundpack_dir, main_audio_file);
                         let duration = get_audio_duration_ms(&audio_path).unwrap_or(100.0);
 
@@ -486,14 +441,12 @@ pub fn convert_v2_multi_to_single(
 
                     new_definitions.insert(key_name, Value::Object(new_key_def));
                 } else if !key_audio_file.is_empty() {
-                    // This key uses a different audio file, we'll skip it in single method
                     crate::always_print!(
                         "⚠️ Key '{}' uses different audio file '{}', skipping in single method conversion",
                         key_name,
                         key_audio_file
                     );
                 } else {
-                    // No audio_file specified, create default timing
                     let audio_path = format!("{}/{}", soundpack_dir, main_audio_file);
                     let duration = get_audio_duration_ms(&audio_path).unwrap_or(100.0);
 
@@ -518,7 +471,6 @@ pub fn convert_v2_multi_to_single(
             .insert("definitions".to_string(), Value::Object(new_definitions));
     }
 
-    // Write the converted config back
     let output_json = serde_json::to_string_pretty(&config)?;
     std::fs::write(config_path, output_json)?;
 
@@ -526,14 +478,7 @@ pub fn convert_v2_multi_to_single(
     Ok(())
 }
 
-/// Move an existing file aside before something overwrites it, returning
-/// where it went (or `None` if there was nothing there).
-///
-/// Conversion writes `concatenated_audio.wav` into the soundpack folder under
-/// a fixed name. If the pack already ships a file by that name it is the
-/// author's own audio, and a re-run would destroy it with no way back. An
-/// existing `.bak` is not clobbered either - the first one is the pristine
-/// original, later ones are already-generated output.
+/// Move existing file aside before overwriting — returns backup path.
 pub fn back_up_existing_file(path: &Path) -> Result<Option<PathBuf>, String> {
     if !path.exists() {
         return Ok(None);
@@ -558,8 +503,6 @@ pub fn back_up_existing_file(path: &Path) -> Result<Option<PathBuf>, String> {
         }
     }
 
-    // Copy rather than rename: the file being backed up may still be needed as
-    // an input, and a rename would pull it out from under the conversion.
     std::fs
         ::copy(path, &target)
         .map_err(|e| format!("failed to back up {} to {}: {}", path.display(), target.display(), e))?;
@@ -568,8 +511,7 @@ pub fn back_up_existing_file(path: &Path) -> Result<Option<PathBuf>, String> {
     Ok(Some(target))
 }
 
-/// Concatenate multiple audio files and return timing information
-/// Returns HashMap with (filename -> (offset_ms, duration_ms))
+/// Concatenate audio files, return timing per file.
 fn concatenate_audio_files_with_timing(
     audio_files: &[String], // just filenames
     soundpack_dir: &str,
@@ -591,21 +533,17 @@ fn concatenate_audio_files_with_timing(
             continue;
         }
 
-        // Record the current position as the offset for this file
         let current_offset_ms =
             ((all_samples.len() as f64) / ((sample_rate as f64) * (channels as f64))) * 1000.0;
 
-        // Load audio file using Symphonia
         match load_audio_file_samples(&file_path) {
             Ok((samples, file_channels, file_sample_rate)) => {
-                // Use the first file's format as reference
                 if i == 0 {
                     sample_rate = file_sample_rate;
                     channels = file_channels;
                     crate::always_print!("   🎵 Using format: {}Hz, {} channels", sample_rate, channels);
                 }
 
-                // Convert to target format if needed
                 let converted_samples = if
                     file_sample_rate != sample_rate ||
                     file_channels != channels
@@ -628,16 +566,13 @@ fn concatenate_audio_files_with_timing(
                     samples
                 };
 
-                // Calculate the actual duration of this file after conversion
                 let actual_duration_ms =
                     ((converted_samples.len() as f64) /
                         ((sample_rate as f64) * (channels as f64))) *
                     1000.0;
 
-                // Store timing info for this file
                 timing_info.insert(filename.clone(), (current_offset_ms, actual_duration_ms));
 
-                // Special debug for Enter audio file
                 if filename == "SPMEnter.wav" {
                     crate::always_print!("🔍 [ENTER TIMING DEBUG] File: {}", filename);
                     crate::always_print!("🔍 [ENTER TIMING DEBUG] Offset: {:.2}ms", current_offset_ms);
@@ -660,7 +595,6 @@ fn concatenate_audio_files_with_timing(
             }
             Err(e) => {
                 crate::always_print!("   ❌ Failed to load {}: {}", filename, e);
-                // Continue with other files
             }
         }
     }
@@ -669,9 +603,6 @@ fn concatenate_audio_files_with_timing(
         return Err("No audio samples were loaded".into());
     }
 
-    // Save concatenated audio file. Anything already sitting at this name is
-    // the pack author's own audio; preserve it before overwriting, and abort
-    // rather than destroy it if that cannot be done.
     let output_path = format!("{}/{}", soundpack_dir, output_filename);
     back_up_existing_file(Path::new(&output_path))?;
     save_audio_file(&all_samples, channels, sample_rate, &output_path)?;
@@ -682,7 +613,6 @@ fn concatenate_audio_files_with_timing(
     crate::always_print!("✅ Successfully concatenated audio to: {}", output_path);
     crate::always_print!("🎵 Total samples: {}, Final duration: {:.2}ms", all_samples.len(), final_duration_ms);
 
-    // Debug output for Enter file timing
     if let Some((offset, duration)) = timing_info.get("SPMEnter.wav") {
         crate::always_print!(
             "🔍 [FINAL TIMING DEBUG] SPMEnter.wav: offset={:.2}ms, duration={:.2}ms, end={:.2}ms",
@@ -701,22 +631,14 @@ fn concatenate_audio_files_with_timing(
     Ok(timing_info)
 }
 
-/// Load audio file and return samples — ponytail: reuse shared decoder
+/// Load audio file samples via shared decoder.
 fn load_audio_file_samples(
     file_path: &str
 ) -> Result<(Vec<f32>, u16, u32), Box<dyn std::error::Error>> {
     crate::utils::symphonia::decode_interleaved(file_path).map_err(|e| e.into())
 }
 
-/// Convert interleaved PCM to a target channel count and sample rate.
-///
-/// Both conversions are real. Skipping the rate conversion and returning the
-/// raw samples would silently mislabel them: the concatenated output carries a
-/// single declared sample rate, so a 22050Hz clip left untouched inside a
-/// 44100Hz file plays back at double speed - one octave up.
-///
-/// Channels are converted first so the resampler operates on frames that
-/// already have the destination layout.
+/// Convert channels and rate — both matter for correct speed.
 fn convert_audio_format(
     samples: &[f32],
     from_channels: u16,
@@ -742,11 +664,7 @@ fn convert_audio_format(
     )
 }
 
-/// Remap interleaved PCM from `from_channels` to `to_channels`, preserving the
-/// frame count. Layouts beyond mono/stereo are folded down by averaging every
-/// source frame, then re-spread - crude, but it keeps the frame count (and so
-/// the duration) honest instead of passing through a buffer whose interleaving
-/// no longer matches the declared channel count.
+/// Remap channel layout, keeping frame count.
 fn convert_channels(samples: &[f32], from_channels: u16, to_channels: u16) -> Vec<f32> {
     let from = from_channels.max(1) as usize;
     let to = to_channels.max(1) as usize;
@@ -756,7 +674,6 @@ fn convert_channels(samples: &[f32], from_channels: u16, to_channels: u16) -> Ve
     }
 
     if from == 1 && to == 2 {
-        // Mono to stereo: duplicate each sample into both channels.
         return samples
             .iter()
             .flat_map(|&sample| [sample, sample])
@@ -764,7 +681,6 @@ fn convert_channels(samples: &[f32], from_channels: u16, to_channels: u16) -> Ve
     }
 
     if from == 2 && to == 1 {
-        // Stereo to mono: average each pair.
         return samples
             .chunks(2)
             .map(|chunk| {
@@ -773,8 +689,6 @@ fn convert_channels(samples: &[f32], from_channels: u16, to_channels: u16) -> Ve
             .collect();
     }
 
-    // General case: average each source frame down to one value, then write
-    // that value to every destination channel.
     let mut out = Vec::with_capacity((samples.len() / from) * to);
     for frame in samples.chunks(from) {
         let mono = frame.iter().sum::<f32>() / (frame.len() as f32);
@@ -785,7 +699,7 @@ fn convert_channels(samples: &[f32], from_channels: u16, to_channels: u16) -> Ve
     out
 }
 
-/// Save audio samples to file
+/// Save samples as WAV.
 fn save_audio_file(
     samples: &[f32],
     channels: u16,
@@ -804,7 +718,6 @@ fn save_audio_file(
     let mut writer = hound::WavWriter::create(output_path, spec)?;
 
     for &sample in samples {
-        // Convert f32 to i16
         let sample_i16 = (sample * (i16::MAX as f32)) as i16;
         writer.write_sample(sample_i16)?;
     }
@@ -813,17 +726,7 @@ fn save_audio_file(
     Ok(())
 }
 
-/// Splits a V1 `defines` key into its iohook code and whether it is the press
-/// or the release.
-///
-/// V1 mouse packs encode the release as the same code with a leading zero:
-/// Model O by Yes ships `"1"`/`"2"` for the left and right press and
-/// `"01"`/`"02"` for their releases. `"01".parse::<u32>()` is 1, so parsing
-/// the key directly makes the release indistinguishable from the press, and
-/// one of the two overwrites the other in the definitions map.
-///
-/// A leading zero only means this for a multi-character key, so `"0"` itself
-/// and ordinary codes like `"10"` are read normally.
+/// Split V1 key: leading zero means release.
 fn iohook_code_and_press(define_key: &str) -> Option<(u32, bool)> {
     let is_press = !(define_key.len() > 1 && define_key.starts_with('0'));
     let code = define_key.parse::<u32>().ok()?;
@@ -833,7 +736,6 @@ fn iohook_code_and_press(define_key: &str) -> Option<(u32, bool)> {
 fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     let mut mapping = HashMap::new();
 
-    // Basic keys (VC_* constants from IOHook)
     mapping.insert(1, "Escape".to_string()); // VC_ESCAPE = 0x0001
     mapping.insert(2, "Digit1".to_string()); // VC_1 = 0x0002
     mapping.insert(3, "Digit2".to_string()); // VC_2 = 0x0003
@@ -893,7 +795,6 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     mapping.insert(57, "Space".to_string()); // VC_SPACE = 0x0039
     mapping.insert(58, "CapsLock".to_string()); // VC_CAPS_LOCK = 0x003A
 
-    // Function keys F1-F12
     mapping.insert(59, "F1".to_string()); // VC_F1 = 0x003B
     mapping.insert(60, "F2".to_string()); // VC_F2 = 0x003C
     mapping.insert(61, "F3".to_string()); // VC_F3 = 0x003D
@@ -907,7 +808,6 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     mapping.insert(69, "NumLock".to_string()); // VC_NUM_LOCK = 0x0045
     mapping.insert(70, "ScrollLock".to_string()); // VC_SCROLL_LOCK = 0x0046
 
-    // Numpad keys
     mapping.insert(71, "Numpad7".to_string()); // VC_KP_7 = 0x0047
     mapping.insert(72, "Numpad8".to_string()); // VC_KP_8 = 0x0048
     mapping.insert(73, "Numpad9".to_string()); // VC_KP_9 = 0x0049
@@ -922,7 +822,6 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     mapping.insert(82, "Numpad0".to_string()); // VC_KP_0 = 0x0052
     mapping.insert(83, "NumpadDecimal".to_string()); // VC_KP_SEPARATOR = 0x0053
 
-    // Function keys F11-F24
     mapping.insert(87, "F11".to_string()); // VC_F11 = 0x0057
     mapping.insert(88, "F12".to_string()); // VC_F12 = 0x0058
     mapping.insert(91, "F13".to_string()); // VC_F13 = 0x005B
@@ -938,7 +837,6 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     mapping.insert(106, "F23".to_string()); // VC_F23 = 0x006A
     mapping.insert(107, "F24".to_string()); // VC_F24 = 0x006B
 
-    // Japanese language keys
     mapping.insert(112, "Convert".to_string()); // VC_KATAKANA = 0x0070
     mapping.insert(115, "Lang1".to_string()); // VC_UNDERSCORE = 0x0073
     mapping.insert(119, "Lang2".to_string()); // VC_FURIGANA = 0x0077
@@ -947,8 +845,6 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     mapping.insert(125, "IntlYen".to_string()); // VC_YEN = 0x007D
     mapping.insert(126, "NumpadComma".to_string()); // VC_KP_COMMA = 0x007E
 
-    // Extended keys (proper extended scancode values)
-    // Extended numpad and control keys
     mapping.insert(3637, "NumpadDivide".to_string()); // VC_KP_DIVIDE = 0x0E35
     mapping.insert(3612, "NumpadEnter".to_string()); // VC_KP_ENTER = 0x0E1C
     mapping.insert(3597, "ControlRight".to_string()); // VC_CONTROL_R = 0x0E1D
@@ -973,7 +869,6 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     mapping.insert(57439, "Sleep".to_string()); // VC_SLEEP = 0xE05F = 57439
     mapping.insert(57443, "WakeUp".to_string()); // VC_WAKE = 0xE063 = 57443
 
-    // Media keys (correct 0xE0xx values)
     mapping.insert(57360, "MediaTrackPrevious".to_string()); // VC_MEDIA_PREVIOUS = 0xE010
     mapping.insert(57369, "MediaTrackNext".to_string()); // VC_MEDIA_NEXT = 0xE019
     mapping.insert(57376, "AudioVolumeMute".to_string()); // VC_VOLUME_MUTE = 0xE020
@@ -994,17 +889,9 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     mapping.insert(57452, "LaunchMail".to_string()); // VC_APP_MAIL = 0xE06C
     mapping.insert(57453, "MediaSelect".to_string()); // VC_MEDIA_SELECT = 0xE06D
 
-    // Alternate keycode ranges for compatibility
-    // Some systems may report different keycode values for extended keys
-
-    // Clear key and additional special keys
     mapping.insert(58444, "Clear".to_string()); // VC_CLEAR = 0xE04C (alternate)
     mapping.insert(58470, "IntlBackslash".to_string()); // VC_LESSER_GREATER = 0xE046
 
-    // Legacy compatibility mappings for V1 configs and alternative implementations
-    // These handle cases where different IOHook implementations use different ranges
-
-    // Alternative numpad mappings (some implementations use these ranges)
     mapping.insert(3597, "NumLock".to_string()); // Alternative range
     mapping.insert(3612, "NumpadDivide".to_string()); // Alternative range
     mapping.insert(3613, "NumpadMultiply".to_string()); // Alternative range
@@ -1021,7 +908,6 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     mapping.insert(3676, "NumpadEnter".to_string()); // Alternative range
     mapping.insert(3677, "Numpad0".to_string()); // Alternative range
 
-    // Alternative extended key mappings for broader compatibility
     mapping.insert(60999, "Insert".to_string()); // V1 compatibility
     mapping.insert(61000, "Delete".to_string()); // V1 compatibility
     mapping.insert(61001, "Home".to_string()); // V1 compatibility
@@ -1033,12 +919,10 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     mapping.insert(61010, "Pause".to_string()); // V1 compatibility
     mapping.insert(61011, "NumpadDecimal".to_string()); // V1 compatibility
 
-    // Additional platform-specific keycodes that might appear
     mapping.insert(94, "IntlBackslash".to_string()); // Less/Greater key on some keyboards
     mapping.insert(95, "Fn".to_string()); // Function key modifier
     mapping.insert(96, "Clear".to_string()); // Clear key on some keyboards
 
-    // Handle potential Sun keyboard extensions (rarely used but in IOHook)
     mapping.insert(65397, "Help".to_string()); // VC_SUN_HELP = 0xFF75
     mapping.insert(65398, "Props".to_string()); // VC_SUN_PROPS = 0xFF76
     mapping.insert(65399, "Front".to_string()); // VC_SUN_FRONT = 0xFF77
@@ -1060,11 +944,7 @@ mod tests {
         create_iohook_to_web_key_mapping,
     };
 
-    /// A real V1 mouse pack (Model O by Yes) keys its four sounds as "1",
-    /// "2", "01" and "02": the unpadded codes are presses, the zero-padded
-    /// ones the matching releases. `"01".parse::<u32>()` is 1, so a naive
-    /// parse collapses the release onto the press and one of the two sounds
-    /// is silently lost.
+    /// Zero-padded code is a release.
     #[test]
     fn a_zero_padded_v1_code_is_a_release_not_a_duplicate_press() {
         assert_eq!(super::iohook_code_and_press("1"), Some((1, true)));
@@ -1072,15 +952,12 @@ mod tests {
         assert_eq!(super::iohook_code_and_press("01"), Some((1, false)));
         assert_eq!(super::iohook_code_and_press("02"), Some((2, false)));
 
-        // Ordinary keyboard codes are unaffected: "10" is key 10 pressed, not
-        // a padded "0".
         assert_eq!(super::iohook_code_and_press("10"), Some((10, true)));
         assert_eq!(super::iohook_code_and_press("not a number"), None);
     }
 
     #[test]
     fn iohook_press_and_release_both_survive_conversion() {
-        // "1" and "01" decode to same code with different press flag, so
         // inserting rather than appending would silently drop one.
         let dir = temp_dir("v1-press-release");
         let config_path = dir.join("config.json");

@@ -3,7 +3,7 @@ use crossbeam_channel::Sender;
 pub fn start_input_capture(keyboard_tx: Sender<String>, hotkey_tx: Sender<String>) {
     #[cfg(target_os = "linux")]
     {
-        // ponytail: gate — evdev alone is enough on Wayland/X11; rdev double-fires per key
+        // Use evdev alone when available — rdev would double-fire.
         let has_keyboard = evdev::enumerate().any(|(_, d)| d.supported_keys().is_some_and(|k| k.contains(evdev::KeyCode::KEY_A)));
         if has_keyboard {
             crate::debug_print!("🎮 Starting evdev keyboard listener (rdev skipped)...");

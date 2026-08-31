@@ -1,4 +1,4 @@
-// Sorakey plugin model: pure helpers for the bar widget and panel. No QML.
+// helpers for bar + panel
 
 // "keyboard/cherrymx-brown-abs" -> "Cherry MX Brown ABS"
 function prettyPackName(id) {
@@ -10,7 +10,7 @@ function prettyPackName(id) {
   return s
 }
 
-// A list of soundpack ids -> [{value, label}] for a Dropdown.
+// ids -> [{value, label}] for Dropdown
 function packOptions(ids) {
   var out = []
   if (!Array.isArray(ids)) return out
@@ -22,8 +22,7 @@ function packOptions(ids) {
   return out
 }
 
-// Parse a `sorakey ctl status` line. Returns null on any failure so the
-// caller can treat it as "no reading" rather than a crash.
+// parse `sorakey ctl status` — null on failure
 function parseStatus(text) {
   try {
     var o = JSON.parse(String(text || "").trim())
@@ -33,7 +32,7 @@ function parseStatus(text) {
   }
 }
 
-// Parse a `sorakey ctl packs` line. Returns {keyboard:[]}.
+// parse `sorakey ctl packs`
 function parsePacks(text) {
   var empty = { keyboard: [] }
   try {

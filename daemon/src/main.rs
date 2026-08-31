@@ -1,13 +1,5 @@
-//! sorakey - lean mechanical keyboard sound daemon.
-//!
-//! Forked from the MechvibesDX (v0.8.2) audio core: same engine, same input
-//! capture, minus every window, tray, telemetry and updater. Control goes
-//! through the Unix socket (`sorakey ctl '<json>'`, see control.rs); mute
-//! stays the Ctrl+Alt+M hotkey.
-//!
-//! The fork keeps whole upstream modules (some carry GUI-side helpers the
-//! daemon never calls).
-// ponytail: no crate-wide allow(dead_code) — surface dead code via cargo warn
+//! sorakey daemon — mechanical keyboard sounds.
+//! Forked from MechvibesDX audio core; control via Unix socket plus Ctrl+Alt+M mute.
 
 mod control;
 mod libs;
@@ -26,8 +18,7 @@ fn main() {
 
     env_logger::init();
 
-    // One daemon per session: two instances mean two input listeners and two
-    // engines, so every keystroke would play twice.
+    // Only one instance — two would double-play every keystroke.
     let _lock = match acquire_lock() {
         Some(f) => f,
         None => {
@@ -43,7 +34,6 @@ fn main() {
     let (keyboard_tx, keyboard_rx) = unbounded::<String>();
     let (hotkey_tx, hotkey_rx) = unbounded::<String>();
 
-    // Engine loads the configured soundpacks itself at startup.
     let engine = libs::audio::spawn_engine(keyboard_rx, hotkey_rx);
 
     if let Some(path) = control::serve(engine) {
@@ -56,8 +46,7 @@ fn main() {
     std::thread::park();
 }
 
-/// Exclusive, non-blocking flock for the life of this process. Released by
-/// the kernel on any exit, including a crash.
+/// Exclusive lock file — kernel releases it on exit or crash.
 fn acquire_lock() -> Option<std::fs::File> {
     let dir = std::env::var("XDG_RUNTIME_DIR").ok()?;
     let path = std::path::PathBuf::from(dir).join("sorakey.lock");

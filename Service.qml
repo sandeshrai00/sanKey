@@ -23,7 +23,6 @@ Item {
   property string lastImportError: ""
 
   signal packsImported(string packId)
-  // ponytail: importFailed was never connected — lastImportError is single source
   function notify(title, msg) { Quickshell.execDetached(["notify-send","-a","Sorakey", title, msg]); clearImportTimer.restart() }
 
   function importSoundpack() {
@@ -82,12 +81,7 @@ Item {
     }
   }
 
-  // (Re)enable = the plugin is on in shell.json, so the daemon should be
-  // running. Mirrors the teardown in onDestruction below: the instance is
-  // dropped on disable, remove, and plugin reload, and recreated on
-  // (re)enable and shell start. On a fresh install the unit does not exist
-  // yet (setup has not run); the call fails harmlessly and sorakey-setup
-  // starts the service itself.
+  // enable daemon when plugin is on — mirrors onDestruction teardown
   Process {
     id: startProc
     stdout: StdioCollector { waitForEnd: true }
@@ -99,14 +93,10 @@ Item {
       startProc.command = ["systemctl", "--user", "enable", "--now", "sorakey"]
       startProc.running = true
     }
-    // ponytail: single enable, retry via systemd Restart=on-failure, not 3s timer
     freshnessCheck.running = true
   }
 
-  // After `omarchy plugin update` the daemon source may be newer than the
-  // installed binary (or a release prebuilt may be available for it). Re-run
-  // the build script — it downloads a verified prebuilt when one matches the
-  // source, else builds — and reload the daemon if a new binary landed.
+  // after update, rebuild or fetch prebuilt and restart if needed
   Process {
     id: freshnessCheck
     command: ["/usr/bin/bash", root.pluginDir + "/scripts/build-sorakey.sh"]
@@ -124,17 +114,11 @@ Item {
   }
 
   Component.onDestruction: {
-    // Only the shell-managed instance (one with `shell` injected by the shell)
-    // owns the daemon lifecycle. The panel inlines this component for the
-    // import feature, and its instances come and go with every bar rebuild —
-    // they must not stop the daemon.
+    // only shell instance owns daemon lifecycle — panel copies come and go
     if (!root.shell) return
-    // Stop the sorakey daemon when the plugin instance goes away (disabled,
-    // removed, or reloaded from disk). Component.onCompleted restores it
-    // whenever the plugin is enabled again.
+    // stop on disable/remove/reload
     Quickshell.execDetached(["systemctl", "--user", "stop", "sorakey"])
     Quickshell.execDetached(["systemctl", "--user", "disable", "sorakey"])
-    // Fallback: kill any running sorakey process directly
     Quickshell.execDetached(["pkill", "-x", "sorakey"])
   }
 }

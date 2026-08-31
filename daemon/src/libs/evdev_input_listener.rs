@@ -17,11 +17,9 @@ pub fn start_evdev_keyboard_listener(
         crate::always_print!("🔍 [evdev] Current user: {:?}", std::env::var("USER"));
         crate::always_print!("🔍 [evdev] Starting Linux keyboard listener (Wayland/X11 compatible)");
 
-        // Track modifier keys for hotkey detection
         let mut ctrl_pressed = false;
         let mut alt_pressed = false;
 
-        // Find all keyboard devices
         let mut keyboards = Vec::new();
 
         crate::always_print!("🔍 [evdev] Enumerating input devices...");
@@ -40,7 +38,6 @@ pub fn start_evdev_keyboard_listener(
         }
 
         for (path, device) in devices {
-            // ponytail: filter real keyboards (mice also expose some keys)
             let is_keyboard = device.supported_keys().is_some_and(|k| k.contains(KeyCode::KEY_A));
             if is_keyboard {
                 crate::always_print!("🔍 [evdev] Found keyboard device: {:?} - {}", path.display(), device.name().unwrap_or("Unknown"));
@@ -63,10 +60,8 @@ pub fn start_evdev_keyboard_listener(
         let mut event_count = 0;
         let mut first_event_logged = false;
 
-        // Monitor all keyboards in a loop
         loop {
             for device in &mut keyboards {
-                // Fetch events (non-blocking)
                 match device.fetch_events() {
                     Ok(events) => {
                         for event in events {
@@ -79,13 +74,10 @@ pub fn start_evdev_keyboard_listener(
 
                                 let key_value = event.value();
 
-                                // Convert event code to KeyCode
                                 let key = KeyCode(event.code());
                                 let key_code = map_evdev_keycode(key);
                                 if !key_code.is_empty() {
-                                        // Handle key press (value == 1)
                                         if key_value == 1 {
-                                            // Track modifier keys for hotkey detection
                                             match key_code {
                                                 "ControlLeft" | "ControlRight" => {
                                                     ctrl_pressed = true;
@@ -94,25 +86,21 @@ pub fn start_evdev_keyboard_listener(
                                                     alt_pressed = true;
                                                 }
                                                 "KeyM" => {
-                                                    // Check for Ctrl+Alt+M hotkey combination
                                                     if ctrl_pressed && alt_pressed {
                                                         crate::always_print!("🔥 [evdev] Hotkey detected: Ctrl+Alt+M - Toggling global sound");
                                                         let _ = hotkey_tx.send("TOGGLE_SOUND".to_string());
-                                                        continue; // Don't process this as a regular key event
+                                                        continue;
                                                     }
                                                 }
                                                 _ => {}
                                             }
 
-                                            // Send key press event
                                             if event_count <= 5 {
                                                 crate::always_print!("🔍 [evdev] Sending key press: {}", key_code);
                                             }
                                             let _ = keyboard_tx.send(key_code.to_string());
                                         }
-                                        // Handle key release (value == 0)
                                         else if key_value == 0 {
-                                            // Track modifier key releases for hotkey detection
                                             match key_code {
                                                 "ControlLeft" | "ControlRight" => {
                                                     ctrl_pressed = false;
@@ -123,16 +111,13 @@ pub fn start_evdev_keyboard_listener(
                                                 _ => {}
                                             }
 
-                                            // Send key release event
                                             let _ = keyboard_tx.send(format!("UP:{}", key_code));
                                         }
-                                        // Ignore key repeat (value == 2)
                                     }
                             }
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // No events available, this is normal
                     }
                     Err(e) => {
                         crate::always_eprint!("⚠️ [evdev] Error fetching events: {}", e);
@@ -150,7 +135,6 @@ fn map_evdev_keycode(key: evdev::KeyCode) -> &'static str {
     use evdev::KeyCode;
 
     match key {
-        // Letters
         KeyCode::KEY_A => "KeyA", KeyCode::KEY_B => "KeyB", KeyCode::KEY_C => "KeyC", KeyCode::KEY_D => "KeyD",
         KeyCode::KEY_E => "KeyE", KeyCode::KEY_F => "KeyF", KeyCode::KEY_G => "KeyG", KeyCode::KEY_H => "KeyH",
         KeyCode::KEY_I => "KeyI", KeyCode::KEY_J => "KeyJ", KeyCode::KEY_K => "KeyK", KeyCode::KEY_L => "KeyL",
@@ -159,17 +143,14 @@ fn map_evdev_keycode(key: evdev::KeyCode) -> &'static str {
         KeyCode::KEY_U => "KeyU", KeyCode::KEY_V => "KeyV", KeyCode::KEY_W => "KeyW", KeyCode::KEY_X => "KeyX",
         KeyCode::KEY_Y => "KeyY", KeyCode::KEY_Z => "KeyZ",
 
-        // Numbers
         KeyCode::KEY_1 => "Digit1", KeyCode::KEY_2 => "Digit2", KeyCode::KEY_3 => "Digit3", KeyCode::KEY_4 => "Digit4",
         KeyCode::KEY_5 => "Digit5", KeyCode::KEY_6 => "Digit6", KeyCode::KEY_7 => "Digit7", KeyCode::KEY_8 => "Digit8",
         KeyCode::KEY_9 => "Digit9", KeyCode::KEY_0 => "Digit0",
 
-        // Function keys
         KeyCode::KEY_F1 => "F1", KeyCode::KEY_F2 => "F2", KeyCode::KEY_F3 => "F3", KeyCode::KEY_F4 => "F4",
         KeyCode::KEY_F5 => "F5", KeyCode::KEY_F6 => "F6", KeyCode::KEY_F7 => "F7", KeyCode::KEY_F8 => "F8",
         KeyCode::KEY_F9 => "F9", KeyCode::KEY_F10 => "F10", KeyCode::KEY_F11 => "F11", KeyCode::KEY_F12 => "F12",
 
-        // Special keys
         KeyCode::KEY_SPACE => "Space",
         KeyCode::KEY_ENTER => "Enter",
         KeyCode::KEY_BACKSPACE => "Backspace",
@@ -185,13 +166,11 @@ fn map_evdev_keycode(key: evdev::KeyCode) -> &'static str {
         KeyCode::KEY_LEFTMETA => "MetaLeft",
         KeyCode::KEY_RIGHTMETA => "MetaRight",
 
-        // Arrow keys
         KeyCode::KEY_UP => "ArrowUp",
         KeyCode::KEY_DOWN => "ArrowDown",
         KeyCode::KEY_LEFT => "ArrowLeft",
         KeyCode::KEY_RIGHT => "ArrowRight",
 
-        // Editing keys
         KeyCode::KEY_INSERT => "Insert",
         KeyCode::KEY_DELETE => "Delete",
         KeyCode::KEY_HOME => "Home",
@@ -199,7 +178,6 @@ fn map_evdev_keycode(key: evdev::KeyCode) -> &'static str {
         KeyCode::KEY_PAGEUP => "PageUp",
         KeyCode::KEY_PAGEDOWN => "PageDown",
 
-        // Punctuation
         KeyCode::KEY_MINUS => "Minus",
         KeyCode::KEY_EQUAL => "Equal",
         KeyCode::KEY_LEFTBRACE => "BracketLeft",
@@ -215,4 +193,3 @@ fn map_evdev_keycode(key: evdev::KeyCode) -> &'static str {
         _ => "",
     }
 }
-

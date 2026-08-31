@@ -1,97 +1,29 @@
-//! The one place `config.json` is written.
-//!
-//! # Why this module exists
-//!
-//! `AppConfig::save()` serialises the *whole* struct. Any writer that read a
-//! config, did something slow, and then saved that copy silently reverted every
-//! field another subsystem changed in between. That defect shipped three times
-//! from three unrelated call sites (the startup update check, the long-lived
-//! `UpdateService` snapshot, and a debounced volume write), and each was patched
-//! on its own. Patching writers one at a time cannot work: the mistake is
-//! available to every new writer by default.
-//!
-//! So the *shape* is what changed. `save()` is no longer reachable from outside
-//! `crate::state`; the only way to write is [`apply`], which takes a mutation
-//! and runs it against state this module owns. Holding an `AppConfig` across
-//! time and writing it back is not a discouraged pattern here - there is no API
-//! that accepts one, so it cannot be expressed.
-//!
-//! # What a mutation may assume
-//!
-//! The closure gets `&mut AppConfig` holding the newest known state, and should
-//! touch only the fields it is responsible for. Two subsystems mutating
-//! different fields compose: each runs against the result of the other, so
-//! neither can revert the other's work. That is the merge semantics the old
-//! read-modify-save pattern lacked.
-//!
-//! # Threading
-//!
-//! Writers live on the console UI thread, the audio engine thread, tokio tasks
-//! and the tray callback. A `Mutex` authority rather than a writer thread is
-//! deliberate: every existing writer is synchronous and several read the result
-//! back immediately (the Ctrl+Alt+M handler needs the toggled value to move the
-//! engine's own cached flag in the same call). A channel would make all of them
-//! async and need a reply path per call site; the mutex gives the same
-//! serialisation with none of that. Contention is nil in practice - writes are
-//! user-driven, not per-keystroke.
+//! The only place `config.json` is written — use `apply` to mutate.
 
 use crate::state::config::AppConfig;
 use std::sync::atomic::{ AtomicU64, Ordering };
 use std::sync::{ Mutex, OnceLock };
 
-/// The authoritative config. Loaded from disk once, on first use, and from then
-/// on this - not the file - is what a mutation is applied to.
-///
-/// Re-reading the file before every mutation would also be correct, since this
-/// process is its only writer, but it would put a synchronous parse on the UI
-/// thread for every slider tick. Owning the state instead keeps the disk read
-/// to one.
-/// Nothing reachable from `AppConfig::load()` may call back into this module.
-/// `load()` runs during the `get_or_init` below, so a re-entrant `current()`
-/// would deadlock on the initialising `OnceLock`. The one thing `load()` calls
-/// out to is `auto_startup::get_auto_startup_state`, which reads the Windows
-/// registry and never touches the config - keep it that way.
+/// Authoritative config — loaded once, then held in memory.
 static AUTHORITY: OnceLock<Mutex<AppConfig>> = OnceLock::new();
 
-/// Bumped on every write that actually changed something.
-///
-/// This is how a mutation made off the UI thread reaches the window. A callback
-/// cannot do it: the shared `Signal<AppConfig>` uses console's default
-/// `UnsyncStorage` and is therefore not `Send`, so no closure registered here
-/// could legally touch it. A counter can be read from anywhere, and the UI's
-/// existing poll loop (`libs/ui.rs`, the one already draining `UiEvent`s)
-/// compares it once per tick and republishes when it moved.
+/// Bump on each real write — UI polls this.
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn authority() -> &'static Mutex<AppConfig> {
     AUTHORITY.get_or_init(|| Mutex::new(AppConfig::load()))
 }
 
-/// A snapshot of the current config.
-///
-/// Read-only by construction: writing it back is impossible, because no
-/// function in this crate accepts an `AppConfig` to persist. Use it to read,
-/// then use [`apply`] to change something.
+/// Snapshot of current config (read-only).
 pub fn current() -> AppConfig {
-    // A poisoned lock means a mutation closure panicked mid-write. The config
-    // is still a valid struct (the panic happened between field assignments at
-    // worst), and refusing to serve settings would take the app down with it,
-    // so the value is recovered rather than propagated.
+    // recover from poisoned lock instead of crashing
     match authority().lock() {
         Ok(guard) => guard.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
     }
 }
 
-/// Apply `mutate` to the authoritative config and persist the result.
-///
-/// The mutation sees the newest state, so a concurrent change from another
-/// subsystem is already present and survives. Returns whether anything was
-/// written.
-///
-/// A mutation that leaves the data unchanged is not persisted. Mount effects
-/// re-assert the value they already hold on every navigation, and writing those
-/// unconditionally turned navigation into a continuous rewrite of the file.
+/// Apply mutation to config and persist if changed.
 pub fn apply(mutate: impl FnOnce(&mut AppConfig)) -> bool {
     let changed = {
         let mut guard = match authority().lock() {
@@ -109,9 +41,7 @@ pub fn apply(mutate: impl FnOnce(&mut AppConfig)) -> bool {
                 crate::always_eprint!("❌ [config] Failed to save config: {}", e);
             }
         } else {
-            // Undo a metadata-only edit so the in-memory struct cannot drift
-            // from the file - `data_equals` ignores those fields, so they would
-            // otherwise never be written.
+            // rollback metadata-only change so memory doesn't drift
             *guard = before;
         }
 
@@ -119,23 +49,14 @@ pub fn apply(mutate: impl FnOnce(&mut AppConfig)) -> bool {
     };
 
     if changed {
-        // Release ordering pairs with the `Acquire` load in `generation`: a
-        // reader that sees the new number is guaranteed to see the write that
-        // produced it, so it cannot republish a config older than the bump it
-        // reacted to.
+        // Release pairs with Acquire in generation()
         GENERATION.fetch_add(1, Ordering::Release);
     }
 
     changed
 }
 
-/// How many times the config has changed since the process started.
-///
-/// The UI polls this and republishes [`current`] into the shared signal when it
-/// moves, which is what lets a write made on the audio engine thread (Ctrl+Alt+M)
-/// or in a tokio task re-render the window. Before this existed, the hotkey
-/// muted the app while the window kept rendering the unmuted icon until some
-/// unrelated UI write happened to republish.
+/// How many config writes have happened.
 pub fn generation() -> u64 {
     GENERATION.load(Ordering::Acquire)
 }
@@ -144,10 +65,7 @@ pub fn generation() -> u64 {
 mod tests {
     use super::*;
 
-    /// The authority is process-global and backed by the real config file, so
-    /// these tests drive an equivalent local one. What is being proven is the
-    /// merge rule - a mutation runs against the newest state - which is a
-    /// property of `apply`'s body, not of where the state is stored.
+    /// Local model of the authority for tests.
     struct Authority {
         config: AppConfig,
         writes: usize,
@@ -158,7 +76,7 @@ mod tests {
             Self { config: AppConfig::default(), writes: 0 }
         }
 
-        /// Mirrors `apply`: mutate the live state, persist only a real change.
+        /// Like `apply` but local.
         fn apply(&mut self, mutate: impl FnOnce(&mut AppConfig)) -> bool {
             let before = self.config.clone();
             mutate(&mut self.config);
@@ -172,22 +90,20 @@ mod tests {
         }
     }
 
-    /// The composition property the whole refactor exists for: two subsystems
-    /// mutating different fields must both survive, in either order, with no
-    /// re-read discipline required of either caller.
+    /// Different subsystems mutating different fields both survive.
     #[test]
     fn mutations_from_different_subsystems_compose() {
         let mut authority = Authority::new();
 
-        // The UI thread changes volume.
+        // UI changes volume
         authority.apply(|config| {
             config.volume = 0.77;
         });
-        // The audio engine thread mutes, knowing nothing about volume.
+        // engine mutes
         authority.apply(|config| {
             config.enable_sound = false;
         });
-        // A tokio task records auto_start, knowing nothing about either.
+        // tokio sets auto_start
         authority.apply(|config| {
             config.auto_start = true;
         });
@@ -203,21 +119,15 @@ mod tests {
         );
     }
 
-    /// The startup-update-check shape: a writer that begins its work, is slow
-    /// (a network round trip), and finishes after the user has changed
-    /// something. Under the old read-modify-save API the pre-request struct was
-    /// written back. A mutation cannot carry state across that gap, so the late
-    /// write touches only its own field.
+    /// Slow writer finishing late doesn't revert concurrent changes.
     #[test]
     fn a_slow_writer_finishing_late_does_not_revert_a_concurrent_change() {
         let mut authority = Authority::new();
 
-        // The check starts here. All it may carry across the await is the value
-        // it intends to write - there is no config to hold.
+        // check starts — only value, no config held
         let recorded_check_time = 1_700_000_000;
 
-        // While the request is in flight the user drags the volume slider and
-        // toggles sound.
+        // user changes volume and sound during request
         authority.apply(|config| {
             config.volume = 0.35;
         });
@@ -225,7 +135,7 @@ mod tests {
             config.enable_sound = false;
         });
 
-        // The request returns and the check writes its result.
+        // check writes result
         authority.apply(|config| {
             config.auto_start = true;
         });
@@ -238,22 +148,20 @@ mod tests {
         );
     }
 
-    /// The `UpdateService` shape: a writer that lives for the whole session and
-    /// writes repeatedly. Its first write must not restore the state the app
-    /// launched with, and neither must its tenth.
+    /// Long-lived writer doesn't restore launch state.
     #[test]
     fn a_long_lived_writer_does_not_restore_launch_state() {
         let mut authority = Authority::new();
         let launch_volume = authority.config.volume;
 
-        // The service starts at launch. It captures no config.
-        // The user immediately changes the volume.
+        // service starts at launch
+        // user changes volume
         authority.apply(|config| {
             config.volume = 0.88;
         });
         assert_ne!(launch_volume, 0.88, "the test must actually move the value");
 
-        // Every periodic tick for the rest of the session.
+        // periodic ticks
         for tick in 0..10 {
             authority.apply(|config| {
                 config.per_pack_volume.insert(format!("keyboard/tick{}", tick), 0.5);
@@ -266,26 +174,23 @@ mod tests {
         }
     }
 
-    /// The debounce shape: a deferred write that lands after the user has moved
-    /// on. It may only carry the value it means to write, so whatever else
-    /// changed meanwhile is untouched.
+    /// Deferred write only touches its own field.
     #[test]
     fn a_deferred_write_landing_late_touches_only_its_own_field() {
         let mut authority = Authority::new();
 
-        // Slider drag: the value is published now, and a deferred write of the
-        // same value is scheduled.
+        // slider drag schedules deferred write
         let debounced_volume = 0.2;
         authority.apply(|config| {
             config.volume = debounced_volume;
         });
 
-        // The user navigates away and mutes before the timer fires.
+        // user mutes before timer fires
         authority.apply(|config| {
             config.enable_sound = false;
         });
 
-        // The deferred write finally lands.
+        // deferred write lands
         let wrote = authority.apply(|config| {
             config.volume = debounced_volume;
         });
@@ -295,9 +200,7 @@ mod tests {
         assert_eq!(authority.config.volume, debounced_volume, "while the volume still holds");
     }
 
-    /// Disk churn is a real regression risk: mount effects re-assert their
-    /// current value on every navigation. Only genuine changes may reach the
-    /// file.
+    /// No-op re-asserts don't write.
     #[test]
     fn re_asserting_the_current_value_writes_nothing() {
         let mut authority = Authority::new();
@@ -319,12 +222,7 @@ mod tests {
         assert_eq!(authority.writes, 1, "exactly one write for one real change");
     }
 
-    /// Serialises the tests that drive the *real* authority.
-    ///
-    /// They each snapshot the config, mutate it, and restore it. The authority
-    /// is process-global and the test harness runs threads in parallel, so two
-    /// of them overlapping would have one restore its snapshot over the other's
-    /// assertions - a contention between the tests, not a defect in `apply`.
+    /// Serialize tests using the real authority.
     static REAL_AUTHORITY_TESTS: Mutex<()> = Mutex::new(());
 
     fn lock_real_authority() -> std::sync::MutexGuard<'static, ()> {
@@ -334,18 +232,7 @@ mod tests {
         }
     }
 
-    /// Drives the **real** `apply` from several OS threads at once - the real
-    /// `Mutex` authority, the real atomic write, the real file - rather than
-    /// the local model above.
-    ///
-    /// Every writer in the app lives on one of these: the console UI thread, the
-    /// audio engine thread, a tokio task, or the tray callback. Each is a plain
-    /// OS thread here mutating the one field that subsystem owns. Under the old
-    /// read-modify-save pattern, whichever thread finished last would restore
-    /// the fields the others had written; all of them must now survive.
-    ///
-    /// The config is captured before and restored after, so running the suite
-    /// leaves the developer's settings exactly as they were.
+    /// Real writers on different threads all survive.
     #[test]
     fn real_writers_on_different_threads_all_survive() {
         use std::sync::{ Arc, Barrier };
@@ -389,10 +276,7 @@ mod tests {
         assert!(!final_config.enable_sound || !final_config.enable_keyboard_sound || final_config.auto_start || true);
     }
 
-    /// Every write goes through a temp file and a rename, so a reader that
-    /// catches the file mid-save sees either the old document or the new one -
-    /// never a truncated one. A truncated `config.json` is what routes the load
-    /// path into the `.corrupt` rescue, costing the user every setting.
+    /// Reader never sees a truncated document.
     #[test]
     fn a_concurrent_reader_never_observes_a_partial_document() {
         use std::sync::atomic::{ AtomicBool, Ordering as AtomicOrdering };
@@ -410,9 +294,7 @@ mod tests {
                 let mut partial_reads = 0usize;
                 let mut successful_reads = 0usize;
                 while !stop.load(AtomicOrdering::Relaxed) {
-                    // A missing file is the instant between temp-write and
-                    // rename on some platforms; only a *present but broken*
-                    // document is the failure this guards against.
+                    // missing is okay — only broken is a failure
                     if let Ok(contents) = std::fs::read_to_string(&path) {
                         if crate::state::config::parse_lenient(&contents).is_ok() {
                             successful_reads += 1;
@@ -447,9 +329,7 @@ mod tests {
         );
     }
 
-    /// A mutation that only bumps metadata is indistinguishable from a no-op to
-    /// `data_equals`, so it must not leave the in-memory struct carrying a
-    /// timestamp the file does not have.
+    /// Metadata-only mutation doesn't desync memory.
     #[test]
     fn a_metadata_only_mutation_does_not_desync_memory_from_disk() {
         let mut authority = Authority::new();

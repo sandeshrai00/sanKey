@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use super::engine::EngineState;
 
-/// (samples, channels, sample_rate) for a decoded/resampled audio buffer.
-// ponytail: Arc so equal-rate packs share one Vec instead of cloning 24 MB.
+/// (samples, channels, sample_rate) for a decoded buffer.
 type DecodedAudio = (Arc<Vec<f32>>, u16, u32);
 
 /// Loads and decodes a soundpack's audio file, then resamples it to
@@ -68,7 +67,6 @@ fn load_audio_file_for_path(
     }
 }
 
-/// Load audio file using Symphonia — ponytail: dedup via shared decoder
 fn load_audio_with_symphonia(file_path: &str) -> Result<(Vec<f32>, u16, u32), String> {
     let meta = std::fs::metadata(file_path).map_err(|e| format!("Failed to get file metadata: {}", e))?;
     if meta.len() == 0 {
@@ -219,12 +217,11 @@ fn load_keyboard_pack_into_engine_inner(
     state: &mut EngineState,
     soundpack_id: &str
 ) -> Result<String, String> {
-    // ponytail: drop old buffers before new alloc to keep peak low (24MB not 48MB)
+    // free old audio first so peak stays low
     let _old_kb = state.keyboard_samples.take();
     let _old_orig = state.keyboard_samples_original.take();
     drop(_old_kb);
     drop(_old_orig);
-    // Also clear multi to free its Arcs before new decode
     state.multi_key_audio.clear();
     state.multi_key_audio_map.clear();
     let soundpack_path = paths::soundpacks::soundpack_dir(soundpack_id);
@@ -317,7 +314,7 @@ fn load_keyboard_pack_into_engine_inner(
     }
 
     state.key_sinks.clear();
-    // ponytail: return large mmap blocks to OS so RSS drops after big pack decode (glibc retains otherwise)
+    // give freed pages back to the OS
     unsafe { libc::malloc_trim(0); }
 
     update_soundpack_cache(&soundpack_path, &soundpack, soundpack_id);
@@ -325,8 +322,7 @@ fn load_keyboard_pack_into_engine_inner(
     Ok(soundpack.name)
 }
 
-/// Shared metadata-cache update used by both engine loaders (extracted from
-/// the duplicated tail of `load_keyboard_soundpack_optimized`/
+/// Update the soundpack cache after a successful load.
 fn update_soundpack_cache(soundpack_path: &str, soundpack: &SoundPack, soundpack_id: &str) {
     let mut cache = SoundpackCache::load();
     match create_soundpack_metadata(soundpack_path, soundpack) {

@@ -1,14 +1,4 @@
-/// Debug logging utility
-///
-/// Every macro here does two things with one formatted string: it prints to the
-/// console exactly as it always did, and it tees a timestamped copy into the
-/// in-RAM ring buffer that backs the Debug section in Settings
-/// (`crate::utils::log_buffer`). Console behavior is deliberately unchanged, so
-/// `console` output looks identical to before the buffer existed.
-///
-/// The tee is what makes installed release builds diagnosable at all: they are
-/// without the buffer a user's logs simply do not exist anywhere.
-// ponytail: DEBUG_ENABLED was always true — alias debug to always
+/// Logs to console and to the in-RAM ring buffer shown in Settings > Debug.
 pub fn init_debug_logging() {
     crate::always_print!("🐛 Debug logging enabled");
 }
@@ -16,13 +6,12 @@ pub fn is_debug_enabled() -> bool {
     true
 }
 
-/// Debug print macro - only prints if debug console is enabled
+/// Debug print — only when debug is enabled.
 #[macro_export]
 macro_rules! debug_print {
     ($($arg:tt)*) => {
         if $crate::utils::logger::is_debug_enabled() {
-            // Formatted once, then used twice: the console keeps its existing
-            // output and the ring buffer gets a timestamped copy.
+            // format once, then tee to console and buffer
             let line = format!($($arg)*);
             println!("{}", line);
             $crate::utils::log_buffer::push(&line);
@@ -30,7 +19,7 @@ macro_rules! debug_print {
     };
 }
 
-/// Debug error print macro - only prints if debug console is enabled
+/// Debug error print — only when debug is enabled.
 #[macro_export]
 macro_rules! debug_eprint {
     ($($arg:tt)*) => {
@@ -42,7 +31,7 @@ macro_rules! debug_eprint {
     };
 }
 
-/// Always print macro - for critical messages that should always show
+/// Always prints, regardless of debug state.
 #[macro_export]
 macro_rules! always_print {
     ($($arg:tt)*) => {
@@ -54,7 +43,7 @@ macro_rules! always_print {
     };
 }
 
-/// Always error print macro - for critical errors that should always show
+/// Always prints to stderr, regardless of debug state.
 #[macro_export]
 macro_rules! always_eprint {
     ($($arg:tt)*) => {
@@ -68,13 +57,10 @@ macro_rules! always_eprint {
 
 #[cfg(test)]
 mod tests {
-    /// The macros must keep capturing into the buffer, since that is the only
-    /// place an installed release build's logs exist.
+    /// Buffer must receive logs — release builds have nowhere else to look.
     #[test]
     fn always_print_reaches_the_ring_buffer() {
-        // Serialized with every other buffer-asserting test: without this,
-        // log_buffer's rotation test can flood the shared buffer and evict
-        // this test's line before the assertion reads it back.
+        // serialized with other buffer tests to avoid eviction
         let _guard = crate::utils::log_buffer::buffer_test_guard();
 
         let before = crate::utils::log_buffer::generation();
@@ -88,8 +74,7 @@ mod tests {
         assert!(recent.contains("logger test marker 42"), "{}", recent);
     }
 
-    /// Formatting happens once and the argument expression must not be
-    /// evaluated twice - a logged counter would otherwise double-increment.
+    /// Arguments must be evaluated exactly once.
     #[test]
     fn arguments_are_evaluated_exactly_once() {
         let mut calls = 0;

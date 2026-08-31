@@ -6,15 +6,8 @@ import qs.Ui
 import qs.Commons
 import "Model.js" as Model
 
-// Sorakey: keyboard sounds from the sorakey daemon.
-//
-// The bar icon is the entry point and also a fast mute (right click) and a
-// volume wheel. Left click opens this panel: live status, mute, volume,
-// soundpack picker, and install/start/stop/remove.
-//
-// State comes from one `sorakey ctl status` every 5 s plus a refresh on open;
-// commands are fire-and-forget one-shot `ctl`/`systemctl` runs. No daemon
-// state is kept in this file beyond what the last reading says.
+// Sorakey panel — status, mute/volume, soundpacks, install controls.
+// Polls `sorakey ctl status` every 5s when open; ctl/systemctl are one-shot.
 Panel {
   id: root
   moduleName: "io.github.sandeshrai00.sorakey"
@@ -25,11 +18,8 @@ Panel {
   readonly property string pluginDir: home + "/.config/omarchy/plugins/io.github.sandeshrai00.sorakey"
   readonly property string setupPath: pluginDir + "/scripts/sorakey-setup"
 
-  // ---- Background service: the shell-managed instance the shell creates for
-  // the "service" kind, not a panel-local copy — panel instances come and go
-  // with bar rebuilds, and their destruction used to stop the daemon. ----
+  // shell-managed service — survives panel rebuilds
   readonly property var service: bar?.shell?.firstPartyServiceFor("io.github.sandeshrai00.sorakey")
-  // ponytail: reuse shell-injected manifest, 0 fork; commit fetched on demand when Settings opens
   readonly property string pluginVersion: service && service.manifest && service.manifest.version ? String(service.manifest.version) : ""
   property string pluginCommit: ""
 
@@ -44,17 +34,12 @@ Panel {
 
   function triggerImport() {
     if (!service) return
-    // Close first: the GTK file dialog opens as a normal window BELOW this
-    // layer-shell overlay, so the full-screen dismissArea would swallow the
-    // first click meant for the dialog. Import feedback arrives as a desktop
-    // notification (see Service.qml); the panel does not reopen.
+    // close first — dialog is below the overlay
     root.close()
     service.importSoundpack()
   }
 
-  // Pack list refresh after an import is covered by the 5 s open-panel poll.
-
-  // ---- State from the last reading ----
+  // last reading
   property bool installed: false
   property bool running: false
   property bool muted: false
@@ -81,16 +66,13 @@ Panel {
       commitProc.running = true
   }
 
-  // ponytail: one fork per click, no poll - reused install pattern
   property bool updateBusy: false
   property string updateStatus: ""
 
-  // The bar sizes widgets by their implicit size; the base Panel is a plain
-  // Item that does not inherit it, so report the button's.
+  // bar uses implicit size
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  // ---- Commands ----
   function sendCtl(obj) {
     if (!root.installed) return
     if (ctlProc.running) return
@@ -121,7 +103,6 @@ Panel {
 
   function setPerPackVolume(v) {
     root.perPackVolume = v
-    // Keyboard volume is per-pack
     if (root.keyboardPack) root.sendCtl({ cmd: "per_pack_volume", id: root.keyboardPack, value: v })
     else root.sendCtl({ cmd: "volume", value: v })
   }
@@ -173,9 +154,7 @@ Panel {
   function moveToSection(section) {
     if (["left","center","right"].indexOf(section)===-1) return
     Quickshell.execDetached(["omarchy","plugin","enable","io.github.sandeshrai00.sorakey","--section",section])
-    // Remember the choice: Omarchy drops the layout entry on disable and
-    // re-inserts at the manifest default (right) on re-enable, so the panel
-    // restores the user's section from this file (sectionRead).
+    // save choice — Omarchy resets to right on re-enable
     if (!sectionWrite.running) {
       sectionWrite.command = ["/bin/sh", "-c",
         "mkdir -p " + root.home + "/.local/share/sorakey && printf %s " + section +
@@ -184,8 +163,7 @@ Panel {
     }
   }
 
-  // Restore the user's last bar section when the panel is (re)created.
-  // No file = user never chose = leave the manifest default in place.
+  // restore saved bar section
   Process {
     id: sectionRead
     command: ["/bin/sh", "-c", "cat " + root.home + "/.local/share/sorakey/bar-section 2>/dev/null"]
@@ -203,7 +181,6 @@ Panel {
     stderr: StdioCollector { waitForEnd: true }
   }
 
-  // ponytail: one git fork only when Settings opened, no poll
   Process {
     id: commitProc
     command: ["git", "-C", root.pluginDir, "rev-parse", "--short", "HEAD"]
@@ -235,10 +212,7 @@ Panel {
     onTriggered: root.updateStatus = ""
   }
 
-  // Auto-select a freshly imported pack: the service already carries the id
-  // from the importer's OK:<id> line, so selecting is one ctl away. The panel
-  // stays closed — import feedback goes through the desktop notification
-  // (see Service.qml importHelper); a cancel emits no signal at all.
+  // auto-select imported pack
   Connections {
     target: root.service
     function onPacksImported(packId) {
@@ -248,18 +222,17 @@ Panel {
   }
 
   function remove() {
-    // Omarchy-native: plugin removal via CLI, daemon via systemd — no bar.run rm -rf
+    // remove via CLI + systemd
     Quickshell.execDetached(["systemctl", "--user", "disable", "--now", "sorakey"])
     Quickshell.execDetached(["omarchy", "plugin", "remove", "io.github.sandeshrai00.sorakey", "--yes"])
     root.installed = false
     root.running = false
   }
 
-  // ---- Readings ----
   function applyStatus(text) {
     var o = Model.parseStatus(text)
     if (!o) {
-      // No reading: the daemon is up only if the binary answered at all.
+      // no reading
       return
     }
     if (o.ok === true) {
@@ -276,7 +249,6 @@ Panel {
 
   function refreshStatus() {
     if (statusProc.running) return
-    // Always try status — if daemon responds, applyStatus will set installed=true
     statusProc.running = true
   }
 
@@ -350,13 +322,11 @@ Panel {
     stdout: StdioCollector { waitForEnd: true }
   }
 
-  // Fire-and-forget command channel to the daemon.
   Process {
     id: ctlProc
     command: [root.sorakeyBin, "ctl", "{}"]
     onExited: function() {
       root.refreshStatus()
-      // delete flow: parse fallback for pretty toast
       if (root.deleting || (root.deleteConfirmId !== "" && stdout.text.indexOf("deleted") !== -1)) {
         try {
           var o = JSON.parse(String(stdout.text || "").trim())
@@ -374,7 +344,6 @@ Panel {
     stdout: StdioCollector { waitForEnd: true }
   }
 
-  // systemctl channel for start/stop/enable.
   Process {
     id: svcProc
     command: ["true"]
@@ -382,7 +351,7 @@ Panel {
     stdout: StdioCollector { waitForEnd: true }
   }
 
-  // Background setup: runs sorakey-setup without opening a terminal.
+  // runs sorakey-setup in background
   Process {
     id: setupProc
     stdout: StdioCollector { waitForEnd: true }
@@ -397,7 +366,7 @@ Panel {
     }
   }
 
-  // Poll only when panel open (or running needs refresh) — 0 forks when idle.
+  // poll when open
   Timer {
     interval: 5000
     repeat: true
@@ -407,7 +376,7 @@ Panel {
       root.refreshPacks()
     }
   }
-  // Light background poll when installed but panel closed — 30s, not 5s.
+  // light poll when closed
   Timer {
     interval: 30000
     repeat: true
@@ -415,7 +384,7 @@ Panel {
     onTriggered: root.refreshStatus()
   }
 
-  // Re-check the binary quickly so auto-setup flips "Not installed" to live.
+  // recheck binary for auto-setup
   Timer {
     interval: 5000
     repeat: true
@@ -444,7 +413,6 @@ Panel {
     onWheelMoved: function(delta) {
       if (!root.running) return
       var step = delta > 0 ? 5 : -5
-      // Keyboard volume is per-pack
       var cur = root.keyboardPack ? root.perPackVolume : root.volume
       var v = Math.max(0, Math.min(100, cur + step))
       if (root.keyboardPack) root.setPerPackVolume(v)
@@ -481,7 +449,7 @@ Panel {
         width: scrollArea.availableWidth
         spacing: Style.space(14)
 
-        // ---------- Hero ----------
+        // header
         Item {
           visible: !root.settingsOpen
           width: parent.width
@@ -546,7 +514,7 @@ Panel {
           }
         }
 
-        // ---------- Settings (only view) ----------
+        // settings
         Column {
           visible: root.settingsOpen
           width: parent.width
@@ -618,7 +586,7 @@ Panel {
           }
         }
 
-        // ---------- Install (pre-first-run) ----------
+        // install prompt
         Item {
           visible: !root.installed && !root.settingsOpen
           width: parent.width
@@ -636,7 +604,7 @@ Panel {
           }
         }
 
-        // ---------- Live controls (only when installed) ----------
+        // controls
         Column {
           visible: root.installed && !root.settingsOpen
           width: parent.width
@@ -644,7 +612,7 @@ Panel {
 
           PanelSeparator { foreground: root.bar.foreground }
 
-          // Keyboard volume — per-pack (each pack remembers its own volume)
+          // keyboard volume — per pack
           Column {
             width: parent.width
             spacing: Style.space(6)
@@ -762,7 +730,7 @@ Panel {
               wrapMode: Text.WordWrap
             }
 
-            // Key tester — global evdev listener already hears keys while this has focus
+            // key tester
             Column {
               width: parent.width
               spacing: Style.space(6)
@@ -784,8 +752,6 @@ Panel {
             }
           }
 
-          // Position
-          // Actions
           PanelSeparator { foreground: root.bar.foreground }
 
           Row {

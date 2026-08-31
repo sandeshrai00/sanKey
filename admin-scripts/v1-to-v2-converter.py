@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""
-Standalone V1 → V2 soundpack config converter.
+"""Convert V1 soundpack config to V2.
 
-Usage:
-    python3 v1-to-v2-converter.py /path/to/pack/config.json
-
-Reads the V1 config.json, converts it to V2 format, and writes configv2.json
-to the same directory. Audio files are expected in the same directory as config.json.
-
-No installation required — pure stdlib + ffprobe.
+Usage: python3 v1-to-v2-converter.py /path/to/pack/config.json
+Writes configv2.json next to the original.
 """
 
 import json
@@ -19,7 +13,6 @@ import sys
 import tempfile
 
 
-# ponytail: dedup — single source scripts/_v1_shared.py
 import importlib.util as _ilu, pathlib as _pl2
 _spec = _ilu.spec_from_file_location("_v1_shared", str((_pl2.Path(__file__).parent.parent / "scripts" / "_v1_shared.py").resolve()))
 _mod = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_mod)
@@ -29,7 +22,7 @@ _fill_missing_keys = _mod._fill_missing_keys
 
 
 def is_v1_config(cfg):
-    """Return True if this is a V1 config (no definition_method field)."""
+    """V1 config has no definition_method."""
     if not isinstance(cfg, dict):
         return False
     if "definition_method" in cfg or "definitions" in cfg:
@@ -38,7 +31,7 @@ def is_v1_config(cfg):
 
 
 def is_v1_multi(defines):
-    """Return True if this is a multi-method V1 pack (string file paths per key)."""
+    """Multi-method V1 — string paths per key."""
     if not defines:
         return False
     string_values = sum(1 for v in defines.values() if isinstance(v, str) and v)
@@ -46,12 +39,11 @@ def is_v1_multi(defines):
 
 
 def get_audio_duration_ms(audio_path):
-    """Get audio duration in ms. Uses ffprobe for non-WAV, wave stdlib for WAV.
-    Returns None on failure."""
+    """Audio duration in ms — ffprobe or wave fallback."""
     if not os.path.exists(audio_path):
         return None
 
-    # Check WAV header
+    # check WAV
     try:
         with open(audio_path, "rb") as f:
             header = f.read(12)
@@ -67,7 +59,7 @@ def get_audio_duration_ms(audio_path):
         except Exception:
             pass
 
-    # ffprobe for everything else
+    # ffprobe
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json",
@@ -80,8 +72,6 @@ def get_audio_duration_ms(audio_path):
         return None
 
 
-# Donor for missing keys: missing -> [donor priority list]
-# Numpad missing -> KeyA as requested; others use nearest semantic neighbor.
 SMART_DONOR = {
     "MetaLeft": ["CapsLock", "ControlLeft", "AltLeft", "KeyA"],
     "MetaRight": ["CapsLock", "ControlLeft", "AltLeft", "KeyA"],
@@ -106,7 +96,6 @@ SMART_DONOR = {
     "WakeUp": ["Escape", "KeyA"],
     "NumLock": ["CapsLock", "KeyA"],
     "Clear": ["CapsLock", "KeyA"],
-    # Numpad missing -> KeyA per request
     "Numpad0": ["KeyA"], "Numpad1": ["KeyA"], "Numpad2": ["KeyA"],
     "Numpad3": ["KeyA"], "Numpad4": ["KeyA"], "Numpad5": ["KeyA"],
     "Numpad6": ["KeyA"], "Numpad7": ["KeyA"], "Numpad8": ["KeyA"],
@@ -114,7 +103,6 @@ SMART_DONOR = {
     "NumpadSubtract": ["KeyA"], "NumpadMultiply": ["KeyA"],
     "NumpadDivide": ["KeyA"], "NumpadEnter": ["KeyA"],
     "NumpadEquals": ["KeyA"], "NumpadComma": ["KeyA"],
-    # Media / browser / launch — generic
     "AudioVolumeMute": ["Space", "Enter", "KeyA"],
     "AudioVolumeDown": ["Space", "Enter", "KeyA"],
     "AudioVolumeUp": ["Space", "Enter", "KeyA"],
@@ -137,21 +125,16 @@ SMART_DONOR = {
 }
 
 
-# ponytail: _fill_missing_keys now in _v1_shared.py — imported above
 
 
 def convert_v1_to_v2(cfg, pack_dir):
-    """Convert a V1 config dict to V2.
-
-    `pack_dir` is the directory containing config.json and audio files.
-    Returns a V2 config dict (does NOT write any files)."""
+    """Convert V1 dict to V2 — needs pack_dir for duration checks."""
     defines = cfg.pop("defines", {})
     sound = cfg.pop("sound", None)
 
     definitions = {}
 
     if is_v1_multi(defines):
-        # Multi-method: each key has its own audio file
         per_key_files = {}
         for code, filename in defines.items():
             if not isinstance(filename, str) or not filename or filename.strip().lower() == "null":
@@ -163,7 +146,7 @@ def convert_v1_to_v2(cfg, pack_dir):
 
         unique_files = set(per_key_files.values())
 
-        # Try to find a shared audio file (single-method fallback)
+        # check for shared file
         chosen_audio = None
         for f in unique_files:
             path = os.path.join(pack_dir, f)
@@ -172,7 +155,7 @@ def convert_v1_to_v2(cfg, pack_dir):
                 break
 
         if len(unique_files) == 1 and chosen_audio:
-            # All keys share one file -> single-method
+            # single shared file
             dur = get_audio_duration_ms(os.path.join(pack_dir, chosen_audio))
             duration_ms = dur if dur else 100.0
             for w3c_name in per_key_files:
@@ -180,7 +163,6 @@ def convert_v1_to_v2(cfg, pack_dir):
             definition_method = "single"
             audio_file = chosen_audio
         else:
-            # Genuine multi-method
             file_durations = {}
             for fname in unique_files:
                 dur = get_audio_duration_ms(os.path.join(pack_dir, fname))
@@ -196,7 +178,7 @@ def convert_v1_to_v2(cfg, pack_dir):
             audio_file = None
 
     else:
-        # Single-method: defines are [start_ms, duration_ms] sprite regions
+        # single-method sprite regions
         for code, timing in defines.items():
             w3c_name = V1_KEY_TABLE.get(str(code))
             if not w3c_name:
@@ -210,9 +192,7 @@ def convert_v1_to_v2(cfg, pack_dir):
                 definitions[w3c_name] = {"timing": [[start, end]]}
 
         definition_method = "single"
-        # sound field is the sprite sheet
         audio_file = sound if sound else None
-        # For single-method, we don't verify the sprite file exists here
 
     _fill_missing_keys(definitions)
 
@@ -278,7 +258,7 @@ def main():
     print(f"   audio_file: {v2_cfg.get('audio_file', 'per-key (multi-method)')}")
     print(f"   Output: {output_path}")
 
-    # Show a sample of key mappings
+    # sample mappings
     sample_keys = list(v2_cfg["definitions"].keys())[:6]
     print(f"\n   Sample mappings:")
     for k in sample_keys:

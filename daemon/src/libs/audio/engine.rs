@@ -250,8 +250,6 @@ impl EngineState {
                 resample_if_needed(orig_samples, *channels, *orig_rate, new_rate)
             );
         }
-        // Also re-resample per-key audio for multi-method packs
-        // ponytail: take not clone, skip alloc when rates match or no multi
         if !self.multi_key_audio.is_empty() {
             if let Some(target) = new_rate {
                 let old = std::mem::take(&mut self.multi_key_audio);

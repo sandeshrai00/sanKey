@@ -1,11 +1,4 @@
-//! Fixed installation layout. Sorakey is always installed under
-//! `~/.local/share/sorakey` - no AppImage, no system dirs, no ambiguity.
-//!
-//! ```text
-//! ~/.local/share/sorakey/
-//! ├── data/                      config.json, soundpack_cache.json, images/
-//! └── soundpacks/                keyboard soundpacks (built-in + imported)
-//! ```
+//! Fixed layout under `~/.local/share/sorakey` — data + soundpacks.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -68,8 +61,7 @@ pub mod soundpacks {
         Ok(())
     }
 
-    /// Directory for a soundpack id (`"keyboard/Name"`). All packs, whether
-    /// shipped in the repo or imported by the user, live in the same tree.
+    /// Directory for a soundpack id.
     pub fn soundpack_dir(soundpack_id: &str) -> String {
         let sanitized = soundpack_id.replace('\\', "/");
         let parts: Vec<&str> = sanitized.split('/').filter(|p| !p.is_empty() && *p != ".." && !p.contains('\0')).collect();
@@ -78,7 +70,7 @@ pub mod soundpacks {
         };
         let base = get_builtin_soundpacks_dir();
         let joined = join(Path::new(&base));
-        // Ensure result stays under base (defense in depth)
+        // stay inside base dir
         if !joined.starts_with(&*base) {
             return base.join("keyboard").join("invalid").to_string_lossy().to_string();
         }

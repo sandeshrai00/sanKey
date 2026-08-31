@@ -5,10 +5,8 @@ use std::sync::{ Arc, Mutex };
 use std::thread;
 use std::time::{ Duration, Instant };
 
-// Maps a keyboard key to its standardized code
 fn map_key_to_code(key: Key) -> &'static str {
     match key {
-        // Common keys across all platforms
         Key::Space => "Space",
         Key::Backspace => "Backspace",
         Key::CapsLock => "CapsLock",
@@ -17,7 +15,6 @@ fn map_key_to_code(key: Key) -> &'static str {
         Key::Escape => "Escape",
         Key::Delete => "Delete",
 
-        // Modifier keys with left/right variants
         Key::Alt => "AltLeft",
         Key::AltGr => "AltRight",
         Key::ShiftLeft => "ShiftLeft",
@@ -27,18 +24,16 @@ fn map_key_to_code(key: Key) -> &'static str {
         Key::MetaLeft => "MetaLeft",
         Key::MetaRight => "MetaRight",
 
-        // Arrow keys
         Key::UpArrow => "ArrowUp",
         Key::DownArrow => "ArrowDown",
         Key::LeftArrow => "ArrowLeft",
         Key::RightArrow => "ArrowRight",
 
-        // Navigation keys
         Key::Home => "Home",
         Key::End => "End",
         Key::PageUp => "PageUp",
         Key::PageDown => "PageDown",
-        Key::Insert => "Insert", // Function keys F1-F12 (rdev 0.5.3 only supports F1-F12)
+        Key::Insert => "Insert",
         Key::F1 => "F1",
         Key::F2 => "F2",
         Key::F3 => "F3",
@@ -52,7 +47,6 @@ fn map_key_to_code(key: Key) -> &'static str {
         Key::F11 => "F11",
         Key::F12 => "F12",
 
-        // Alpha keys A-Z
         Key::KeyA => "KeyA",
         Key::KeyB => "KeyB",
         Key::KeyC => "KeyC",
@@ -80,7 +74,6 @@ fn map_key_to_code(key: Key) -> &'static str {
         Key::KeyY => "KeyY",
         Key::KeyZ => "KeyZ",
 
-        // Number keys 0-9
         Key::Num0 => "Digit0",
         Key::Num1 => "Digit1",
         Key::Num2 => "Digit2",
@@ -92,21 +85,19 @@ fn map_key_to_code(key: Key) -> &'static str {
         Key::Num8 => "Digit8",
         Key::Num9 => "Digit9",
 
-        // Punctuation and symbols
-        Key::Minus => "Minus", // -
-        Key::Equal => "Equal", // =
-        Key::Comma => "Comma", // ,
-        Key::Dot => "Period", // .
-        Key::Quote => "Quote", // '
-        Key::BackQuote => "Backquote", // `
-        Key::Slash => "Slash", // /
-        Key::LeftBracket => "BracketLeft", // [
-        Key::RightBracket => "BracketRight", // ]
-        Key::BackSlash => "Backslash", // \
-        Key::SemiColon => "Semicolon", // ;
-        Key::IntlBackslash => "IntlBackslash", // Additional backslash key on some keyboards
+        Key::Minus => "Minus",
+        Key::Equal => "Equal",
+        Key::Comma => "Comma",
+        Key::Dot => "Period",
+        Key::Quote => "Quote",
+        Key::BackQuote => "Backquote",
+        Key::Slash => "Slash",
+        Key::LeftBracket => "BracketLeft",
+        Key::RightBracket => "BracketRight",
+        Key::BackSlash => "Backslash",
+        Key::SemiColon => "Semicolon",
+        Key::IntlBackslash => "IntlBackslash",
 
-        // Numpad keys
         Key::KpReturn => "NumpadEnter",
         Key::KpMinus => "NumpadSubtract",
         Key::KpPlus => "NumpadAdd",
@@ -124,21 +115,17 @@ fn map_key_to_code(key: Key) -> &'static str {
         Key::Kp9 => "Numpad9",
         Key::KpDelete => "NumpadDecimal",
 
-        // Additional system keys
         Key::NumLock => "NumLock",
         Key::ScrollLock => "ScrollLock",
         Key::PrintScreen => "PrintScreen",
         Key::Pause => "Pause",
-        Key::Function => "Fn", // Special function key on some keyboards
+        Key::Function => "Fn",
 
-        // Unknown or unmapped keys
-        Key::Unknown(_) => "", // Handle unknown keys gracefully
+        Key::Unknown(_) => "",
     }
 }
 
-/// Start a unified input listener that handles keyboard events
-///
-/// to avoid duplicate events with the focused_input_listener
+/// Unified keyboard + hotkey listener (fallback when evdev isn't available).
 pub fn start_unified_input_listener(
     keyboard_tx: Sender<String>,
     hotkey_tx: Sender<String>,
@@ -151,18 +138,15 @@ pub fn start_unified_input_listener(
         let keyboard_last_press = Arc::new(Mutex::new(Instant::now()));
         let pressed_keys = Arc::new(Mutex::new(HashSet::<String>::new()));
 
-        // Track pressed modifier keys for hotkey detection
         let mut ctrl_pressed = false;
         let mut alt_pressed = false;
 
         crate::always_print!("🎮 Starting rdev::listen() - listening to keyboard events");
         let result = listen(move |event: Event| {
             match event.event_type {
-                // ===== KEYBOARD EVENTS =====
                 EventType::KeyPress(key) => {
                     let key_code = map_key_to_code(key);
                     if !key_code.is_empty() {
-                        // Track modifier keys for hotkey detection
                         match key_code {
                             "ControlLeft" | "ControlRight" => {
                                 ctrl_pressed = true;
@@ -171,32 +155,29 @@ pub fn start_unified_input_listener(
                                 alt_pressed = true;
                             }
                             "KeyM" => {
-                                // Check for Ctrl+Alt+M hotkey combination
                                 if ctrl_pressed && alt_pressed {
                                     crate::always_print!(
                                         "🔥 Hotkey detected: Ctrl+Alt+M - Toggling global sound"
                                     );
                                     let _ = hotkey_tx.send("TOGGLE_SOUND".to_string());
-                                    return; // Don't process this as a regular key event
+                                    return;
                                 }
                             }
                             _ => {}
                         }
 
-                        // Check if key is already pressed
                         let mut pressed = pressed_keys.lock().unwrap();
                         if pressed.contains(&key_code.to_string()) {
-                            return; // Key already pressed, ignore
+                            return;
                         }
                         pressed.insert(key_code.to_string());
-                        drop(pressed); // Apply debounce and detect rapid key events
+                        drop(pressed);
                         let now = Instant::now();
                         let mut last = keyboard_last_press.lock().unwrap();
                         let time_since_last = now.duration_since(*last);
 
-                        // Special handling for Backspace key - skip if too rapid (< 10ms)
                         if key_code == "Backspace" && time_since_last < Duration::from_millis(10) {
-                            return; // Skip this Backspace event entirely
+                            return;
                         }
 
                         if time_since_last > Duration::from_millis(1) {
@@ -208,7 +189,6 @@ pub fn start_unified_input_listener(
                 EventType::KeyRelease(key) => {
                     let key_code = map_key_to_code(key);
                     if !key_code.is_empty() {
-                        // Track modifier key releases for hotkey detection
                         match key_code {
                             "ControlLeft" | "ControlRight" => {
                                 ctrl_pressed = false;
@@ -219,7 +199,6 @@ pub fn start_unified_input_listener(
                             _ => {}
                         }
 
-                        // Remove key from pressed set
                         let mut pressed = pressed_keys.lock().unwrap();
                         pressed.remove(&key_code.to_string());
                         drop(pressed);
@@ -228,7 +207,6 @@ pub fn start_unified_input_listener(
                     }
                 }
 
-                // Ignore non-keyboard events
                 EventType::ButtonPress(_) | EventType::ButtonRelease(_) | EventType::Wheel { .. } | EventType::MouseMove { .. } => {}
             }
         });

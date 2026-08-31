@@ -1,9 +1,5 @@
 #!/bin/bash
-# Sorakey one-click installer: build the daemon from this plugin's daemon/,
-# install the binary + soundpacks, and start the sorakey user service.
-#
-# Run it from the bar panel (Install Sorakey) or by hand:
-#   ~/.config/omarchy/plugins/io.github.sandeshrai00.sorakey/scripts/sorakey-setup
+# Sorakey installer — builds daemon, installs soundpacks, starts service.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,17 +14,17 @@ UNIT="$UNIT_DIR/sorakey.service"
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31msorakey-setup: %s\033[0m\n' "$*" >&2; exit 1; }
 
-# ---- 1. Build the daemon (verified prebuilt or source) ------------------
+# 1. Build daemon
 [[ -d "$DAEMON_DIR" ]] || die "daemon/ not found next to this script"
 step "Building sorakey (verified prebuilt if available, else source)"
 "$PLUGIN_DIR/scripts/build-sorakey.sh" || die "build failed"
 
-# ---- 2. Install soundpacks ---------------------------------------------
+# 2. Install soundpacks
 step "Installing soundpacks"
 mkdir -p "$SHARE/soundpacks"
 cp -rn "$DAEMON_DIR/soundpacks/." "$SHARE/soundpacks/" 2>/dev/null || true
 
-# ---- 3. systemd user service -------------------------------------------
+# 3. systemd service
 step "Installing the sorakey user service"
 mkdir -p "$UNIT_DIR"
 cat > "$UNIT" <<'EOF'
@@ -47,7 +43,7 @@ EOF
 systemctl --user daemon-reload
 systemctl --user enable --now sorakey || die "could not start the sorakey service"
 
-# ---- 4. input group -----------------------------------------------------
+# 4. input group
 step "Checking input group (keyboard capture)"
 if id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
   echo "input group: OK"

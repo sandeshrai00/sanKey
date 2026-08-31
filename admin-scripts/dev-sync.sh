@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# dev-sync.sh — test local edits without git push.
-# Copies dev repo -> installed plugin, validates, restarts shell.
-# Usage: ./admin-scripts/dev-sync.sh [--no-restart] [--no-validate]
+# dev-sync — copy dev repo to installed plugin for testing
 
 DEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN_ID="io.github.sandeshrai00.sorakey"
@@ -23,13 +21,13 @@ done
 
 mkdir -p "$INSTALLED"
 
-# rsync keeps deletes in sync (removes stale files); fallback to cp
+# rsync if available, else cp
 if command -v rsync >/dev/null 2>&1; then
   rsync -a --delete \
     --exclude=".git" \
     --exclude="target" \
     "$DEV_DIR"/ "$INSTALLED"/
-  # sync git separately so installed stays a git worktree for `plugin update`
+  # keep git worktree
   if [[ -d "$DEV_DIR/.git" ]]; then
     rsync -a --delete "$DEV_DIR/.git"/ "$INSTALLED/.git"/
   fi
@@ -54,5 +52,5 @@ if [[ $NO_RESTART -eq 0 ]]; then
   fi
 fi
 
-# quick health
+# health check
 systemctl --user is-active sorakey >/dev/null 2>&1 && echo "sorakey: active" || echo "sorakey: inactive (enable plugin or check journalctl --user -u sorakey)"

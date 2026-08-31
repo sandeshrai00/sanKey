@@ -1,6 +1,4 @@
-"""Shared V1 tables — single source for import + admin converter.
-# ponytail: dedup V1_KEY_TABLE + SMART_DONOR (was copied verbatim in two files)
-"""
+"""Shared V1 tables for import + admin converter."""
 import copy
 
 V1_KEY_TABLE = {

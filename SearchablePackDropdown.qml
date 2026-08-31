@@ -4,8 +4,7 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Sorakey fork of SearchableDropdown with inline delete per row.
-// Search stays inside popup; delete icon sits at row end.
+// SearchableDropdown fork with inline delete. Search stays in popup.
 Item {
   id: root
 
@@ -35,7 +34,6 @@ Item {
   signal deleteRequested(string value)
   signal confirmDelete(string value)
   signal cancelDelete()
-  // ponytail: hovered never consumed — removed
 
   property string deleteConfirmId: ""
   property bool deleting: false
@@ -51,7 +49,6 @@ Item {
   function optionLabel(o) {
     return (o && typeof o === "object") ? String(o.label) : String(o)
   }
-  // ponytail: optionDescription removed — packs have no description
   function currentLabel() {
     for (var i = 0; i < options.length; i++) {
       if (optionValue(options[i]) === value) return optionLabel(options[i])
@@ -63,7 +60,7 @@ Item {
   function recomputeFiltered() {
     var q = searchField.text.toLowerCase()
     if (!q) { filtered = options; return }
-    // ponytail: description dead, filter on label only — JS stdlib filter
+    // filter on label only
     filtered = options.filter(function(o){ return optionLabel(o).toLowerCase().indexOf(q) !== -1 })
   }
 
@@ -177,7 +174,7 @@ Item {
         }
         onClosed: {
           searchField.text = ""
-          // keep confirmId so Panel can see it; Panel clears it
+          // keep confirmId — Panel clears it
         }
 
         contentItem: Column {
@@ -318,11 +315,9 @@ Item {
                       elide: Text.ElideRight
                       width: parent.width
                     }
-                    // ponytail: description Text removed — dead
                   }
                 }
 
-                // Delete inside row — does not select
                 Text {
                   id: delBtn
                   anchors.right: parent.right
@@ -361,7 +356,7 @@ Item {
             }
           }
 
-          // Inline confirm footer — inside popup, below list (not overlapping)
+          // confirm footer
           Rectangle {
             id: confirmSep
             visible: root.deleteConfirmId !== ""
@@ -374,7 +369,6 @@ Item {
             visible: root.deleteConfirmId !== ""
             width: parent.width
             spacing: Style.spacing.xs
-            // ponytail: inside-popup confirm, no extra popup
             property string pretty: root.prettyForValue(root.deleteConfirmId)
             Item { width: 1; height: Style.spacing.xs }
             Row {

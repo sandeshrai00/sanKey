@@ -4,24 +4,19 @@ use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
 use std::path::Path;
 
-// ===== SOUNDPACK TYPES =====
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum SoundpackType {
     Keyboard,
 }
 
-// Default function for config_version field
 fn default_config_version() -> u32 {
     2
 }
 
-// Default function for soundpack_type field
 fn default_soundpack_type() -> SoundpackType {
     SoundpackType::Keyboard
 }
 
-// Default function for options field
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SoundpackOptions {
     #[serde(default = "default_recommended_volume")]
@@ -47,7 +42,7 @@ impl Default for SoundpackOptions {
     }
 }
 
-// Key definition structure for V2 format
+// V2 key definition
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KeyDefinition {
     pub timing: Vec<[f32; 2]>, // Array of [start_ms, end_ms] pairs
@@ -91,8 +86,6 @@ impl SoundPack {}
 
 impl SoundpackType {}
 
-// ===== SOUNDPACK METADATA =====
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SoundpackMetadata {
     pub id: String, // Original ID from soundpack config (should not be modified)
@@ -118,15 +111,13 @@ pub struct SoundpackMetadata {
     pub last_error: Option<String>,
 }
 
-// ===== SOUNDPACK CACHE =====
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoundpackCache {
     pub soundpacks: HashMap<String, SoundpackMetadata>,
     pub last_scan: u64,
-    pub cache_version: u32, // Add version to force regeneration when format changes
+    pub cache_version: u32,
     #[serde(default)]
-    pub count: SoundpackCount, // Count of soundpacks by type
+    pub count: SoundpackCount,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -141,7 +132,6 @@ impl SoundpackCache {
 
     pub fn load() -> Self {
         let cache_file = Self::cache_file();
-        // Load metadata cache using data utilities
         let mut cache = match
             data::load_json_from_file::<SoundpackCache>(std::path::Path::new(&cache_file))
         {
@@ -158,7 +148,6 @@ impl SoundpackCache {
             }
         };
 
-        // Auto-refresh if cache is empty or missing
         if cache.soundpacks.is_empty() {
             crate::always_print!("🔄 Cache is empty, refreshing from soundpack directories...");
             cache.refresh_from_directory();
@@ -171,7 +160,7 @@ impl SoundpackCache {
         Self {
             soundpacks: HashMap::new(),
             last_scan: 0,
-            cache_version: 4, // Current version with error tracking support
+            cache_version: 4,
             count: SoundpackCount::default(),
         }
     }
@@ -179,7 +168,6 @@ impl SoundpackCache {
     pub fn save(&self) {
         let cache_file = Self::cache_file();
 
-        // Ensure parent directory exists
         if let Some(parent) = Path::new(&cache_file).parent() {
             if let Err(e) = path::ensure_directory_exists(parent) {
                 crate::always_eprint!("⚠️  Failed to create cache directory: {}", e);
@@ -197,23 +185,19 @@ impl SoundpackCache {
         }
     }
 
-    // Add or update soundpack metadata
     pub fn add_soundpack(&mut self, metadata: SoundpackMetadata) {
         self.soundpacks.insert(metadata.id.clone(), metadata);
-    }     // Refresh cache by scanning soundpacks directory
-    pub fn refresh_from_directory(&mut self) {
+    }     pub fn refresh_from_directory(&mut self) {
         crate::always_print!("📂 Scanning soundpacks directories...");
 
-        self.soundpacks.clear(); // Clear all existing entries
+        self.soundpacks.clear();
 
-        // All soundpacks (built-in + imported) live under one keyboard tree.
         let soundpacks_dir = paths::soundpacks::get_builtin_soundpacks_dir()
             .to_string_lossy()
             .to_string();
         crate::always_print!("📂 Scanning soundpacks in: {}", soundpacks_dir);
         self.scan_soundpack_type(&soundpacks_dir, "keyboard");
 
-        // Update count based on loaded soundpacks
         self.update_count();
 
         self.last_scan = std::time::SystemTime
@@ -225,7 +209,6 @@ impl SoundpackCache {
         crate::always_print!("📦 Loaded {} soundpacks metadata", self.soundpacks.len());
     }
 
-    // Update count based on current soundpacks in cache
     pub fn update_count(&mut self) {
         let keyboard_count = self.soundpacks
             .values()
@@ -304,7 +287,7 @@ impl SoundpackCache {
             tags: vec!["error".to_string()],
             icon: None,
             soundpack_type,
-            folder_path: full_soundpack_id.to_string(), // Use full_soundpack_id as folder path for error entries
+            folder_path: full_soundpack_id.to_string(),
             last_modified: 0,
             last_accessed: 0,
             config_version: None,

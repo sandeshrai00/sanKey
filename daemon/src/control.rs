@@ -1,10 +1,5 @@
-//! Unix-socket control API. One JSON line in, one JSON line out, per
-//! connection. The daemon is the only writer of state; every mutation goes
-//! through `config_writer::apply` plus the engine command, the same two-step
-//! the GUI uses, so a socket write can never drift from the hotkey or a
-//! future GUI.
-//!
-//! Socket: `$XDG_RUNTIME_DIR/sorakey.sock`
+//! Control API over Unix socket (`$XDG_RUNTIME_DIR/sorakey.sock`).
+//! One JSON line in, one out. All writes go through config_writer + engine.
 
 use crate::libs::audio::{ AudioCommand, AudioEngineHandle };
 use crate::libs::cli_args::qualify_soundpack_id;
@@ -20,8 +15,7 @@ pub fn socket_path() -> PathBuf {
     }
 }
 
-/// Spawn the accept loop. Returns the bound path (unlinked any stale socket
-/// first). The caller holds the returned path to remove on clean exit.
+/// Spawn the accept loop. Returns the bound socket path.
 pub fn serve(engine: AudioEngineHandle) -> Option<PathBuf> {
     let path = socket_path();
     let _ = std::fs::remove_file(&path);
@@ -32,7 +26,6 @@ pub fn serve(engine: AudioEngineHandle) -> Option<PathBuf> {
             return None;
         }
     };
-    // Restrict socket to owner only (0600)
     let _ = std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600));
 
     std::thread::spawn(move || {
@@ -40,7 +33,6 @@ pub fn serve(engine: AudioEngineHandle) -> Option<PathBuf> {
             match stream {
                 Ok(stream) => {
                     let eng = engine.clone();
-                    // ponytail: 64K stack not 8MB, avoids 800MB DoS on flood
                     let _ = std::thread::Builder::new()
                         .stack_size(64 * 1024)
                         .spawn(move || {
@@ -206,7 +198,6 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     if !target.join("config.json").exists() {
         return fail("pack not found");
     }
-    // Safety: ensure target is under base
     let canon_base = base.canonicalize().unwrap_or(base.clone());
     let canon_target = target.canonicalize().unwrap_or(target.clone());
     if !canon_target.starts_with(&canon_base) {
@@ -215,13 +206,11 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     if let Err(e) = std::fs::remove_dir_all(&target) {
         return fail(&format!("delete failed: {}", e));
     }
-    // ponytail: incremental remove not full scan (600ms -> 1ms)
     let mut cache = crate::state::soundpack::SoundpackCache::load();
     cache.soundpacks.remove(&id);
     cache.update_count();
     cache.save();
 
-    // Fallback if active pack was deleted — pick first remaining pack
     let was_active = crate::state::config_writer::current().keyboard_soundpack == id;
     crate::state::config_writer::apply(|c| {
         c.per_pack_volume.remove(&id);
@@ -229,7 +218,6 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     if was_active {
         let base2 = paths::soundpacks::get_builtin_soundpacks_dir();
         let ids = collect_packs(&base2, "keyboard");
-        // ponytail: stdlib random via nanos, no rand crate for one pick
         let next = if ids.is_empty() {
             String::new()
         } else {
@@ -264,7 +252,7 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     }
 }
 
-/// Available pack ids. A pack is a directory containing config.json.
+/// List available packs.
 fn packs() -> String {
     let base = paths::soundpacks::get_builtin_soundpacks_dir();
     let mut keyboard: Vec<String> = collect_packs(&base, "keyboard");
@@ -297,7 +285,7 @@ fn fail(e: &str) -> String {
     serde_json::json!({ "ok": false, "error": e }).to_string()
 }
 
-/// `sorakey ctl '<json>'` client: one request, one response line on stdout.
+/// `sorakey ctl '<json>'` client — one request, one response line.
 pub fn ctl_client(request: &str) -> i32 {
     let path = socket_path();
     let mut stream = match UnixStream::connect(&path) {

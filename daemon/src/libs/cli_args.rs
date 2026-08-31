@@ -1,8 +1,6 @@
 pub fn qualify_soundpack_id(id: &str, default_prefix: &str) -> String {
     let mut id = id.trim().replace('\\', "/");
-    // Reject traversal / absolute / null bytes
     if id.contains("..") || id.contains('\0') || id.starts_with('/') {
-        // sanitize: replace .. and leading slash
         id = id.replace("..", "_").trim_start_matches('/').to_string();
     }
     if id.starts_with("keyboard/") {

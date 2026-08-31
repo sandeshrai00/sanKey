@@ -16,7 +16,7 @@ arch="$(uname -m)"
 case "$arch" in x86_64|aarch64) ;; *) arch="x86_64";; esac
 asset="sorakey-${arch}"
 
-# source id for staleness
+# source hash for staleness
 source_id=""
 if command -v sha256sum >/dev/null 2>&1; then
   source_id=$( { find "$DAEMON_DIR" -name "Cargo.toml" -o -name "Cargo.lock" -o -name "*.rs";
@@ -27,9 +27,7 @@ if command -v sha256sum >/dev/null 2>&1; then
   fi
 fi
 
-# A release is only trusted for the exact tagged commit: if the daemon source
-# moved past the tag, the prebuilt would be stale, so refuse it (same rule the
-# Omarchy-Spotify plugin uses).
+# only trust release if source matches tagged commit
 release_matches_source() {
   command -v git >/dev/null 2>&1 || return 1
   local dirty tag_commit
@@ -39,8 +37,7 @@ release_matches_source() {
   git -C "$PLUGIN_DIR" diff --quiet "$tag_commit" HEAD -- daemon rust-toolchain.toml manifest.json 2>/dev/null || return 1
 }
 
-# gh can verify attestations only when actually authenticated (git-over-SSH
-# does not count).
+# gh can verify only when authenticated
 gh_can_verify() {
   command -v gh >/dev/null 2>&1 || return 1
   [[ -n "${GH_TOKEN:-}" ]] && return 0
@@ -58,11 +55,10 @@ try_download_prebuilt() {
   echo "Trying verified prebuilt $url ..."
   if curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 -o "$tmp/$asset" "$url" 2>/dev/null \
     && curl --proto '=https' --tlsv1.2 -fsSL --max-time 30 -o "$tmp/SHA256SUMS" "$sums" 2>/dev/null; then
-    # SHA256SUMS may contain "dist/..." or bare asset names — normalize
+    # normalize SHA256SUMS
     sed -i "s|dist/||g; s|\*${asset}|${asset}|g" "$tmp/SHA256SUMS" 2>/dev/null || true
     if (cd "$tmp" && sha256sum -c "${asset}" >/dev/null 2>&1 || (cd "$tmp" && sha256sum -c SHA256SUMS >/dev/null 2>&1)); then
       if gh_can_verify; then
-        # Strongest path: prove GitHub CI built this file from the tagged commit.
         if GH_PROMPT_DISABLED=1 gh attestation verify "$tmp/$asset" --repo "$REPO" \
              --cert-identity-regex "https://github.com/$REPO/.github/workflows/release.*" \
              --deny-self-hosted-runners 2>/dev/null; then
@@ -72,15 +68,12 @@ try_download_prebuilt() {
           echo "Installed verified prebuilt $version $arch (attested)"
           return 0
         fi
-        # Attestation failed while it was possible: a real integrity signal,
-        # so do NOT install the binary — fall back to the source build.
+        # attestation failed — fall back to source build
         echo "warning: attestation failed — building from source" >&2
         rm -rf "$tmp"
         return 1
       fi
-      # No way to attestation-verify here (gh missing or not logged in):
-      # the release checksum already passed, so install it. The checksum
-      # comes from the same GitHub release, so this trusts the release page.
+      # no attestation possible — checksum already passed
       install -m 755 "$tmp/$asset" "$BIN"
       [[ -n "$source_id" ]] && echo "$source_id" > "$LIB_DIR/source.sha256"
       rm -rf "$tmp"
@@ -102,7 +95,7 @@ if ! command -v cargo >/dev/null 2>&1; then
   exit 1
 fi
 
-# Deterministic source build outside plugin dir (avoids watcher thrash)
+# build outside plugin dir
 export SOURCE_DATE_EPOCH=$(git -C "$PLUGIN_DIR" log -1 --format=%ct 2>/dev/null || date +%s)
 export CARGO_INCREMENTAL=0
 export CARGO_TERM_QUIET=true

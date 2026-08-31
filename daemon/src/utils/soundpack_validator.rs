@@ -1,7 +1,5 @@
 use serde_json::Value;
 
-
-
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum SoundpackValidationStatus {
@@ -10,19 +8,11 @@ pub enum SoundpackValidationStatus {
     InvalidStructure(String),
     MissingRequiredFields(Vec<String>),
     VersionOneNeedsConversion,
-    /// The pack declares a config version this build does not understand.
-    /// Refusing it with a clear message beats guessing at a layout that was
-    /// designed after this build shipped.
+    /// Pack needs a newer app to read it.
     RequiresNewerAppVersion(u32),
 }
 
-/// Read `config_version` regardless of whether it was written as a JSON number
-/// or as a string.
-///
-/// Both spellings exist in the wild: every pack this app ships stores `"2"` as
-/// a string, because that is what the V1 converter writes, while hand-written
-/// and third-party configs commonly use the bare number `2`. Accepting only one
-/// form silently misclassifies half of the real corpus.
+/// Read `config_version` whether it's a number or a string.
 fn read_config_version(config: &Value) -> Option<u32> {
     let raw = config.get("config_version")?;
 
@@ -33,12 +23,7 @@ fn read_config_version(config: &Value) -> Option<u32> {
     raw.as_str()?.trim().parse::<u32>().ok()
 }
 
-/// The key-definition map, under either name it has been given.
-///
-/// V2 packs store their key definitions under `definitions`; that is what the
-/// converter emits and what the deserializer in `state::soundpack` requires.
-/// `defs` is accepted purely as an alias so a config using the shorter spelling
-/// is not rejected outright.
+/// Key definitions under `definitions` or `defs` (alias).
 fn key_definitions(config: &Value) -> Option<&Value> {
     config.get("definitions").or_else(|| config.get("defs"))
 }
@@ -54,9 +39,9 @@ pub struct SoundpackValidationResult {
     pub message: String,
 }
 
-/// Detect and validate soundpack configuration version and structure
+/// Validate soundpack config at path.
 pub fn validate_soundpack_config(config_path: &str) -> SoundpackValidationResult {
-    // Try to read and parse the config file
+
     let content = match crate::utils::path::read_file_contents(config_path) {
         Ok(content) => content,
         Err(e) => {
@@ -88,28 +73,23 @@ pub fn validate_soundpack_config(config_path: &str) -> SoundpackValidationResult
         }
     };
 
-    // Extract version information
     let config_version = read_config_version(&config);
     let package_version = config
         .get("version")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    // Check for V1 indicators
     let has_defines = config.get("defines").is_some();
     let has_sound_field = config.get("sound").is_some();
     let has_method_field =
         config.get("method").is_some() || config.get("key_define_type").is_some();
 
-    // Check for V2 indicators
     let has_defs = key_definitions(&config).is_some();
     let _has_source_field = config.get("source").is_some();
     let has_author = config.get("author").is_some();
 
-    // Determine version based on structure
     if let Some(version) = config_version.filter(|v| *v > 2) {
-        // Newer than anything this build knows how to read. Say so plainly
-        // instead of reporting the unfamiliar layout as missing fields.
+        // newer than we understand — ask to update
         SoundpackValidationResult {
             status: SoundpackValidationStatus::RequiresNewerAppVersion(version),
             config_version: Some(version),
@@ -119,10 +99,10 @@ pub fn validate_soundpack_config(config_path: &str) -> SoundpackValidationResult
             message: "This soundpack requires a newer version of Sorakey".to_string(),
         }
     } else if config_version == Some(2) {
-        // Explicitly marked as V2, validate V2 structure
+        // explicit V2
         validate_v2_structure(&config, config_version, package_version)
     } else if config_version == Some(1) || (has_defines && has_sound_field && !has_defs) {
-        // Explicitly V1 or has V1 structure (defines + sound + no defs)
+        // explicit V1 or V1-shaped
         SoundpackValidationResult {
             status: SoundpackValidationStatus::VersionOneNeedsConversion,
             config_version: Some(1),
@@ -137,10 +117,10 @@ pub fn validate_soundpack_config(config_path: &str) -> SoundpackValidationResult
             },
         }
     } else if has_defs && has_author {
-        // Looks like V2 but no explicit version
+        // V2-shaped but unversioned
         validate_v2_structure(&config, None, package_version)
     } else {
-        // Unknown or invalid structure
+        // unknown shape
         let mut missing_fields = Vec::new();
 
         if !has_defs && !has_defines {
@@ -170,7 +150,7 @@ fn validate_v2_structure(
     let mut missing_fields = Vec::new();
     let mut issues = Vec::new();
 
-    // Check required V2 fields
+    // required V2 fields
     if !config.get("name").is_some() {
         missing_fields.push("name".to_string());
     }
@@ -185,13 +165,11 @@ fn validate_v2_structure(
         missing_fields.push("definitions".to_string());
     }
 
-    // Validate the key-definition structure
+    // validate definitions
     if let Some(defs) = definitions {
         if let Some(defs_obj) = defs.as_object() {
             for (key, value) in defs_obj {
-                // A key maps either to `{ "timing": [[start, end], ...] }` (the
-                // shape the converter writes and the loader deserializes) or
-                // directly to the timing array itself.
+                // supports both `{ timing: [...] }` and bare `[[...]]`
                 let timings = match value.get("timing") {
                     Some(timing) => timing,
                     None => value,
@@ -229,7 +207,7 @@ fn validate_v2_structure(
         }
     }
 
-    // Determine final status
+    // final status
     if !missing_fields.is_empty() {
         SoundpackValidationResult {
             status: SoundpackValidationStatus::MissingRequiredFields(missing_fields.clone()),
@@ -260,14 +238,11 @@ fn validate_v2_structure(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The exact `config_version` spelling every bundled pack uses: a string,
-    /// not a number. Reading it as a number only is what made real V2 packs
-    /// fall through to the "missing fields" branch.
+    /// Bundled packs store config_version as a string.
     const REAL_PACK_CONFIG: &str =
         r#"{
             "audio_file": "sound.ogg",
@@ -287,7 +262,6 @@ mod tests {
         }"#;
 
     fn validate_json(contents: &str) -> SoundpackValidationResult {
-        // ponytail: previous name collided across parallel tests (same pid+millis) → trailing-chars race
         let path = std::env::temp_dir().join(format!(
             "sorakey-validator-{}-{:?}-{}.json",
             std::process::id(),
@@ -327,8 +301,7 @@ mod tests {
         assert_eq!(version_of(r#"{"config_version": 2.5}"#), None, "fractional");
     }
 
-    /// The defect this pins: a real bundled pack must reach the V2 branch and
-    /// be reported valid, with its version recognised as 2.
+    /// Real pack must validate as V2.
     #[test]
     fn a_real_bundled_pack_validates_as_v2() {
         let result = validate_json(REAL_PACK_CONFIG);
@@ -344,8 +317,7 @@ mod tests {
         assert!(!result.can_be_converted, "a valid V2 pack needs no conversion");
     }
 
-    /// Every pack in the repository must be loadable. This is the regression
-    /// net for the whole shipped corpus, not just the one sampled above.
+    /// Every bundled pack must validate.
     #[test]
     fn every_bundled_soundpack_validates() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("soundpacks");
@@ -382,8 +354,7 @@ mod tests {
         assert!(checked > 0, "expected to find bundled soundpack configs under {}", root.display());
     }
 
-    /// `defs` is accepted as an alias so a config using the shorter spelling is
-    /// not rejected for a naming difference alone.
+    /// `defs` alias is accepted.
     #[test]
     fn the_defs_spelling_is_accepted_as_an_alias() {
         let result = validate_json(
@@ -398,8 +369,7 @@ mod tests {
         assert_eq!(result.status, SoundpackValidationStatus::Valid, "got: {}", result.message);
     }
 
-    /// A version from the future must say so, in both spellings, rather than
-    /// blaming the author for fields this build simply does not know about.
+    /// Future version asks to update.
     #[test]
     fn a_newer_config_version_asks_the_user_to_update() {
         for raw in ["3", "\"3\"", "99"] {
@@ -419,8 +389,7 @@ mod tests {
         }
     }
 
-    /// A future pack that happens to carry a V1-looking body must still be
-    /// refused as too new, rather than being downgraded and converted.
+    /// Future pack isn't mistaken for V1.
     #[test]
     fn a_newer_version_is_not_mistaken_for_a_convertible_v1_pack() {
         let result = validate_json(
@@ -440,7 +409,7 @@ mod tests {
         assert!(!result.can_be_converted, "converting a format we cannot read would corrupt it");
     }
 
-    /// V1 packs must keep taking the conversion path untouched.
+    /// V1 packs need conversion.
     #[test]
     fn a_v1_pack_still_asks_to_be_converted() {
         let result = validate_json(
@@ -456,7 +425,7 @@ mod tests {
         assert!(result.can_be_converted);
     }
 
-    /// An unversioned V1 pack is recognised by its shape alone.
+    /// Unversioned V1 detected by shape.
     #[test]
     fn an_unversioned_v1_pack_is_detected_by_structure() {
         let result = validate_json(
@@ -467,8 +436,7 @@ mod tests {
         assert!(result.can_be_converted);
     }
 
-    /// A config that is neither shape still reports what it is missing, and
-    /// names the field by the spelling packs actually use.
+    /// Missing definitions are reported.
     #[test]
     fn a_config_with_no_definitions_reports_the_missing_field() {
         let result = validate_json(r#"{ "name": "empty" }"#);
