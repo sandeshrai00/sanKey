@@ -36,7 +36,7 @@ pub fn serve(engine: AudioEngineHandle) -> Option<PathBuf> {
                     let _ = std::thread::Builder::new()
                         .stack_size(64 * 1024)
                         .spawn(move || {
-                            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+                            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(100)));
                             handle_conn(stream, &eng)
                         });
                 }
@@ -86,6 +86,9 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
             let cur = crate::state::config_writer::current();
             if !cur.keyboard_soundpack.is_empty() {
                 let id = cur.keyboard_soundpack.clone();
+                if too_many_per_pack_entries(&id) {
+                    return fail("too many per-pack entries");
+                }
                 crate::state::config_writer::apply(|c| { c.per_pack_volume.insert(id, f); });
             } else {
                 crate::state::config_writer::apply(|c| c.volume = f);
@@ -98,6 +101,7 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
         "delete_pack" => delete_pack(&req, engine),
         "keyboard_pack" => load_pack(&req, engine),
         "packs" => packs(),
+        "diag" => diag(),
         other => fail(&format!("unknown cmd: {other}")),
     }
 }
@@ -140,6 +144,13 @@ fn load_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     }
     let id = qualify_soundpack_id(&raw, "keyboard/");
     let rec = recommended_volume_for(&id);
+    let will_insert = rec.is_some_and(|v| {
+        let v = v.clamp(0.1, 1.0);
+        (v - 1.0).abs() > 0.001
+    }) && !crate::state::config_writer::current().per_pack_volume.contains_key(&id);
+    if will_insert && too_many_per_pack_entries(&id) {
+        return fail("too many per-pack entries");
+    }
 
     crate::state::config_writer::apply(|c| {
         c.keyboard_soundpack = id.clone();
@@ -167,6 +178,9 @@ fn per_pack_volume(req: &serde_json::Value, engine: &AudioEngineHandle) -> Strin
         return fail("invalid id");
     }
     let id = qualify_soundpack_id(&raw, "keyboard/");
+    if too_many_per_pack_entries(&id) {
+        return fail("too many per-pack entries");
+    }
     let v = match clamp_percent(req.get("value")) { Some(v) => v, None => return fail("value must be 0-100") };
     let f = (v / 100.0).clamp(0.0, 1.0);
     crate::state::config_writer::apply(|c| {
@@ -279,6 +293,36 @@ fn ok(mut v: serde_json::Value) -> String {
         obj.insert("ok".into(), serde_json::json!(true));
     }
     v.to_string()
+}
+
+fn too_many_per_pack_entries(id: &str) -> bool {
+    const MAX: usize = 500;
+    let c = crate::state::config_writer::current();
+    c.per_pack_volume.len() >= MAX && !c.per_pack_volume.contains_key(id)
+}
+
+fn proc_kb(key: &str) -> Option<u64> {
+    std::fs::read_to_string("/proc/self/status").ok()?.lines().find_map(|l| {
+        if l.starts_with(key) { l.split_whitespace().nth(1)?.parse().ok() } else { None }
+    })
+}
+
+fn diag() -> String {
+    let vm_rss = proc_kb("VmRSS:").unwrap_or(0);
+    let vm_hwm = proc_kb("VmHWM:").unwrap_or(0);
+    let c = crate::state::config_writer::current();
+    let cache = crate::state::soundpack::SoundpackCache::load();
+    let trace_bytes = std::env::temp_dir()
+        .join(format!("sorakey-trace-{}.log", std::process::id()))
+        .metadata().map(|m| m.len()).unwrap_or(0);
+    ok(serde_json::json!({
+        "vm_rss_kb": vm_rss,
+        "vm_hwm_kb": vm_hwm,
+        "per_pack_volume_entries": c.per_pack_volume.len(),
+        "soundpack_cache_entries": cache.soundpacks.len(),
+        "keyboard_pack": c.keyboard_soundpack,
+        "trace_bytes": trace_bytes,
+    }))
 }
 
 fn fail(e: &str) -> String {

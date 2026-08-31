@@ -378,6 +378,15 @@ fn capture_soundpack_loading_error(soundpack_id: &str, error: &str) {
             last_error: Some(error.to_string()),
         };
 
+        const MAX_CACHE_ENTRIES: usize = 1000;
+        if cache.soundpacks.len() >= MAX_CACHE_ENTRIES {
+            if let Some(old) = cache.soundpacks.iter().find(|(_, m)| m.last_error.is_some()).map(|(k, _)| k.clone()) {
+                cache.soundpacks.remove(&old);
+            } else {
+                crate::always_eprint!("⚠️ cache full ({}), skipping error entry for {}", cache.soundpacks.len(), soundpack_id);
+                return;
+            }
+        }
         cache.soundpacks.insert(soundpack_id.to_string(), error_metadata);
     }
 

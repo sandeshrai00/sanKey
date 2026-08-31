@@ -215,9 +215,12 @@ fn writer_loop(
 
     let mut file = path.as_ref().and_then(|path| std::fs::File::create(path).ok());
     let mut pending: Vec<Pending> = Vec::new();
+    let mut written: u64 = 0;
+    const MAX_TRACE_BYTES: u64 = 50 * 1024 * 1024;
 
     while let Ok(rec) = rx.recv() {
         if let Some(f) = file.as_mut() {
+            let start = written;
             let _ = writeln!(
                 f,
                 "{:>12.3}\t{}\t{}\t{:.3}",
@@ -226,6 +229,19 @@ fn writer_loop(
                 rec.key.as_str(),
                 rec.dur_ms
             );
+            let _ = f.flush();
+            // estimate bytes written; rotate if over cap
+            written = start.saturating_add(64);
+            if let Ok(md) = f.metadata() { written = md.len(); }
+            if written > MAX_TRACE_BYTES {
+                if let Some(p) = path.as_ref() {
+                    let backup = p.with_extension("log.1");
+                    drop(file.take());
+                    let _ = std::fs::rename(p, &backup);
+                    file = std::fs::File::create(p).ok();
+                    written = 0;
+                }
+            }
         }
 
         let key = rec.key.as_str().to_string();

@@ -61,7 +61,8 @@ pub fn start_evdev_keyboard_listener(
         let mut first_event_logged = false;
 
         loop {
-            for device in &mut keyboards {
+            let mut failed: Vec<usize> = Vec::new();
+            for (idx, device) in keyboards.iter_mut().enumerate() {
                 match device.fetch_events() {
                     Ok(events) => {
                         for event in events {
@@ -120,11 +121,19 @@ pub fn start_evdev_keyboard_listener(
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     }
                     Err(e) => {
-                        crate::always_eprint!("⚠️ [evdev] Error fetching events: {}", e);
+                        crate::always_eprint!("⚠️ [evdev] Error on device {}: {} - removing", idx, e);
+                        failed.push(idx);
                     }
                 }
             }
-            
+            for idx in failed.iter().rev() {
+                keyboards.remove(*idx);
+            }
+            if keyboards.is_empty() {
+                crate::always_eprint!("❌ [evdev] all devices removed, stopping");
+                break;
+            }
+
             thread::sleep(Duration::from_millis(20));
         }
     });
