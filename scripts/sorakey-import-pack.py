@@ -33,10 +33,23 @@ try:
     gi.require_version("Gtk", "4.0")
     from gi.repository import Gtk, Gio, GLib
 except ImportError:
-    print("ERROR:Gtk4 not available")
-    sys.exit(1)
+    Gtk = None
 
 SOUNDPACKS = os.path.expanduser("~/.local/share/sorakey/soundpacks")
+
+# Zip bomb guard: cap total uncompressed
+MAX_PACK_SIZE = 20 * 1024 * 1024
+
+# Non-zip container formats the file dialog's "All Files" filter can surface
+NON_ZIP_EXTS = (".7z", ".rar", ".tar", ".gz", ".bz2", ".xz")
+
+
+def _short(value, limit=50):
+    """One-line, whitespace-collapsed, length-capped error text for messages."""
+    s = " ".join(str(value).split())
+    if len(s) > limit:
+        s = s[:limit - 1] + "…"
+    return s or "unknown error"
 
 
 # ----- V1 -> V2 conversion -----
@@ -239,10 +252,14 @@ def get_audio_duration_ms(audio_path, zf=None, zip_prefix=None):
         with tempfile.NamedTemporaryFile(suffix=os.path.splitext(audio_path)[1], delete=False) as f:
             f.write(data)
             tmp = f.name
-        result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", tmp],
-            capture_output=True, text=True, timeout=10
-        )
+        try:
+            result = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", tmp],
+                capture_output=True, text=True, timeout=10
+            )
+        except Exception:
+            # ffprobe missing/timed out — fall back to the 100ms default
+            return None
     finally:
         if tmp:
             try:
@@ -497,17 +514,17 @@ def strip_enclosing_folder(zf, config_path):
 
 
 def validate_v2(cfg):
-    """Return None on success, or a human-readable error string."""
+    """Return None on success, or a short human-readable error reason."""
     if not cfg.get("name"):
-        return "missing 'name' field"
+        return "no name"
     if not cfg.get("author"):
-        return "missing 'author' field"
+        return "no author"
     if not (cfg.get("definitions") or cfg.get("defs")):
-        return "missing 'definitions' field"
+        return "no key definitions"
     if cfg.get("definition_method") not in ("single", "multi"):
-        return "missing or invalid 'definition_method'"
+        return "definition_method must be single or multi"
     if cfg.get("definition_method") == "single" and not cfg.get("audio_file"):
-        return "single-method pack missing 'audio_file' field"
+        return "single method needs audio_file"
     return None
 
 
@@ -515,18 +532,21 @@ def import_zip(zip_path):
     try:
         zf = zipfile.ZipFile(zip_path, "r")
     except zipfile.BadZipFile:
-        return None, "Not a valid ZIP — is it .rar/.7z?"
-    except Exception:
-        return None, "Not a valid ZIP — is it .rar/.7z?"
+        ext = os.path.splitext(zip_path)[1].lower()
+        if ext in NON_ZIP_EXTS:
+            return None, f"Not a ZIP — this is {ext}. Re-compress as .zip."
+        return None, "Not a valid ZIP — file may be corrupted."
+    except Exception as e:
+        return None, f"Can't read file: {_short(e, 40)}"
     with zf:
         config_path, config_bytes = find_config_in_zip(zf)
         if not config_path:
-            return None, "Not a soundpack — no config found."
+            return None, "No config.json — not a soundpack."
 
         try:
             cfg = json.loads(config_bytes)
         except Exception:
-            return None, "Config is damaged — try re-downloading."
+            return None, "config.json damaged — re-download pack."
 
         strip_folder = strip_enclosing_folder(zf, config_path)
         available_files = list_files_in_zip(zf, config_path, strip_folder)
@@ -554,24 +574,29 @@ def import_zip(zip_path):
         else:
             err = validate_v2(cfg)
             if err:
-                return None, "Soundpack is incomplete — missing required info."
+                return None, f"Bad config: {err}"
 
         # Validate audio files exist before destroying old install (for both methods)
         if cfg.get("definition_method") == "single":
             audio_rel = cfg.get("audio_file", "")
             if audio_rel and audio_rel not in available_files and not _case_insensitive_match(audio_rel, available_files):
-                return None, "Audio file missing from ZIP."
+                return None, f"Missing audio file: {audio_rel}"
         elif cfg.get("definition_method") == "multi":
-            missing = [d.get("audio_file") for d in cfg.get("definitions", {}).values() if d.get("audio_file") and d.get("audio_file") not in available_files and not _case_insensitive_match(d.get("audio_file"), available_files)]
+            missing = sorted({d.get("audio_file") for d in cfg.get("definitions", {}).values() if d.get("audio_file") and d.get("audio_file") not in available_files and not _case_insensitive_match(d.get("audio_file"), available_files)})
             if missing:
-                return None, "Audio file missing from ZIP."
+                if len(missing) == 1:
+                    return None, f"Missing audio: {missing[0]}"
+                names = ", ".join(missing[:2])
+                if len(missing) > 2:
+                    names += f" +{len(missing) - 2} more"
+                return None, f"Missing audio: {names}"
 
         import shutil, pathlib
         # Zip bomb guard: cap total uncompressed
         try:
             total = sum(zf.getinfo(n).file_size for n in zf.namelist())
-            if total > 300*1024*1024:
-                return None, "ZIP too large (300MB limit)."
+            if total > MAX_PACK_SIZE:
+                return None, f"Pack too big: {total // (1024 * 1024)}MB (max {MAX_PACK_SIZE // (1024 * 1024)}MB)."
         except Exception:
             pass
         tmp_dir = install_dir + ".tmp." + str(os.getpid())
@@ -624,11 +649,7 @@ def cli_main():
     try:
         soundpack_id, err = import_zip(path)
     except Exception as e:
-        msg = str(e)
-        if "BadZipFile" in type(e).__name__ or "not a zip" in msg.lower():
-            print("ERROR:Not a valid ZIP — is it .rar/.7z?", flush=True)
-        else:
-            print("ERROR:Import failed — try again.", flush=True)
+        print(f"ERROR:Import failed: {_short(e)}", flush=True)
         sys.exit(1)
     if err:
         print(f"ERROR:{err}", flush=True)
@@ -638,6 +659,9 @@ def cli_main():
 
 
 def gui_main():
+    if Gtk is None:
+        print("ERROR:GTK 4 missing — file dialog can't open", flush=True)
+        sys.exit(1)
     dialog = Gtk.FileDialog(title="Import Soundpack")
     filter_zip = Gtk.FileFilter()
     filter_zip.set_name("Soundpack ZIP")
@@ -678,11 +702,7 @@ def gui_main():
         try:
             sid, err = import_zip(path)
         except Exception as e:
-            msg = str(e)
-            if "BadZipFile" in type(e).__name__ or "not a zip" in msg.lower():
-                fail_and_quit("Not a valid ZIP — is it .rar/.7z?")
-            else:
-                fail_and_quit("Import failed — try again.")
+            fail_and_quit(f"Import failed: {_short(e)}")
             return
         if err:
             fail_and_quit(err)
