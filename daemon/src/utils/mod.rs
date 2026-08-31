@@ -7,3 +7,4 @@ pub mod logger;
 pub mod path;
 pub mod soundpack;
 pub mod soundpack_validator;
+pub mod symphonia;

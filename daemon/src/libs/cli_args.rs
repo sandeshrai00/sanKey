@@ -1,5 +1,3 @@
-pub const SOUNDPACK_ARG: &str = "--soundpack";
-
 pub fn qualify_soundpack_id(id: &str, default_prefix: &str) -> String {
     let mut id = id.trim().replace('\\', "/");
     // Reject traversal / absolute / null bytes

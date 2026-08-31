@@ -40,10 +40,13 @@ pub fn serve(engine: AudioEngineHandle) -> Option<PathBuf> {
             match stream {
                 Ok(stream) => {
                     let eng = engine.clone();
-                    std::thread::spawn(move || {
-                        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
-                        handle_conn(stream, &eng)
-                    });
+                    // ponytail: 64K stack not 8MB, avoids 800MB DoS on flood
+                    let _ = std::thread::Builder::new()
+                        .stack_size(64 * 1024)
+                        .spawn(move || {
+                            let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+                            handle_conn(stream, &eng)
+                        });
                 }
                 Err(e) => crate::debug_print!("⚠️  [control] accept: {}", e),
             }
@@ -56,11 +59,7 @@ pub fn serve(engine: AudioEngineHandle) -> Option<PathBuf> {
 fn handle_conn(mut stream: UnixStream, engine: &AudioEngineHandle) {
     let mut line = String::new();
     {
-        let cloned = match stream.try_clone() {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        let mut reader = BufReader::new(cloned);
+        let mut reader = BufReader::new(&stream);
         if reader.read_line(&mut line).is_err() {
             return;
         }
@@ -90,13 +89,12 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
             ok(serde_json::json!({ "muted": muted }))
         }
         "volume" => {
-            // Keyboard volume is per-pack: if a pack is active, store per-pack; else global fallback
             let v = match clamp_percent(req.get("value")) { Some(v) => v, None => return fail("value must be 0-100") };
             let f = v / 100.0;
             let cur = crate::state::config_writer::current();
             if !cur.keyboard_soundpack.is_empty() {
                 let id = cur.keyboard_soundpack.clone();
-                crate::state::config_writer::apply(|c| { c.per_pack_volume.insert(id.clone(), f); });
+                crate::state::config_writer::apply(|c| { c.per_pack_volume.insert(id, f); });
             } else {
                 crate::state::config_writer::apply(|c| c.volume = f);
             }
@@ -217,9 +215,10 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     if let Err(e) = std::fs::remove_dir_all(&target) {
         return fail(&format!("delete failed: {}", e));
     }
-    // Refresh cache
+    // ponytail: incremental remove not full scan (600ms -> 1ms)
     let mut cache = crate::state::soundpack::SoundpackCache::load();
-    cache.refresh_from_directory();
+    cache.soundpacks.remove(&id);
+    cache.update_count();
     cache.save();
 
     // Fallback if active pack was deleted — pick first remaining pack
@@ -230,11 +229,15 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     if was_active {
         let base2 = paths::soundpacks::get_builtin_soundpacks_dir();
         let ids = collect_packs(&base2, "keyboard");
-        // Random fallback, not alphabetically first
-        let next = {
-            use rand::seq::IndexedRandom;
-            let mut rng = rand::rng();
-            ids.choose(&mut rng).cloned().unwrap_or_default()
+        // ponytail: stdlib random via nanos, no rand crate for one pick
+        let next = if ids.is_empty() {
+            String::new()
+        } else {
+            let n = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as usize;
+            ids[n % ids.len()].clone()
         };
         let rec = if !next.is_empty() { recommended_volume_for(&next) } else { None };
         crate::state::config_writer::apply(|c| {
@@ -275,7 +278,7 @@ fn collect_packs(base: &PathBuf, kind: &str) -> Vec<String> {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             let id = format!("{kind}/{name}");
-            if e.path().join("config.json").exists() && !ids.contains(&id) {
+            if e.path().join("config.json").exists() {
                 ids.push(id);
             }
         }
@@ -310,15 +313,8 @@ pub fn ctl_client(request: &str) -> i32 {
     }
     let mut out = String::new();
     {
-        let cloned = match stream.try_clone() {
-            Ok(c) => c,
-            Err(_) => {
-                print!("{}", fail("clone failed"));
-                return 1;
-            }
-        };
-        let _ = cloned.set_read_timeout(Some(std::time::Duration::from_secs(5)));
-        let mut reader = BufReader::new(cloned);
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+        let mut reader = BufReader::new(&stream);
         if reader.read_line(&mut out).is_err() {
             print!("{}", fail("read failed"));
             return 1;

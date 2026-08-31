@@ -187,7 +187,7 @@ impl SoundpackCache {
             }
         }
 
-        match data::save_json_to_file(self, std::path::Path::new(&cache_file)) {
+        match data::save_json_to_file_atomically(self, std::path::Path::new(&cache_file)) {
             Ok(_) =>
                 crate::always_print!(
                     "💾 Saved soundpack metadata cache with {} entries",

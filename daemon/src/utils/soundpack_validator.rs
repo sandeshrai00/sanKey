@@ -287,9 +287,16 @@ mod tests {
         }"#;
 
     fn validate_json(contents: &str) -> SoundpackValidationResult {
-        let path = std::env
-            ::temp_dir()
-            .join(format!("sorakey-validator-{}-{}.json", std::process::id(), format!("{}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(), std::process::id())));
+        // ponytail: previous name collided across parallel tests (same pid+millis) → trailing-chars race
+        let path = std::env::temp_dir().join(format!(
+            "sorakey-validator-{}-{:?}-{}.json",
+            std::process::id(),
+            std::thread::current().id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
         std::fs::write(&path, contents).expect("write temp config");
         let result = validate_soundpack_config(path.to_str().expect("utf-8 temp path"));
         std::fs::remove_file(&path).ok();

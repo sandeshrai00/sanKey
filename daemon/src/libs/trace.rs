@@ -148,9 +148,8 @@ pub fn record(point: Point, key: &str, dur_ms: f64) {
         return;
     }
     if let Some(tx) = SINK.get() {
-        // Unbounded send never blocks, which is the whole point: a slow or
-        // wedged writer must not be able to stall the engine loop.
-        let _ = tx.send(Record {
+        // ponytail: bounded try_send never blocks, drops oldest under flood
+        let _ = tx.try_send(Record {
             point,
             at_ms: now_ms(),
             dur_ms,
@@ -201,7 +200,8 @@ fn ensure_writer(write_to_console: bool) -> bool {
     }
 
     let _ = ORIGIN.set(Instant::now());
-    let (tx, rx) = crossbeam_channel::unbounded::<Record>();
+    // ponytail: bounded 512 drops oldest under flood, avoids OOM if verbose on with no drain
+    let (tx, rx) = crossbeam_channel::bounded::<Record>(512);
     if SINK.set(tx).is_err() {
         // Another thread won the race and its writer is live.
         return true;

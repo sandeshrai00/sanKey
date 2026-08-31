@@ -6,8 +6,8 @@
 //! stays the Ctrl+Alt+M hotkey.
 //!
 //! The fork keeps whole upstream modules (some carry GUI-side helpers the
-//! daemon never calls), so dead code is expected and allowed crate-wide.
-#![allow(dead_code)]
+//! daemon never calls).
+// ponytail: no crate-wide allow(dead_code) — surface dead code via cargo warn
 
 mod control;
 mod libs;

@@ -140,9 +140,10 @@ Panel {
     if (pick) root.setKeyboardPack(pick)
   }
 
-  function startDaemon() { root.runService(["start", "sorakey"]); root.refreshStatus() }
-  function stopDaemon()  { root.runService(["stop", "sorakey"]);  root.refreshStatus() }
-  function restartDaemon() { root.runService(["restart", "sorakey"]); root.refreshStatus() }
+  function startDaemon() { root.runService(["start", "sorakey"]) }
+  function stopDaemon()  { root.runService(["stop", "sorakey"]) }
+  function restartDaemon() { root.runService(["restart", "sorakey"]) }
+  function doUpdate() { if (root.updateBusy) return; root.updateBusy=true; root.updateStatus="Updating…"; updateProc.command=["omarchy","plugin","update","io.github.sandeshrai00.sorakey","--yes"]; updateProc.running=true }
 
   function install() {
     if (setupBusy) return
@@ -308,12 +309,6 @@ Panel {
       root.installed = (exitCode === 0)
       if (root.installed) {
         root.refreshStatus()
-        // The daemon may be auto-starting right now (re-enable, plugin
-        // reload): poll briefly until it answers, then go quiet.
-        if (!root.running) {
-          root.installPollRemaining = 20
-          installPollTimer.running = true
-        }
       } else if (!root.automaticSetupAttempted && !setupBusy) {
         root.automaticSetupAttempted = true
         // Auto-run setup on first enable after URL install (like Spotify)
@@ -398,29 +393,6 @@ Panel {
         root.installed = true
         root.refreshStatus()
         root.refreshPacks()
-        // Aggressive poll for 10 seconds to catch daemon startup
-        root.installPollRemaining = 10
-        installPollTimer.running = true
-      }
-    }
-  }
-
-  property int installPollRemaining: 0
-
-  Timer {
-    id: installPollTimer
-    interval: 500
-    repeat: true
-    running: false
-    onTriggered: {
-      if (!root.installed || root.running) {
-        running = false
-        return
-      }
-      root.refreshStatus()
-      root.installPollRemaining--
-      if (root.installPollRemaining <= 0) {
-        running = false
       }
     }
   }
@@ -620,13 +592,7 @@ Panel {
               width: parent.width
               tooltipText: "Update Sorakey plugin"
               enabled: !root.updateBusy
-              onClicked: {
-                if (root.updateBusy) return
-                root.updateBusy = true
-                root.updateStatus = "Updating…"
-                updateProc.command = ["omarchy","plugin","update","io.github.sandeshrai00.sorakey","--yes"]
-                updateProc.running = true
-              }
+              onClicked: root.doUpdate()
             }
             Text {
               visible: root.updateStatus !== ""
@@ -853,13 +819,7 @@ Panel {
               bordered: true
               tooltipText: "Update Sorakey plugin"
               enabled: !root.updateBusy
-              onClicked: {
-                if (root.updateBusy) return
-                root.updateBusy = true
-                root.updateStatus = "Updating…"
-                updateProc.command = ["omarchy","plugin","update","io.github.sandeshrai00.sorakey","--yes"]
-                updateProc.running = true
-              }
+              onClicked: root.doUpdate()
             }
 
             Item { width: Math.max(0, parent.width - startStopButton.width - restartButton.width - updateButton.width - removeButton.width - parent.spacing*3 - Style.space(8)); height: 1 }

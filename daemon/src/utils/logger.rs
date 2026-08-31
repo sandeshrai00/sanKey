@@ -8,19 +8,12 @@
 ///
 /// The tee is what makes installed release builds diagnosable at all: they are
 /// without the buffer a user's logs simply do not exist anywhere.
-use std::sync::OnceLock;
-
-static DEBUG_ENABLED: OnceLock<bool> = OnceLock::new();
-
-/// Initialize debug logging - always enabled
+// ponytail: DEBUG_ENABLED was always true — alias debug to always
 pub fn init_debug_logging() {
-    let _ = DEBUG_ENABLED.set(true);
     crate::always_print!("🐛 Debug logging enabled");
 }
-
-/// Check if debug logging is enabled
 pub fn is_debug_enabled() -> bool {
-    *DEBUG_ENABLED.get().unwrap_or(&false)
+    true
 }
 
 /// Debug print macro - only prints if debug console is enabled

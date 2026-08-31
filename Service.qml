@@ -23,14 +23,14 @@ Item {
   property string lastImportError: ""
 
   signal packsImported(string packId)
-  signal importFailed(string reason)
+  // ponytail: importFailed was never connected — lastImportError is single source
+  function notify(title, msg) { Quickshell.execDetached(["notify-send","-a","Sorakey", title, msg]); clearImportTimer.restart() }
 
   function importSoundpack() {
     if (importing) return
     if (!pluginDir) {
       lastImportError = "Service pluginDir is empty (manifest not injected)"
       lastImportResult = ""
-      importFailed(lastImportError)
       return
     }
     if (!importHelper.running) {
@@ -55,18 +55,11 @@ Item {
       var errOutput = String(stderr.text || "").trim()
       var lines = output.split("\n")
       var last = lines[lines.length - 1]
-      if (output === "" && exitCode === 0) { // cancelled file dialog
-        root.lastImportError = ""
-        root.lastImportResult = ""
-        return
-      }
       if (last.startsWith("OK:")) {
         root.lastImportResult = last.substring(3).trim()
         root.lastImportError = ""
         root.packsImported(root.lastImportResult)
-        Quickshell.execDetached(["notify-send", "-a", "Sorakey",
-          "Soundpack imported", root.lastImportResult])
-        clearImportTimer.restart()
+        root.notify("Soundpack imported", root.lastImportResult)
       } else if (last.startsWith("ERROR:")) {
         var msg = last.substring(6).trim()
         if (msg === "Cancelled" || msg.toLowerCase().indexOf("cancel") !== -1) {
@@ -76,24 +69,15 @@ Item {
         }
         root.lastImportError = msg
         root.lastImportResult = ""
-        root.importFailed(root.lastImportError)
-        Quickshell.execDetached(["notify-send", "-a", "Sorakey",
-          "Import failed", msg])
-        clearImportTimer.restart()
+        root.notify("Import failed", msg)
       } else if (exitCode !== 0) {
         root.lastImportError = errOutput || "Import failed — try again."
         root.lastImportResult = ""
-        root.importFailed(root.lastImportError)
-        Quickshell.execDetached(["notify-send", "-a", "Sorakey",
-          "Import failed", root.lastImportError])
-        clearImportTimer.restart()
+        root.notify("Import failed", root.lastImportError)
       } else {
         root.lastImportError = "Import failed — try again."
         root.lastImportResult = ""
-        root.importFailed(root.lastImportError)
-        Quickshell.execDetached(["notify-send", "-a", "Sorakey",
-          "Import failed", root.lastImportError])
-        clearImportTimer.restart()
+        root.notify("Import failed", root.lastImportError)
       }
     }
   }
@@ -115,24 +99,8 @@ Item {
       startProc.command = ["systemctl", "--user", "enable", "--now", "sorakey"]
       startProc.running = true
     }
-    // Re-assert after a short delay: during `omarchy restart shell` the old
-    // process's teardown can land after this start and leave the daemon dead
-    // while the plugin stays enabled.
-    restartAssertTimer.restart()
-    // Keep the daemon binary in step with the plugin source: the script is
-    // self-gating (instant exit when the installed binary matches the source
-    // hash), so this costs ~one hash check per shell start.
+    // ponytail: single enable, retry via systemd Restart=on-failure, not 3s timer
     freshnessCheck.running = true
-  }
-
-  Timer {
-    id: restartAssertTimer
-    interval: 3000
-    onTriggered: {
-      if (startProc.running) return
-      startProc.command = ["systemctl", "--user", "enable", "--now", "sorakey"]
-      startProc.running = true
-    }
   }
 
   // After `omarchy plugin update` the daemon source may be newer than the

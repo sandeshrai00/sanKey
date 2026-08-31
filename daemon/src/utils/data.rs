@@ -16,24 +16,6 @@ pub fn load_json_from_file<T>(file_path: &Path) -> Result<T, String>
         .map_err(|e| format!("Failed to parse JSON from '{}': {}", file_path.display(), e))
 }
 
-/// Generic function to save data as JSON to file
-pub fn save_json_to_file<T>(data: &T, file_path: &Path) -> Result<(), String> where T: Serialize {
-    // Ensure parent directory exists
-    if let Some(parent) = file_path.parent() {
-        fs
-            ::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory '{}': {}", parent.display(), e))?;
-    }
-
-    let contents = serde_json
-        ::to_string_pretty(data)
-        .map_err(|e| format!("Failed to serialize data: {}", e))?;
-
-    fs::write(file_path, contents).map_err(|e|
-        format!("Failed to write file '{}': {}", file_path.display(), e)
-    )
-}
-
 /// Save data as JSON, leaving either the old file or the complete new one at
 /// `file_path` - never a partial document.
 ///

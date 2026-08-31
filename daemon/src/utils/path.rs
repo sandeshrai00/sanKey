@@ -25,8 +25,3 @@ pub fn ensure_directory_exists(path: impl AsRef<std::path::Path>) -> Result<(), 
 pub fn read_file_contents(path: &str) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| format!("Failed to read file '{}': {}", path, e))
 }
-
-/// Write string contents to file
-pub fn write_file_contents(path: &str, contents: &str) -> Result<(), String> {
-    fs::write(path, contents).map_err(|e| format!("Failed to write file '{}': {}", path, e))
-}

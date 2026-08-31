@@ -40,12 +40,11 @@ pub fn start_evdev_keyboard_listener(
         }
 
         for (path, device) in devices {
-            // Check if device has keyboard capabilities
-            if device.supported_keys().is_some() {
+            // ponytail: filter real keyboards (mice also expose some keys)
+            let is_keyboard = device.supported_keys().is_some_and(|k| k.contains(KeyCode::KEY_A));
+            if is_keyboard {
                 crate::always_print!("🔍 [evdev] Found keyboard device: {:?} - {}", path.display(), device.name().unwrap_or("Unknown"));
-
                 let _ = device.set_nonblocking(true);
-
                 keyboards.push(device);
             } else {
                 crate::always_print!("🔍 [evdev] Skipping non-keyboard device: {:?}", path.display());
@@ -82,9 +81,8 @@ pub fn start_evdev_keyboard_listener(
 
                                 // Convert event code to KeyCode
                                 let key = KeyCode(event.code());
-                                {
-                                    let key_code = map_evdev_keycode(key);
-                                    if !key_code.is_empty() {
+                                let key_code = map_evdev_keycode(key);
+                                if !key_code.is_empty() {
                                         // Handle key press (value == 1)
                                         if key_value == 1 {
                                             // Track modifier keys for hotkey detection
@@ -130,7 +128,6 @@ pub fn start_evdev_keyboard_listener(
                                         }
                                         // Ignore key repeat (value == 2)
                                     }
-                                }
                             }
                         }
                     }

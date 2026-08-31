@@ -251,16 +251,25 @@ impl EngineState {
             );
         }
         // Also re-resample per-key audio for multi-method packs
-        let mut new_multi = std::collections::HashMap::new();
-        for (fname, audio) in &self.multi_key_audio {
-            new_multi.insert(fname.clone(), super::engine::MultiKeyAudio {
-                samples: std::sync::Arc::new(super::resampler::resample_interleaved(&audio.samples, audio.channels, audio.sample_rate, new_rate.unwrap_or(audio.sample_rate))),
-                channels: audio.channels,
-                sample_rate: new_rate.unwrap_or(audio.sample_rate),
-            });
-        }
-        if !new_multi.is_empty() {
-            self.multi_key_audio = new_multi;
+        // ponytail: take not clone, skip alloc when rates match or no multi
+        if !self.multi_key_audio.is_empty() {
+            if let Some(target) = new_rate {
+                let old = std::mem::take(&mut self.multi_key_audio);
+                let mut new_multi = std::collections::HashMap::with_capacity(old.len());
+                for (fname, audio) in old {
+                    if audio.sample_rate == target {
+                        new_multi.insert(fname, audio);
+                    } else {
+                        let resampled = super::resampler::resample_interleaved(&audio.samples, audio.channels, audio.sample_rate, target);
+                        new_multi.insert(fname, super::engine::MultiKeyAudio {
+                            samples: std::sync::Arc::new(resampled),
+                            channels: audio.channels,
+                            sample_rate: target,
+                        });
+                    }
+                }
+                self.multi_key_audio = new_multi;
+            }
         }
 
         // Drop old voices/stream only after the new one is confirmed open,

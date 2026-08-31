@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls as QQC
 import qs.Commons
 import qs.Ui
+import "Model.js" as Model
 
 // Sorakey fork of SearchableDropdown with inline delete per row.
 // Search stays inside popup; delete icon sits at row end.
@@ -13,8 +14,6 @@ Item {
   property var options: []
   property string placeholderText: "Search..."
   property string emptyText: "No matches"
-  property string triggerLabel: ""
-
   property color foreground: Color.popups.text
   property color background: Color.popups.background
   property color popupBorder: Color.popups.border
@@ -36,16 +35,14 @@ Item {
   signal deleteRequested(string value)
   signal confirmDelete(string value)
   signal cancelDelete()
-  signal hovered(bool isHovered)
+  // ponytail: hovered never consumed — removed
 
   property string deleteConfirmId: ""
   property bool deleting: false
   property string toast: ""
   function prettyForValue(v) {
     for (var i = 0; i < options.length; i++) if (optionValue(options[i]) === v) return optionLabel(options[i])
-    // fallback pretty like Model.prettyPackName
-    var s = String(v); var slash = s.lastIndexOf("/"); if (slash >= 0) s = s.slice(slash+1)
-    s = s.replace(/[-_]+/g, " "); s = s.replace(/\b\w/g, function(c){return c.toUpperCase()}); return s
+    return Model.prettyPackName(String(v))
   }
 
   function optionValue(o) {
@@ -54,9 +51,7 @@ Item {
   function optionLabel(o) {
     return (o && typeof o === "object") ? String(o.label) : String(o)
   }
-  function optionDescription(o) {
-    return (o && typeof o === "object" && o.description) ? String(o.description) : ""
-  }
+  // ponytail: optionDescription removed — packs have no description
   function currentLabel() {
     for (var i = 0; i < options.length; i++) {
       if (optionValue(options[i]) === value) return optionLabel(options[i])
@@ -68,13 +63,8 @@ Item {
   function recomputeFiltered() {
     var q = searchField.text.toLowerCase()
     if (!q) { filtered = options; return }
-    var out = []
-    for (var i = 0; i < options.length; i++) {
-      var lbl = optionLabel(options[i]).toLowerCase()
-      var desc = optionDescription(options[i]).toLowerCase()
-      if (lbl.indexOf(q) !== -1 || desc.indexOf(q) !== -1) out.push(options[i])
-    }
-    filtered = out
+    // ponytail: description dead, filter on label only — JS stdlib filter
+    filtered = options.filter(function(o){ return optionLabel(o).toLowerCase().indexOf(q) !== -1 })
   }
 
   onOptionsChanged: recomputeFiltered()
@@ -111,10 +101,7 @@ Item {
 
       activeFocusOnTab: true
 
-      HoverHandler {
-        id: triggerHover
-        onHoveredChanged: root.hovered(hovered)
-      }
+      HoverHandler { id: triggerHover }
 
       Keys.onPressed: function(event) {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
@@ -133,8 +120,8 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         anchors.leftMargin: trigger.borderLeft + Style.spacing.controlPaddingX
         anchors.rightMargin: trigger.borderRight + Style.spacing.md
-        text: root.currentLabel() || root.triggerLabel || root.placeholderText
-        color: (root.currentLabel() || root.triggerLabel) ? root.foreground : Qt.darker(root.foreground, 1.5)
+        text: root.currentLabel() || root.placeholderText
+        color: root.currentLabel() ? root.foreground : Qt.darker(root.foreground, 1.5)
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
         elide: Text.ElideRight
@@ -331,16 +318,7 @@ Item {
                       elide: Text.ElideRight
                       width: parent.width
                     }
-                    Text {
-                      textFormat: Text.PlainText
-                      visible: text !== ""
-                      text: root.optionDescription(modelData)
-                      color: Qt.darker(root.foreground, 1.5)
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                      elide: Text.ElideRight
-                      width: parent.width
-                    }
+                    // ponytail: description Text removed — dead
                   }
                 }
 
@@ -355,7 +333,6 @@ Item {
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   opacity: index === resultList.currentIndex ? 0.9 : 0.45
-                  visible: true
 
                   MouseArea {
                     anchors.fill: parent

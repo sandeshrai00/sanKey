@@ -5,10 +5,6 @@ use std::sync::Arc;
 
 use super::engine::EngineState;
 
-fn determine_soundpack_type(_soundpack_id: &str) -> crate::state::soundpack::SoundpackType {
-    crate::state::soundpack::SoundpackType::Keyboard
-}
-
 /// (samples, channels, sample_rate) for a decoded/resampled audio buffer.
 // ponytail: Arc so equal-rate packs share one Vec instead of cloning 24 MB.
 type DecodedAudio = (Arc<Vec<f32>>, u16, u32);
@@ -72,384 +68,13 @@ fn load_audio_file_for_path(
     }
 }
 
-/// Load audio file using Symphonia for consistent duration detection
+/// Load audio file using Symphonia — ponytail: dedup via shared decoder
 fn load_audio_with_symphonia(file_path: &str) -> Result<(Vec<f32>, u16, u32), String> {
-    use symphonia::core::audio::{ AudioBufferRef, Signal };
-    use symphonia::core::codecs::{ DecoderOptions, CODEC_TYPE_NULL };
-    use symphonia::core::formats::FormatOptions;
-    use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
-    use std::fs::File;
-
-    // First, check if file exists and has content
-    let metadata = std::fs
-        ::metadata(file_path)
-        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
-    if metadata.len() == 0 {
+    let meta = std::fs::metadata(file_path).map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    if meta.len() == 0 {
         return Err(format!("Audio file is empty: {}", file_path));
     }
-
-    let file = File::open(file_path).map_err(|e| format!("Failed to open file: {}", e))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut hint = Hint::new();
-    if let Some(extension) = std::path::Path::new(file_path).extension() {
-        if let Some(ext_str) = extension.to_str() {
-            hint.with_extension(ext_str);
-        }
-    }
-
-    let meta_opts: MetadataOptions = Default::default();
-    let fmt_opts: FormatOptions = Default::default();
-
-    let probed = symphonia::default
-        ::get_probe()
-        .format(&hint, mss, &fmt_opts, &meta_opts)
-        .map_err(|e| {
-            format!(
-                "Failed to probe format for '{}': {} (file size: {} bytes)",
-                file_path,
-                e,
-                metadata.len()
-            )
-        })?;
-
-    let mut format = probed.format;
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or("No supported audio tracks found")?;
-
-    let dec_opts: DecoderOptions = Default::default();
-    let mut decoder = symphonia::default
-        ::get_codecs()
-        .make(&track.codec_params, &dec_opts)
-        .map_err(|e| format!("Failed to create decoder: {}", e))?;
-
-    let track_id = track.id;
-
-    let mut sample_rate = 44100u32;
-    let mut file_channels: Option<u32> = None;
-
-    // Deinterleave into per-channel buffers to handle mixed-channel streams safely.
-    // We determine the final channel count from the first non-empty packet and
-    // convert all subsequent packets (even if they differ) to that count.
-    let mut per_channel: Vec<Vec<f32>> = Vec::new();
-
-    // Decode audio packets
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(_) => {
-                break;
-            } // End of stream
-        };
-
-        if packet.track_id() != track_id {
-            continue;
-        }
-
-        match decoder.decode(&packet) {
-            Ok(decoded) => {
-                let spec = decoded.spec();
-                let chan_count = spec.channels.count() as usize;
-
-                // Initialize per-channel buffers on first packet
-                if file_channels.is_none() {
-                    file_channels = Some(chan_count as u32);
-                    per_channel.resize(chan_count, Vec::new());
-                    sample_rate = spec.rate;
-                }
-
-                let target_chans = file_channels.unwrap_or(chan_count as u32) as usize;
-
-                // Resize if this packet has a different channel count
-                if chan_count != target_chans {
-                    per_channel.resize(target_chans, Vec::new());
-                }
-
-                match decoded {
-                    AudioBufferRef::F32(buf) => {
-                        if chan_count == 1 {
-                            let ch = buf.chan(0);
-                            if target_chans == 1 {
-                                for &s in ch { per_channel[0].push(s); }
-                            } else {
-                                for &s in ch {
-                                    if target_chans >= 2 {
-                                        per_channel[0].push(s);
-                                        per_channel[1].push(s);
-                                    }
-                                }
-                            }
-                        } else {
-                            let left = buf.chan(0);
-                            let right = if chan_count > 1 { buf.chan(1) } else { buf.chan(0) };
-                            for i in 0..left.len().min(right.len()) {
-                                if target_chans >= 2 {
-                                    per_channel[0].push(left[i]);
-                                    per_channel[1].push(right[i]);
-                                }
-                            }
-                        }
-                    }
-                    AudioBufferRef::S32(buf) => {
-                        if chan_count == 1 {
-                            let ch = buf.chan(0);
-                            if target_chans == 1 {
-                                for &s in ch { per_channel[0].push((s as f32) / (i32::MAX as f32)); }
-                            } else {
-                                for &s in ch {
-                                    if target_chans >= 2 {
-                                        per_channel[0].push((s as f32) / (i32::MAX as f32));
-                                        per_channel[1].push((s as f32) / (i32::MAX as f32));
-                                    }
-                                }
-                            }
-                        } else {
-                            let left = buf.chan(0);
-                            let right = if chan_count > 1 { buf.chan(1) } else { buf.chan(0) };
-                            let limit = left.len().min(right.len());
-                            for i in 0..limit {
-                                if target_chans >= 2 {
-                                    per_channel[0].push((left[i] as f32) / (i32::MAX as f32));
-                                    per_channel[1].push((right[i] as f32) / (i32::MAX as f32));
-                                }
-                            }
-                        }
-                    }
-                    AudioBufferRef::S16(buf) => {
-                        if chan_count == 1 {
-                            let ch = buf.chan(0);
-                            if target_chans == 1 {
-                                for &s in ch { per_channel[0].push((s as f32) / (i16::MAX as f32)); }
-                            } else {
-                                for &s in ch {
-                                    if target_chans >= 2 {
-                                        per_channel[0].push((s as f32) / (i16::MAX as f32));
-                                        per_channel[1].push((s as f32) / (i16::MAX as f32));
-                                    }
-                                }
-                            }
-                        } else {
-                            let left = buf.chan(0);
-                            let right = if chan_count > 1 { buf.chan(1) } else { buf.chan(0) };
-                            let limit = left.len().min(right.len());
-                            for i in 0..limit {
-                                if target_chans >= 2 {
-                                    per_channel[0].push((left[i] as f32) / (i16::MAX as f32));
-                                    per_channel[1].push((right[i] as f32) / (i16::MAX as f32));
-                                }
-                            }
-                        }
-                    }
-                    AudioBufferRef::U32(buf) => {
-                        if chan_count == 1 {
-                            let ch = buf.chan(0);
-                            for &s in ch {
-                                let v = ((s as f32) - (u32::MAX as f32) / 2.0) / ((u32::MAX as f32) / 2.0);
-                                if target_chans == 1 {
-                                    per_channel[0].push(v);
-                                } else if target_chans >= 2 {
-                                    per_channel[0].push(v);
-                                    per_channel[1].push(v);
-                                }
-                            }
-                        } else {
-                            let left = buf.chan(0);
-                            let right = if chan_count > 1 { buf.chan(1) } else { buf.chan(0) };
-                            let limit = left.len().min(right.len());
-                            for i in 0..limit {
-                                if target_chans >= 2 {
-                                    let v_l = ((left[i] as f32) - (u32::MAX as f32) / 2.0) / ((u32::MAX as f32) / 2.0);
-                                    let v_r = ((right[i] as f32) - (u32::MAX as f32) / 2.0) / ((u32::MAX as f32) / 2.0);
-                                    per_channel[0].push(v_l);
-                                    per_channel[1].push(v_r);
-                                }
-                            }
-                        }
-                    }
-                    AudioBufferRef::U16(buf) => {
-                        if chan_count == 1 {
-                            let ch = buf.chan(0);
-                            for &s in ch {
-                                let v = ((s as f32) - (u16::MAX as f32) / 2.0) / ((u16::MAX as f32) / 2.0);
-                                if target_chans == 1 {
-                                    per_channel[0].push(v);
-                                } else if target_chans >= 2 {
-                                    per_channel[0].push(v);
-                                    per_channel[1].push(v);
-                                }
-                            }
-                        } else {
-                            let left = buf.chan(0);
-                            let right = if chan_count > 1 { buf.chan(1) } else { buf.chan(0) };
-                            let limit = left.len().min(right.len());
-                            for i in 0..limit {
-                                if target_chans >= 2 {
-                                    let v_l = ((left[i] as f32) - (u16::MAX as f32) / 2.0) / ((u16::MAX as f32) / 2.0);
-                                    let v_r = ((right[i] as f32) - (u16::MAX as f32) / 2.0) / ((u16::MAX as f32) / 2.0);
-                                    per_channel[0].push(v_l);
-                                    per_channel[1].push(v_r);
-                                }
-                            }
-                        }
-                    }
-                    AudioBufferRef::U8(buf) => {
-                        if chan_count == 1 {
-                            let ch = buf.chan(0);
-                            for &s in ch {
-                                let v = ((s as f32) - 128.0) / 128.0;
-                                if target_chans == 1 {
-                                    per_channel[0].push(v);
-                                } else if target_chans >= 2 {
-                                    per_channel[0].push(v);
-                                    per_channel[1].push(v);
-                                }
-                            }
-                        } else {
-                            let left = buf.chan(0);
-                            let right = if chan_count > 1 { buf.chan(1) } else { buf.chan(0) };
-                            let limit = left.len().min(right.len());
-                            for i in 0..limit {
-                                if target_chans >= 2 {
-                                    let v_l = ((left[i] as f32) - 128.0) / 128.0;
-                                    let v_r = ((right[i] as f32) - 128.0) / 128.0;
-                                    per_channel[0].push(v_l);
-                                    per_channel[1].push(v_r);
-                                }
-                            }
-                        }
-                    }
-                    AudioBufferRef::S8(buf) => {
-                        if chan_count == 1 {
-                            let ch = buf.chan(0);
-                            for &s in ch {
-                                let v = (s as f32) / (i8::MAX as f32);
-                                if target_chans == 1 {
-                                    per_channel[0].push(v);
-                                } else if target_chans >= 2 {
-                                    per_channel[0].push(v);
-                                    per_channel[1].push(v);
-                                }
-                            }
-                        } else {
-                            let left = buf.chan(0);
-                            let right = if chan_count > 1 { buf.chan(1) } else { buf.chan(0) };
-                            let limit = left.len().min(right.len());
-                            for i in 0..limit {
-                                if target_chans >= 2 {
-                                    let v_l = (left[i] as f32) / (i8::MAX as f32);
-                                    let v_r = (right[i] as f32) / (i8::MAX as f32);
-                                    per_channel[0].push(v_l);
-                                    per_channel[1].push(v_r);
-                                }
-                            }
-                        }
-                    }
-                    AudioBufferRef::F64(buf) => {
-                        if chan_count == 1 {
-                            let ch = buf.chan(0);
-                            if target_chans == 1 {
-                                for &s in ch { per_channel[0].push(s as f32); }
-                            } else {
-                                for &s in ch {
-                                    if target_chans >= 2 {
-                                        per_channel[0].push(s as f32);
-                                        per_channel[1].push(s as f32);
-                                    }
-                                }
-                            }
-                        } else {
-                            let left = buf.chan(0);
-                            let right = if chan_count > 1 { buf.chan(1) } else { buf.chan(0) };
-                            let limit = left.len().min(right.len());
-                            for i in 0..limit {
-                                if target_chans >= 2 {
-                                    per_channel[0].push(left[i] as f32);
-                                    per_channel[1].push(right[i] as f32);
-                                }
-                            }
-                        }
-                    }
-                    AudioBufferRef::U24(buf) => {
-                        if chan_count == 1 {
-                            let ch = buf.chan(0);
-                            for &s in ch {
-                                let v = ((s.inner() as f32) - 8388608.0) / 8388608.0;
-                                if target_chans == 1 {
-                                    per_channel[0].push(v);
-                                } else if target_chans >= 2 {
-                                    per_channel[0].push(v);
-                                    per_channel[1].push(v);
-                                }
-                            }
-                        } else {
-                            let left = buf.chan(0);
-                            let right = if chan_count > 1 { buf.chan(1) } else { buf.chan(0) };
-                            let limit = left.len().min(right.len());
-                            for i in 0..limit {
-                                if target_chans >= 2 {
-                                    let v_l = ((left[i].inner() as f32) - 8388608.0) / 8388608.0;
-                                    let v_r = ((right[i].inner() as f32) - 8388608.0) / 8388608.0;
-                                    per_channel[0].push(v_l);
-                                    per_channel[1].push(v_r);
-                                }
-                            }
-                        }
-                    }
-                    AudioBufferRef::S24(buf) => {
-                        if chan_count == 1 {
-                            let ch = buf.chan(0);
-                            for &s in ch {
-                                let v = (s.inner() as f32) / 8388607.0;
-                                if target_chans == 1 {
-                                    per_channel[0].push(v);
-                                } else if target_chans >= 2 {
-                                    per_channel[0].push(v);
-                                    per_channel[1].push(v);
-                                }
-                            }
-                        } else {
-                            let left = buf.chan(0);
-                            let right = if chan_count > 1 { buf.chan(1) } else { buf.chan(0) };
-                            let limit = left.len().min(right.len());
-                            for i in 0..limit {
-                                if target_chans >= 2 {
-                                    let v_l = (left[i].inner() as f32) / 8388607.0;
-                                    let v_r = (right[i].inner() as f32) / 8388607.0;
-                                    per_channel[0].push(v_l);
-                                    per_channel[1].push(v_r);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                crate::always_print!("⚠️ [DEBUG] Decode error (continuing): {}", e);
-                continue;
-            }
-        }
-    }
-
-    let _file_channels = file_channels.unwrap_or(2) as u16;
-    if per_channel.is_empty() || per_channel[0].is_empty() {
-        return Err("No audio data decoded".to_string());
-    }
-
-    // Interleave per-channel buffers into a single samples vector
-    let frame_count = per_channel[0].len();
-    let num_channels = per_channel.len() as u16;
-    let mut samples = Vec::with_capacity(frame_count * num_channels as usize);
-    for frame in 0..frame_count {
-        for ch in 0..per_channel.len() {
-            samples.push(per_channel[ch][frame]);
-        }
-    }
-
-    Ok((samples, num_channels, sample_rate))
+    crate::utils::symphonia::decode_interleaved(file_path)
 }
 
 /// Derives the `type/name` id the cache is keyed by from a pack's absolute
@@ -554,7 +179,6 @@ fn create_soundpack_metadata(
 
 fn create_key_mappings(
     soundpack: &SoundPack,
-    _samples: &[f32]
 ) -> std::collections::HashMap<String, Vec<(f64, f64)>> {
     let mut key_mappings = std::collections::HashMap::new();
     for (key, key_def) in &soundpack.definitions {
@@ -657,7 +281,7 @@ fn load_keyboard_pack_into_engine_inner(
         }
 
         // Build key_mappings from definitions
-        let key_mappings = create_key_mappings(&soundpack, &[]);
+        let key_mappings = create_key_mappings(&soundpack);
 
         state.key_map.clear();
         for (key, mappings) in key_mappings {
@@ -675,7 +299,7 @@ fn load_keyboard_pack_into_engine_inner(
     } else {
         // Single-method: load the shared audio file
         let (original, resampled) = load_audio_file(&soundpack_path, &soundpack, state.device_rate)?;
-        let key_mappings = create_key_mappings(&soundpack, &resampled.0[..]);
+        let key_mappings = create_key_mappings(&soundpack);
 
         let (audio_samples, channels, sample_rate) = resampled;
         state.keyboard_samples = Some((audio_samples, channels, sample_rate));
@@ -743,7 +367,7 @@ fn capture_soundpack_loading_error(soundpack_id: &str, error: &str) {
             version: "unknown".to_string(),
             tags: vec!["error".to_string()],
             icon: None,
-            soundpack_type: determine_soundpack_type(soundpack_id),
+            soundpack_type: crate::state::soundpack::SoundpackType::Keyboard,
             folder_path: soundpack_id.to_string(), // Add folder_path for error entries
             last_modified: 0,
             last_accessed: std::time::SystemTime

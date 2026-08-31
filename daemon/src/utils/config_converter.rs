@@ -16,59 +16,9 @@ fn get_audio_duration_ms(file_path: &str) -> Result<f64, Box<dyn std::error::Err
     }
 }
 
-/// Get duration using Symphonia (better for MP3 metadata)
+/// Get duration using Symphonia — ponytail: reuse shared helper
 fn get_duration_with_symphonia(file_path: &str) -> Result<f64, Box<dyn std::error::Error>> {
-    use symphonia::core::formats::FormatOptions;
-    use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
-    use std::fs::File;
-
-    let file = File::open(file_path)?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-
-    let mut hint = Hint::new();
-    if let Some(extension) = std::path::Path::new(file_path).extension() {
-        if let Some(ext_str) = extension.to_str() {
-            hint.with_extension(ext_str);
-        }
-    }
-
-    let meta_opts: MetadataOptions = Default::default();
-    let fmt_opts: FormatOptions = Default::default();
-
-    let probed = symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts)?;
-
-    let format = probed.format;
-
-    // Get the default track
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
-        .ok_or("No supported audio tracks found")?;
-
-    // Try to get duration from metadata first
-    if let Some(time_base) = &track.codec_params.time_base {
-        if let Some(n_frames) = track.codec_params.n_frames {
-            let duration_seconds =
-                ((n_frames as f64) * (time_base.numer as f64)) / (time_base.denom as f64);
-            let duration_ms = duration_seconds * 1000.0;
-            return Ok(duration_ms);
-        }
-    }
-
-    // If metadata doesn't have duration, estimate from sample rate
-    if let Some(sample_rate) = track.codec_params.sample_rate {
-        if let Some(n_frames) = track.codec_params.n_frames {
-            let duration_seconds = (n_frames as f64) / (sample_rate as f64);
-            let duration_ms = duration_seconds * 1000.0;
-            return Ok(duration_ms);
-        }
-    }
-
-    // Fallback: use default duration
-    Ok(100.0)
+    Ok(crate::utils::symphonia::duration_ms(file_path).unwrap_or(100.0))
 }
 
 /// Convert soundpack config from version 1 to version 2
@@ -751,82 +701,11 @@ fn concatenate_audio_files_with_timing(
     Ok(timing_info)
 }
 
-/// Load audio file and return samples
+/// Load audio file and return samples — ponytail: reuse shared decoder
 fn load_audio_file_samples(
     file_path: &str
 ) -> Result<(Vec<f32>, u16, u32), Box<dyn std::error::Error>> {
-    use symphonia::core::formats::FormatOptions;
-    use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
-    use symphonia::core::audio::SampleBuffer;
-    use std::fs::File;
-
-    let file = File::open(file_path)?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-
-    let mut hint = Hint::new();
-    if let Some(extension) = Path::new(file_path).extension() {
-        if let Some(ext_str) = extension.to_str() {
-            hint.with_extension(ext_str);
-        }
-    }
-
-    let meta_opts: MetadataOptions = Default::default();
-    let fmt_opts: FormatOptions = Default::default();
-
-    let probed = symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts)?;
-    let mut format = probed.format;
-
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
-        .ok_or("No supported audio tracks found")?;
-
-    let mut decoder = symphonia::default
-        ::get_codecs()
-        .make(&track.codec_params, &Default::default())?;
-
-    let track_id = track.id;
-    let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
-    let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2) as u16;
-
-    let mut samples = Vec::new();
-    let mut sample_buf = None;
-
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(_) => {
-                break;
-            }
-        };
-
-        if packet.track_id() != track_id {
-            continue;
-        }
-
-        match decoder.decode(&packet) {
-            Ok(decoded) => {
-                if sample_buf.is_none() {
-                    let spec = *decoded.spec();
-                    let duration = decoded.capacity() as u64;
-                    sample_buf = Some(SampleBuffer::<f32>::new(duration, spec));
-                }
-
-                if let Some(buf) = &mut sample_buf {
-                    buf.copy_interleaved_ref(decoded);
-                    samples.extend_from_slice(buf.samples());
-                }
-            }
-            Err(_) => {
-                break;
-            }
-        }
-    }
-
-    Ok((samples, channels, sample_rate))
+    crate::utils::symphonia::decode_interleaved(file_path).map_err(|e| e.into())
 }
 
 /// Convert interleaved PCM to a target channel count and sample rate.
