@@ -288,6 +288,7 @@ Panel {
       root.refreshStatus()
       root.refreshPacks()
       testType.text = ""
+      root.settingsOpen = false
     }
   }
 
