@@ -102,6 +102,7 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
         "keyboard_pack" => load_pack(&req, engine),
         "packs" => packs(),
         "diag" => diag(),
+        "export_logs" => export_logs(),
         other => fail(&format!("unknown cmd: {other}")),
     }
 }
@@ -322,6 +323,17 @@ fn diag() -> String {
         "soundpack_cache_entries": cache.soundpacks.len(),
         "keyboard_pack": c.keyboard_soundpack,
         "trace_bytes": trace_bytes,
+    }))
+}
+
+fn export_logs() -> String {
+    use chrono::Local;
+    let contents = crate::utils::log_buffer::export_contents();
+    let name = format!("sorakey-log-{}.txt", Local::now().format("%Y%m%d-%H%M%S"));
+    ok(serde_json::json!({
+        "name": name,
+        "contents": contents,
+        "lines": crate::utils::log_buffer::len(),
     }))
 }
 

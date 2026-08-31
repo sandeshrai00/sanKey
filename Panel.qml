@@ -39,6 +39,21 @@ Panel {
     service.importSoundpack()
   }
 
+  property bool exporting: service ? service.exporting : false
+  property string exportStatus: {
+    if (exporting) return "Exporting…"
+    if (!service) return ""
+    if (service.lastExportError) return service.lastExportError
+    if (service.lastExportResult) return "Saved to " + service.lastExportResult
+    return ""
+  }
+
+  function triggerExport() {
+    if (!service) return
+    root.close()
+    service.exportLogs()
+  }
+
   // last reading
   property bool installed: false
   property bool running: false
@@ -205,6 +220,8 @@ Panel {
       clearUpdateTimer.restart()
     }
   }
+
+
 
   Timer {
     id: clearUpdateTimer
@@ -552,6 +569,27 @@ Panel {
               onChanged: function(v){ root.moveToSection(v) }
             }
             PanelSeparator { foreground: root.bar.foreground }
+            Button {
+              text: root.exporting ? "Exporting…" : "Export error logs"
+              iconText: root.exporting ? "⏳" : "󰈯"
+              foreground: root.bar.foreground
+              bordered: true
+              width: parent.width
+              tooltipText: "Save a report of recent errors to a file"
+              enabled: !root.exporting && root.installed
+              onClicked: root.triggerExport()
+            }
+            Text {
+              visible: root.exportStatus !== ""
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: root.exportStatus
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
             Button {
               text: root.updateBusy ? "Updating…" : "Update"
               iconText: root.updateBusy ? "⏳" : "󰚰"

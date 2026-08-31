@@ -21,6 +21,9 @@ Item {
   property bool importing: false
   property string lastImportResult: ""
   property string lastImportError: ""
+  property bool exporting: false
+  property string lastExportResult: ""
+  property string lastExportError: ""
 
   signal packsImported(string packId)
   function notify(title, msg) { Quickshell.execDetached(["notify-send","-a","Sorakey", title, msg]); clearImportTimer.restart() }
@@ -42,7 +45,24 @@ Item {
     }
   }
 
-  Timer { id: clearImportTimer; interval: 4000; onTriggered: { root.lastImportError = ""; root.lastImportResult = "" } }
+  function exportLogs() {
+    if (exporting) return
+    if (!pluginDir) {
+      lastExportError = "Service pluginDir is empty"
+      lastExportResult = ""
+      return
+    }
+    if (!exportHelper.running) {
+      exporting = true
+      lastExportError = ""
+      lastExportResult = ""
+      exportHelper.command = ["/usr/bin/python3",
+        pluginDir + "/scripts/sorakey-export-logs.py"]
+      exportHelper.running = true
+    }
+  }
+
+  Timer { id: clearImportTimer; interval: 4000; onTriggered: { root.lastImportError = ""; root.lastImportResult = ""; root.lastExportError = ""; root.lastExportResult = "" } }
 
   Process {
     id: importHelper
@@ -77,6 +97,42 @@ Item {
         root.lastImportError = "Import failed — try again."
         root.lastImportResult = ""
         root.notify("Import failed", root.lastImportError)
+      }
+    }
+  }
+
+  Process {
+    id: exportHelper
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      root.exporting = false
+      var output = String(stdout.text || "").trim()
+      var errOutput = String(stderr.text || "").trim()
+      var lines = output.split("\n")
+      var last = lines[lines.length - 1]
+      if (last.startsWith("OK:")) {
+        root.lastExportResult = last.substring(3).trim()
+        root.lastExportError = ""
+        root.notify("Logs exported", root.lastExportResult)
+      } else if (last.startsWith("ERROR:")) {
+        var msg = last.substring(6).trim()
+        if (msg === "Cancelled" || msg.toLowerCase().indexOf("cancel") !== -1) {
+          root.lastExportError = ""
+          root.lastExportResult = ""
+          return
+        }
+        root.lastExportError = msg
+        root.lastExportResult = ""
+        root.notify("Export failed", msg)
+      } else if (exitCode !== 0) {
+        root.lastExportError = errOutput || "Export failed — try again."
+        root.lastExportResult = ""
+        root.notify("Export failed", root.lastExportError)
+      } else {
+        root.lastExportError = "Export failed — try again."
+        root.lastExportResult = ""
+        root.notify("Export failed", root.lastExportError)
       }
     }
   }
