@@ -287,6 +287,7 @@ Panel {
     if (root.opened) {
       root.refreshStatus()
       root.refreshPacks()
+      testType.text = ""
     }
   }
 
@@ -774,7 +775,9 @@ Panel {
               spacing: Style.space(6)
               PanelSectionHeader { text: "TEST TYPING"; foreground: root.bar.foreground }
               TextField {
+                id: testType
                 width: parent.width
+                text: ""
                 placeholderText: "Click here and type — hear keys"
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
