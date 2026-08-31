@@ -10,7 +10,8 @@ fn determine_soundpack_type(_soundpack_id: &str) -> crate::state::soundpack::Sou
 }
 
 /// (samples, channels, sample_rate) for a decoded/resampled audio buffer.
-type DecodedAudio = (Vec<f32>, u16, u32);
+// ponytail: Arc so equal-rate packs share one Vec instead of cloning 24 MB.
+type DecodedAudio = (Arc<Vec<f32>>, u16, u32);
 
 /// Loads and decodes a soundpack's audio file, then resamples it to
 /// `device_rate` if given. Returns `(original, resampled)`; `original` keeps
@@ -61,12 +62,12 @@ fn load_audio_file_for_path(
                 device_rate,
                 start.elapsed().as_secs_f64() * 1000.0
             );
-            let original = (samples, channels, file_rate);
-            Ok((original, (resampled, channels, device_rate)))
+            let original = (Arc::new(samples), channels, file_rate);
+            Ok((original, (Arc::new(resampled), channels, device_rate)))
         }
         _ => {
-            let decoded = (samples, channels, file_rate);
-            Ok((decoded.clone(), decoded))
+            let shared = Arc::new(samples);
+            Ok(((shared.clone(), channels, file_rate), (shared, channels, file_rate)))
         }
     }
 }
@@ -594,6 +595,14 @@ fn load_keyboard_pack_into_engine_inner(
     state: &mut EngineState,
     soundpack_id: &str
 ) -> Result<String, String> {
+    // ponytail: drop old buffers before new alloc to keep peak low (24MB not 48MB)
+    let _old_kb = state.keyboard_samples.take();
+    let _old_orig = state.keyboard_samples_original.take();
+    drop(_old_kb);
+    drop(_old_orig);
+    // Also clear multi to free its Arcs before new decode
+    state.multi_key_audio.clear();
+    state.multi_key_audio_map.clear();
     let soundpack_path = paths::soundpacks::soundpack_dir(soundpack_id);
     let config_path = paths::soundpacks::config_json(soundpack_id);
     let config_content = std::fs
@@ -602,10 +611,6 @@ fn load_keyboard_pack_into_engine_inner(
     let soundpack: SoundPack = serde_json
         ::from_str(&config_content)
         .map_err(|e| format!("Failed to parse V2 soundpack config: {}", e))?;
-
-    // Clear multi-method state from any prior pack
-    state.multi_key_audio.clear();
-    state.multi_key_audio_map.clear();
 
     if soundpack.definition_method == "multi" {
         // Multi-method: load each unique per-key audio file once, cache them.
@@ -633,7 +638,7 @@ fn load_keyboard_pack_into_engine_inner(
                 Ok((_original, resampled)) => {
                     let (samples, channels, sample_rate) = resampled;
                     multi_key_audio.insert(audio_file.clone(), super::engine::MultiKeyAudio {
-                        samples: Arc::new(samples),
+                        samples,
                         channels,
                         sample_rate,
                     });
@@ -670,12 +675,12 @@ fn load_keyboard_pack_into_engine_inner(
     } else {
         // Single-method: load the shared audio file
         let (original, resampled) = load_audio_file(&soundpack_path, &soundpack, state.device_rate)?;
-        let key_mappings = create_key_mappings(&soundpack, &resampled.0);
+        let key_mappings = create_key_mappings(&soundpack, &resampled.0[..]);
 
         let (audio_samples, channels, sample_rate) = resampled;
-        state.keyboard_samples = Some((Arc::new(audio_samples), channels, sample_rate));
+        state.keyboard_samples = Some((audio_samples, channels, sample_rate));
         let (orig_samples, orig_channels, orig_rate) = original;
-        state.keyboard_samples_original = Some((Arc::new(orig_samples), orig_channels, orig_rate));
+        state.keyboard_samples_original = Some((orig_samples, orig_channels, orig_rate));
 
         state.key_map.clear();
         for (key, mappings) in key_mappings {
@@ -688,6 +693,8 @@ fn load_keyboard_pack_into_engine_inner(
     }
 
     state.key_sinks.clear();
+    // ponytail: return large mmap blocks to OS so RSS drops after big pack decode (glibc retains otherwise)
+    unsafe { libc::malloc_trim(0); }
 
     update_soundpack_cache(&soundpack_path, &soundpack, soundpack_id);
     crate::always_print!("✅ [Engine] Loaded keyboard soundpack: {}", soundpack.name);
