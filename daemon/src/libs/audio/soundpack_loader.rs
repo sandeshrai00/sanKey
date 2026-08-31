@@ -53,7 +53,7 @@ fn load_audio_file_for_path(
                 device_rate
             );
             crate::always_print!(
-                "🔁 Resampled soundpack audio {}Hz -> {}Hz in {:.1}ms",
+                "🔁 Resampled soundpack audio {}Hz -> {}Hz in {:.1}ms (Cubic 64/32 0.95)",
                 file_rate,
                 device_rate,
                 start.elapsed().as_secs_f64() * 1000.0

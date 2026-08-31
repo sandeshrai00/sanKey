@@ -389,6 +389,23 @@ impl DeviceManager {
 
         device.and_then(|d| d.default_output_config().ok()).map(|c| c.sample_rate().0)
     }
+
+    /// ponytail: best quality is no resampling — check if device natively supports `rate` (0 CPU, perfect)
+    pub fn device_supports_rate(&self, device_id: Option<&str>, rate: u32) -> bool {
+        let device = match device_id {
+            Some(id) => match self.get_output_device_by_id(id) {
+                Ok(Some(d)) => Some(d),
+                _ => self.host.default_output_device(),
+            },
+            None => self.host.default_output_device(),
+        };
+        if let Some(dev) = device {
+            if let Ok(mut configs) = dev.supported_output_configs() {
+                return configs.any(|c| c.min_sample_rate().0 <= rate && rate <= c.max_sample_rate().0);
+            }
+        }
+        false
+    }
 }
 
 impl Default for DeviceManager {
