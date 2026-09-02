@@ -43,8 +43,7 @@ impl DeviceManager {
         }
     }
 
-    /// Kept for the device-picker UI (planned in Phase 7.1) — nothing calls it yet.
-    #[allow(dead_code)]
+    /// Output devices for the panel's device-picker UI (ctl `audio_devices`).
     pub fn get_output_devices(&self) -> Result<Vec<DeviceInfo>, String> {
         crate::always_print!("🔍 [DeviceManager] Starting audio output device enumeration...");
         let mut devices = Vec::new();

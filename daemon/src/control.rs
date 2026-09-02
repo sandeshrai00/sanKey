@@ -121,6 +121,8 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
         "delete_pack" => delete_pack(&req, engine),
         "keyboard_pack" => load_pack(&req, engine),
         "packs" => packs(),
+        "audio_devices" => audio_devices(),
+        "select_device" => select_device(&req, engine),
         "diag" => diag(),
         "export_logs" => export_logs(),
         other => fail(&format!("unknown cmd: {other}")),
@@ -145,6 +147,7 @@ fn status() -> String {
         "volume": (eff * 100.0).round(),
         "per_pack_volume": (per * 100.0).round(),
         "keyboard_pack": c.keyboard_soundpack,
+        "audio_device": c.selected_audio_device,
     }))
 }
 
@@ -333,6 +336,35 @@ fn collect_packs(base: &PathBuf, kind: &str) -> Vec<String> {
         }
     }
     ids
+}
+
+fn audio_devices() -> String {
+    let dm = crate::libs::device_manager::DeviceManager::new();
+    let devices = match dm.get_output_devices() {
+        Ok(d) => d,
+        Err(e) => return fail(&e),
+    };
+    let selected = crate::state::config_writer::current().selected_audio_device;
+    ok(serde_json::json!({ "devices": devices.iter().map(|d| serde_json::json!({"id": d.id, "name": d.name, "is_default": d.is_default})).collect::<Vec<_>>(), "selected": selected }))
+}
+
+fn select_device(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
+    let id = match req.get("id") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(v) => match v.as_str() {
+            Some(s) if !s.is_empty() => Some(s.to_string()),
+            Some(_) => None,
+            None => return fail("id must be a string or null"),
+        },
+    };
+    if let Some(ref s) = id {
+        if s.contains('\0') || s.len() > 256 {
+            return fail("invalid id");
+        }
+    }
+    crate::state::config_writer::apply(|c| c.selected_audio_device = id.clone());
+    engine.send(AudioCommand::SwitchDevice(id.clone()));
+    ok(serde_json::json!({ "selected": id }))
 }
 
 fn ok(mut v: serde_json::Value) -> String {

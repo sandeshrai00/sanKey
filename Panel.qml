@@ -66,6 +66,8 @@ Panel {
   property bool deleting: false
   property string errorToast: ""
   property string pendingCtlCmd: ""
+  property var audioDevices: []
+  property string audioDeviceSelected: ""
   Timer { id: clearErrorToast; interval: 5000; onTriggered: root.errorToast = "" }
 
   readonly property string statusText: {
@@ -280,6 +282,7 @@ Panel {
       root.volume = (typeof o.volume === "number") ? o.volume : root.volume
       root.perPackVolume = (typeof o.per_pack_volume === "number") ? o.per_pack_volume : root.perPackVolume
       root.keyboardPack = String(o.keyboard_pack || "")
+      if (typeof o.audio_device !== "undefined") root.audioDeviceSelected = o.audio_device ? String(o.audio_device) : ""
     } else {
       root.running = false
     }
@@ -296,11 +299,24 @@ Panel {
     packsProc.running = true
   }
 
+  function refreshAudioDevices() {
+    if (!root.installed) return
+    if (devicesProc.running) return
+    devicesProc.running = true
+  }
+
+  function setAudioDevice(id) {
+    // empty string = system default
+    root.audioDeviceSelected = id
+    root.sendCtl({ cmd: "select_device", id: id === "" ? null : id })
+  }
+
   property bool automaticSetupAttempted: false
 
   Component.onCompleted: {
     installCheck.running = true
     root.refreshStatus()
+    root.refreshAudioDevices()
     sectionRead.running = true
   }
 
@@ -361,6 +377,27 @@ Panel {
       }
     }
     stdout: StdioCollector { waitForEnd: true }
+  }
+
+  // Audio output devices
+  Process {
+    id: devicesProc
+    command: [root.sorakeyBin, "ctl", "{\"cmd\":\"audio_devices\"}"]
+    running: false
+    onExited: function(exitCode, exitStatus) {
+      var out = String(devicesProc.stdout || "").trim()
+      var opts = null
+      try {
+        var r = JSON.parse(out)
+        var devs = (r && r.ok && Array.isArray(r.devices)) ? r.devices : []
+        // normalize to [{value,label}] + prepend System default
+        opts = devs.map(function(d){ return { value: String(d.id), label: String(d.name) } })
+      } catch (e) {
+        opts = []
+      }
+      opts.unshift({ value: "", label: "System default" })
+      root.audioDevices = opts
+    }
   }
 
   Process {
@@ -612,6 +649,23 @@ Panel {
               options: [{value:"left",label:"Left"},{value:"center",label:"Center"},{value:"right",label:"Right"}]
               foreground: root.bar.foreground
               onChanged: function(v){ root.moveToSection(v) }
+            }
+            PanelSeparator { foreground: root.bar.foreground }
+            PanelSectionHeader { text: "AUDIO OUTPUT"; foreground: root.bar.foreground }
+            Dropdown {
+              width: parent.width
+              label: "Device"
+              value: root.audioDeviceSelected
+              options: root.audioDevices
+              foreground: root.bar.foreground
+              onChanged: function(v){ root.setAudioDevice(v) }
+            }
+            Button {
+              text: "Rescan devices"
+              foreground: root.bar.foreground
+              bordered: true
+              width: parent.width
+              onClicked: root.refreshAudioDevices()
             }
             PanelSeparator { foreground: root.bar.foreground }
             Button {

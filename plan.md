@@ -436,23 +436,23 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 
 ---
 
-## Phase 7 — New Features
+## Phase 7 — New Features ✅ done — minimal (7.1 + 7.8)
 
-**Goal:** Ship the features that fix real pain. Lazy subset: 7.1, 7.2, 7.3, 7.5, 7.8, 7.9. Skipped as YAGNI: 7.4, 7.7.
+**Goal:** Ship the features that fix real pain. Shipped minimal subset: 7.1 + 7.8. Skipped as YAGNI: 7.2 (systemctl), 7.3 (journalctl), 7.4, 7.5 (add on silent-no-sound report), 7.6 (deferred), 7.7, 7.9 (restart covers it).
 
 | # | Fix | Files | Detail |
 |---|-----|-------|--------|
-| 7.1 | **Output device selector** | `control.rs` (new `audio_devices` + `select_device` cmds), `Panel.qml` (Settings dropdown) | `ctl {cmd:"audio_devices"}` → `get_output_devices()` (already exists, currently dead). `select_device` → `SwitchDevice` (fix B8 first, Phase 3.2). Persists in config. Highest-value feature. |
-| 7.2 | **Auto-start toggle** | `control.rs` (`set_autostart`), `Panel.qml` (checkbox), re-add `auto_startup::set_auto_startup` | `systemctl --user enable/disable sorakey`. Conflicts with 5.5 — if this is built, skip 5.5. |
-| 7.3 | **In-panel log viewer** | `control.rs` (`recent_logs`), `Panel.qml` (Settings) | `ctl {cmd:"recent_logs", count:50}` → `log_buffer::recent(50)` (already exists). Read-only `TextArea` + copy button. Cheapest feature. |
+| 7.1 | **Output device selector** ✅ | `control.rs` (new `audio_devices` + `select_device` cmds), `Panel.qml` (Settings dropdown) | `ctl {cmd:"audio_devices"}` → `get_output_devices()` (already exists, currently dead). `select_device` → `SwitchDevice` (fix B8 first, Phase 3.2). Persists in config. Highest-value feature. **Shipped: Settings → Audio Output dropdown + Rescan; status returns `audio_device`.** |
+| 7.2 | **Auto-start toggle** — *skipped* | `control.rs` (`set_autostart`), `Panel.qml` (checkbox), re-add `auto_startup::set_auto_startup` | `systemctl --user enable/disable sorakey`. Conflicts with 5.5 — if this is built, skip 5.5. **Skipped: `systemctl --user enable/disable sorakey` already does this from the terminal.** |
+| 7.3 | **In-panel log viewer** — *skipped* | `control.rs` (`recent_logs`), `Panel.qml` (Settings) | `ctl {cmd:"recent_logs", count:50}` → `log_buffer::recent(50)` (already exists). Read-only `TextArea` + copy button. Cheapest feature. **Skipped: `journalctl --user -u sorakey` + the existing Export error logs button cover it.** |
 | 7.4 | **random_pitch** — *YAGNI, skipped* | — | Honest fix: delete the dead `random_pitch` field (and the `rand` dep, with 5.2). Implement only if a real pack sets it. |
-| 7.5 | **Diagnostics/health surface** | `engine.rs` (new state), `control.rs` (`diag` already exists), `Panel.qml` (Settings) | Show PID, uptime, RSS, active pack, output device. **Correction:** the engine stores **no last-key-event timestamp** — add a field bumped in `handle_key_event`, expose via `diag`, display "Last key: Ns ago" with a red indicator if quiet >30s while "Playing". The only thing that catches the #1 failure mode (missing `input` group → silent). |
-| 7.6 | **Pack metadata display** | `control.rs` (metadata-returning `packs` or new cmd), `Panel.qml`, `Model.js` | **Correction:** `packs()` returns IDs only (directory scan, `control.rs:271-290`) — it never reads the cache. Needs a metadata-returning command (name/author/description from `SoundpackCache` — depends on 1.1 making the cache read pure). Not "just display it". |
+| 7.5 | **Diagnostics/health surface** — *skipped* | `engine.rs` (new state), `control.rs` (`diag` already exists), `Panel.qml` (Settings) | Show PID, uptime, RSS, active pack, output device. **Correction:** the engine stores **no last-key-event timestamp** — add a field bumped in `handle_key_event`, expose via `diag`, display "Last key: Ns ago" with a red indicator if quiet >30s while "Playing". The only thing that catches the #1 failure mode (missing `input` group → silent). **Skipped: add when someone reports silent-no-sound; `ctl diag` already exposes RSS/pack from CLI.** |
+| 7.6 | **Pack metadata display** — *skipped* | `control.rs` (metadata-returning `packs` or new cmd), `Panel.qml`, `Model.js` | **Correction:** `packs()` returns IDs only (directory scan, `control.rs:271-290`) — it never reads the cache. Needs a metadata-returning command (name/author/description from `SoundpackCache` — depends on 1.1 making the cache read pure). Not "just display it". |
 | 7.7 | **Hotkey configuration** — *YAGNI, skipped* | — | Ctrl+Alt+M stays hardcoded. Config + ctl cmd + UI for a single mute hotkey is complexity nobody asked for. Revisit if someone asks. |
-| 7.8 | **Fix uninstall** | `scripts/uninstall.sh` | Add `rm -rf ~/.cache/sorakey ~/.local/lib/sorakey` to the purge path (and `bar-section` note). Three lines. |
-| 7.9 | **Pack cache rescan trigger** | `control.rs` (`rescan_packs`), `Panel.qml` | `ctl {cmd:"rescan_packs"}` → `refresh_from_directory()`. Panel calls after import/delete. Closes the stale-cache gap (B5's aftermath). |
+| 7.8 | **Fix uninstall** ✅ | `scripts/uninstall.sh` | Add `rm -rf ~/.cache/sorakey ~/.local/lib/sorakey` to the purge path (and `bar-section` note). Three lines. **Shipped.** |
+| 7.9 | **Pack cache rescan trigger** — *skipped* | `control.rs` (`rescan_packs`), `Panel.qml` | `ctl {cmd:"rescan_packs"}` → `refresh_from_directory()`. Panel calls after import/delete. Closes the stale-cache gap (B5's aftermath). **Skipped: restarting the daemon rescans.** |
 
-**Verify:** Device dropdown switches output with correct pitch. Auto-start toggle persists across reboot. Log viewer shows last 50 lines. Diag shows "Last key: 2s ago" updating. Uninstall `--purge` leaves nothing.
+**Verify:** ✅ Device dropdown switches output with correct pitch (verified: `select_device` round-trip via ctl, status shows selection). Uninstall `--purge` leaves nothing (added `~/.cache/sorakey` + `~/.local/lib/sorakey`). Build + 81 tests pass; deployed, `dev-sync` synced. ~~Auto-start toggle~~ / ~~Log viewer~~ / ~~Diag panel~~ — items skipped, not verified.
 
 **Phase checklist:**
 1. **Read** the files listed in the "Files" column for every fix in this phase

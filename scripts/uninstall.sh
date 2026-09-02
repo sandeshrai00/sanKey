@@ -7,7 +7,7 @@ systemctl --user disable --now sorakey 2>/dev/null || true
 systemctl --user daemon-reload 2>/dev/null || true
 pkill -x sorakey 2>/dev/null || true
 if [[ $PURGE -eq 1 ]]; then
-  rm -rf ~/.local/share/sorakey ~/.local/bin/sorakey ~/.config/systemd/user/sorakey.service
+  rm -rf ~/.local/share/sorakey ~/.local/bin/sorakey ~/.config/systemd/user/sorakey.service ~/.cache/sorakey ~/.local/lib/sorakey
   echo "purged data + binary"
 else
   # keep packs as .bak

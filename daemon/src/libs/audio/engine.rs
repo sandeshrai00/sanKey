@@ -36,8 +36,6 @@ pub enum AudioCommand {
     /// Internal: the off-engine-thread pack-load worker finished; `seq` is the
 /// request sequence it was spawned for (stale results are dropped).
     PackLoaded(u64, Result<super::soundpack_loader::LoadedPack, String>),
-    /// Constructed by the device-picker UI (planned in Phase 7.1) — not sent yet.
-    #[allow(dead_code)]
     SwitchDevice(Option<String>), // None = system default
 }
 
@@ -207,9 +205,6 @@ impl EngineState {
             device_id.as_deref()
         )?;
 
-        // Resample the current pack to the new device's rate so in-flight
-        // soundpacks keep playing correctly without a reload (original
-        // native-rate buffers are kept for future switches).
         let new_rate = self.device_manager.get_current_output_sample_rate();
 
         // Drop old voices/stream only after the new one is confirmed open,
