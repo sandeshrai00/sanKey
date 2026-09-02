@@ -24,6 +24,8 @@ Item {
   property bool exporting: false
   property string lastExportResult: ""
   property string lastExportError: ""
+  // sticky stop: true if the user explicitly stopped the daemon (Panel writes the flag)
+  readonly property bool stoppedFlag: Qt.fileExists("file:///" + Quickshell.env("HOME") + "/.local/share/sorakey/stopped")
 
   signal packsImported(string packId)
   function notify(title, msg) { Quickshell.execDetached(["notify-send","-a","Sorakey", title, msg]); clearImportTimer.restart() }
@@ -62,7 +64,7 @@ Item {
     }
   }
 
-  Timer { id: clearImportTimer; interval: 4000; onTriggered: { root.lastImportError = ""; root.lastImportResult = ""; root.lastExportError = ""; root.lastExportResult = "" } }
+  Timer { id: clearImportTimer; interval: 10000; onTriggered: { root.lastImportResult = ""; root.lastExportResult = "" } }
 
   Process {
     id: importHelper
@@ -145,7 +147,8 @@ Item {
   }
 
   Component.onCompleted: {
-    if (!startProc.running) {
+    // sticky stop: only auto-start if the user hasn't explicitly stopped the daemon
+    if (!startProc.running && !root.stoppedFlag) {
       startProc.command = ["systemctl", "--user", "enable", "--now", "sorakey"]
       startProc.running = true
     }

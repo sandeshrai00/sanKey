@@ -48,11 +48,14 @@ V1_KEY_TABLE = {
     "112": "Convert", "115": "Lang1", "119": "Lang2",
     "121": "KanaMode", "123": "HiraganaKatakana",
     "125": "IntlYen", "126": "NumpadComma",
-    "3597": "NumLock",
-    "3612": "NumpadDivide",
-    "3613": "NumpadMultiply",
+    # Alternative 0x0Exx codes some V1 packs use instead of the main block.
+    # 3597/3612 are main-only (their correct names live below); 3613 and
+    # 3640 conflict with the main block so they live here (last-wins). Keep in
+    # EXACT lockstep with daemon/src/utils/config_converter.rs — the parity
+    # test compares the two final tables and fails on any divergence.
+    "3613": "ControlRight",
     "3639": "Numpad7",
-    "3640": "Numpad8",
+    "3640": "AltRight",
     "3653": "Numpad9",
     "3655": "NumpadAdd",
     "3657": "Numpad4",
@@ -65,8 +68,6 @@ V1_KEY_TABLE = {
     "3637": "NumpadDivide",
     "3612": "NumpadEnter",
     "3597": "ControlRight",
-    "3613": "ControlRight",
-    "3640": "AltRight",
     "3645": "NumpadEquals",
     "3675": "NumpadDecimal",
     "3676": "Numpad0",

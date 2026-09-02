@@ -4,7 +4,7 @@
 use crate::libs::audio::{ AudioCommand, AudioEngineHandle };
 use crate::libs::cli_args::qualify_soundpack_id;
 use crate::state::paths;
-use std::io::{ BufRead, BufReader, Write };
+use std::io::{ BufRead, BufReader, Read, Write };
 use std::os::unix::net::{ UnixListener, UnixStream };
 use std::path::PathBuf;
 
@@ -40,7 +40,7 @@ pub fn serve(engine: AudioEngineHandle) -> Option<PathBuf> {
                             handle_conn(stream, &eng)
                         });
                 }
-                Err(e) => crate::debug_print!("⚠️  [control] accept: {}", e),
+                Err(e) => crate::always_print!("⚠️  [control] accept: {}", e),
             }
         }
     });
@@ -49,13 +49,30 @@ pub fn serve(engine: AudioEngineHandle) -> Option<PathBuf> {
 }
 
 fn handle_conn(mut stream: UnixStream, engine: &AudioEngineHandle) {
-    let mut line = String::new();
-    {
-        let mut reader = BufReader::new(&stream);
-        if reader.read_line(&mut line).is_err() {
-            return;
+    const MAX_REQUEST_BYTES: u64 = 64 * 1024;
+    let mut buf: Vec<u8> = Vec::with_capacity(256);
+    let mut chunk = [0u8; 4096];
+    let mut reader = BufReader::new(&stream);
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                if (buf.len() as u64 + n as u64) > MAX_REQUEST_BYTES {
+                    let _ = stream.write_all(b"{\"ok\":false,\"error\":\"request too large\"}\n");
+                    return;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            Err(_) => return,
+        }
+        if buf.contains(&b'\n') {
+            break;
         }
     }
+    let Some(newline) = buf.iter().position(|b| *b == b'\n') else {
+        return;
+    };
+    let line = String::from_utf8_lossy(&buf[..newline]).into_owned();
     let line = line.trim();
     if line.is_empty() {
         return;
@@ -74,6 +91,8 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
 
     match cmd {
         "status" => status(),
+        "set_bar_section" => set_bar_section(&req),
+        "get_bar_section" => get_bar_section(),
         "mute" => {
             let muted = req.get("muted").and_then(|v| v.as_bool()).unwrap_or(true);
             crate::state::config_writer::apply(|c| c.enable_sound = !muted);
@@ -98,6 +117,7 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
             ok(serde_json::json!({ "volume": v }))
         }
         "per_pack_volume" => per_pack_volume(&req, engine),
+        "reset_volume" => reset_volume(&req, engine),
         "delete_pack" => delete_pack(&req, engine),
         "keyboard_pack" => load_pack(&req, engine),
         "packs" => packs(),
@@ -168,6 +188,32 @@ fn load_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     engine.send(AudioCommand::LoadKeyboardPack { soundpack_id: id.clone(), update_cache_on_error: true });
     engine.send(AudioCommand::SetVolume(eff));
     ok(serde_json::json!({ "id": id }))
+}
+
+fn reset_volume(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
+    let raw = match req.get("id").and_then(|v| v.as_str()) {
+        Some(id) => id.to_string(),
+        None => return fail("missing id"),
+    };
+    if raw.contains('\0') || raw.contains("..") {
+        return fail("invalid id");
+    }
+    let id = qualify_soundpack_id(&raw, "keyboard/");
+    crate::state::config_writer::apply(|c| {
+        c.per_pack_volume.remove(&id);
+        if let Some(v) = recommended_volume_for(&id) {
+            let v = v.clamp(0.1, 1.0);
+            if (v - 1.0).abs() > 0.001 {
+                c.per_pack_volume.insert(id.clone(), v);
+            }
+        }
+    });
+    let cur = crate::state::config_writer::current();
+    if cur.keyboard_soundpack == id {
+        engine.send(AudioCommand::SetVolume(cur.effective_volume()));
+    }
+    let per = cur.per_pack_volume.get(&id).copied().unwrap_or(1.0) * 100.0;
+    ok(serde_json::json!({ "id": id, "per_pack_volume": per.round() }))
 }
 
 fn per_pack_volume(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
@@ -313,16 +359,12 @@ fn diag() -> String {
     let vm_hwm = proc_kb("VmHWM:").unwrap_or(0);
     let c = crate::state::config_writer::current();
     let cache = crate::state::soundpack::SoundpackCache::load();
-    let trace_bytes = std::env::temp_dir()
-        .join(format!("sorakey-trace-{}.log", std::process::id()))
-        .metadata().map(|m| m.len()).unwrap_or(0);
     ok(serde_json::json!({
         "vm_rss_kb": vm_rss,
         "vm_hwm_kb": vm_hwm,
         "per_pack_volume_entries": c.per_pack_volume.len(),
         "soundpack_cache_entries": cache.soundpacks.len(),
         "keyboard_pack": c.keyboard_soundpack,
-        "trace_bytes": trace_bytes,
     }))
 }
 
@@ -337,8 +379,100 @@ fn export_logs() -> String {
     }))
 }
 
+fn get_bar_section() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let path = std::path::PathBuf::from(&home).join(".local/share/sorakey/bar-section");
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        ok(serde_json::json!({ "section": s.trim() }))
+    } else {
+        ok(serde_json::json!({ "section": "right" }))
+    }
+}
+
+fn set_bar_section(req: &serde_json::Value) -> String {
+    let Some(section) = req.get("section").and_then(|s| s.as_str()) else { return fail("missing section") };
+    if !matches!(section, "left" | "center" | "right") { return fail("invalid section") };
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    let dir = std::path::PathBuf::from(home).join(".local/share/sorakey");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return fail(&format!("could not create dir: {e}"));
+    }
+    let path = dir.join("bar-section");
+    if let Err(e) = std::fs::write(&path, section) {
+        return fail(&format!("could not write: {e}"));
+    }
+    ok(serde_json::json!({ "section": section }))
+}
+
 fn fail(e: &str) -> String {
     serde_json::json!({ "ok": false, "error": e }).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Oversized requests must be rejected, not buffered to OOM.
+    #[test]
+    fn oversized_requests_are_rejected_not_buffered() {
+        let (server, client) = UnixStream::pair().expect("socketpair");
+        let mut client = client;
+
+        let filler: String = std::iter::repeat('a').take(70 * 1024).collect();
+        let request = format!("{{\"cmd\":\"status\",\"pad\":\"{filler}\"}}\n");
+        client
+            .write_all(request.as_bytes())
+            .expect("client write");
+
+        let (cmd_tx, _cmd_rx) = crossbeam_channel::unbounded::<AudioCommand>();
+        let engine = AudioEngineHandle { tx: cmd_tx };
+
+        let mut server = server;
+        server
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("timeout");
+        handle_conn(server, &engine);
+
+        let mut response = String::new();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("timeout");
+        client.read_to_string(&mut response).expect("read response");
+        assert!(
+            response.contains("request too large"),
+            "oversized request must be rejected, got: {response}"
+        );
+    }
+
+    /// Normal-sized requests still get a normal response.
+    #[test]
+    fn normal_requests_are_answered() {
+        let (server, client) = UnixStream::pair().expect("socketpair");
+        let mut client = client;
+
+        client
+            .write_all(b"{\"cmd\":\"status\"}\n")
+            .expect("client write");
+
+        let (cmd_tx, _cmd_rx) = crossbeam_channel::unbounded::<AudioCommand>();
+        let engine = AudioEngineHandle { tx: cmd_tx };
+
+        let mut server = server;
+        server
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("timeout");
+        handle_conn(server, &engine);
+
+        let mut response = String::new();
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("timeout");
+        client.read_to_string(&mut response).expect("read response");
+        assert!(
+            response.contains("\"ok\":true"),
+            "status must succeed, got: {response}"
+        );
+    }
 }
 
 /// `sorakey ctl '<json>'` client — one request, one response line.

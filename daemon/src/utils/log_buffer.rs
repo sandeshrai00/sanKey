@@ -2,15 +2,15 @@
 //! Memory only, fixed size. Never stores key identities.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{ AtomicBool, AtomicU64, Ordering };
+use std::sync::atomic::{ AtomicU64, Ordering };
 use std::sync::{ Mutex, OnceLock };
 
 pub const CAPACITY: usize = 2000;
+#[cfg(test)]
 pub const VIEWER_LINES: usize = 100;
 
 static BUFFER: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 static GENERATION: AtomicU64 = AtomicU64::new(0);
-static VERBOSE: AtomicBool = AtomicBool::new(false);
 
 fn buffer() -> &'static Mutex<VecDeque<String>> {
     BUFFER.get_or_init(|| Mutex::new(VecDeque::with_capacity(CAPACITY)))
@@ -49,19 +49,6 @@ pub fn push(line: &str) {
     GENERATION.fetch_add(1, Ordering::Release);
 }
 
-pub fn generation() -> u64 {
-    GENERATION.load(Ordering::Acquire)
-}
-
-/// Most recent `count` lines, oldest first.
-pub fn recent(count: usize) -> Vec<String> {
-    let Ok(buffer) = buffer().lock() else {
-        return Vec::new();
-    };
-    let skip = buffer.len().saturating_sub(count);
-    buffer.iter().skip(skip).cloned().collect()
-}
-
 /// All lines, oldest first.
 pub fn snapshot() -> Vec<String> {
     let Ok(buffer) = buffer().lock() else {
@@ -70,58 +57,22 @@ pub fn snapshot() -> Vec<String> {
     buffer.iter().cloned().collect()
 }
 
+#[cfg(test)]
+pub fn recent(count: usize) -> Vec<String> {
+    let Ok(buffer) = buffer().lock() else {
+        return Vec::new();
+    };
+    let skip = buffer.len().saturating_sub(count);
+    buffer.iter().skip(skip).cloned().collect()
+}
+
+#[cfg(test)]
+pub fn generation() -> u64 {
+    GENERATION.load(Ordering::Acquire)
+}
+
 pub fn len() -> usize {
     buffer().lock().map(|buffer| buffer.len()).unwrap_or(0)
-}
-
-#[inline]
-pub fn verbose_enabled() -> bool {
-    VERBOSE.load(Ordering::Relaxed)
-}
-
-/// Toggle verbose capture (not persisted).
-pub fn set_verbose(on: bool) {
-    VERBOSE.store(on, Ordering::Relaxed);
-    crate::libs::trace::set_runtime_tracing(on);
-    push(if on {
-        "🔊 Verbose logging ON - per-keystroke timings will be captured with key identities masked"
-    } else {
-        "🔇 Verbose logging OFF"
-    });
-}
-
-/// Capture a timing line, masking any key identity first.
-pub fn push_verbose(line: &str) {
-    if !verbose_enabled() {
-        return;
-    }
-    push(&mask_key_identities(line));
-}
-
-/// Replace any `key=...` value with `***`.
-pub fn mask_key_identities(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut rest = line;
-
-    while let Some(at) = rest.find("key=") {
-        let is_field_start =
-            at == 0 || !rest[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_');
-
-        let (head, tail) = rest.split_at(at + "key=".len());
-        out.push_str(head);
-        rest = tail;
-
-        if !is_field_start {
-            continue;
-        }
-
-        let value_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-        out.push_str("***");
-        rest = &rest[value_end..];
-    }
-
-    out.push_str(rest);
-    out
 }
 
 fn current_user_name() -> Option<String> {
@@ -190,11 +141,7 @@ pub fn export_header() -> String {
         std::env::consts::OS,
         std::env::consts::ARCH,
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-        if verbose_enabled() {
-            "on (key identities masked)"
-        } else {
-            "off"
-        },
+        "off",
         len(),
         CAPACITY,
         "-".repeat(60)
@@ -210,10 +157,12 @@ pub fn export_contents() -> String {
     out
 }
 
+#[cfg(test)]
 fn export_file_name(at: chrono::DateTime<chrono::Local>) -> String {
     format!("sorakey-log-{}.txt", at.format("%Y%m%d-%H%M%S"))
 }
 
+#[cfg(test)]
 pub fn export_to_file() -> Result<std::path::PathBuf, String> {
     let dir = std::env::temp_dir().join("sorakey-logs");
     std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {}", dir.display(), e))?;
@@ -224,16 +173,6 @@ pub fn export_to_file() -> Result<std::path::PathBuf, String> {
     )?;
 
     Ok(path)
-}
-
-pub fn reveal_in_file_manager(path: &std::path::Path) {
-    let spawned = std::process::Command::new("xdg-open")
-        .arg(path.parent().unwrap_or(path))
-        .spawn();
-
-    if let Err(e) = spawned {
-        crate::debug_eprint!("⚠️ Could not open the log folder: {}", e);
-    }
 }
 
 #[cfg(test)]
@@ -248,7 +187,6 @@ mod tests {
 
     fn reset() {
         buffer().lock().unwrap().clear();
-        VERBOSE.store(false, Ordering::Relaxed);
     }
 
     fn our_indices(marker: &str) -> Vec<usize> {
@@ -357,79 +295,6 @@ mod tests {
     }
 
     #[test]
-    fn key_identities_are_masked_out_of_trace_lines() {
-        let line = "🔬 TRACE key=KeyA         total=     3.1ms  worker->engine=0.2ms";
-        let masked = mask_key_identities(line);
-
-        assert!(!masked.contains("KeyA"), "{}", masked);
-        assert!(masked.contains("key=***"), "{}", masked);
-        assert!(masked.contains("total=     3.1ms"), "{}", masked);
-        assert!(masked.contains("worker->engine=0.2ms"), "{}", masked);
-    }
-
-    #[test]
-    fn masking_covers_every_key_field_on_a_line() {
-        let masked = mask_key_identities("key=KeyA then key=ControlLeft done");
-        assert_eq!(masked, "key=*** then key=*** done");
-    }
-
-    #[test]
-    fn masking_leaves_lookalike_fields_alone() {
-        let masked = mask_key_identities("monkey=banana");
-        assert_eq!(masked, "monkey=banana");
-    }
-
-    #[test]
-    fn masking_handles_a_key_field_at_end_of_line() {
-        assert_eq!(mask_key_identities("timing key=KeyZ"), "timing key=***");
-    }
-
-    #[test]
-    fn verbose_lines_are_dropped_entirely_while_verbose_is_off() {
-        let _guard = super::buffer_test_guard();
-        reset();
-
-        push_verbose("🔬 TRACE key=KeyA total=3.1ms");
-
-        assert!(!snapshot().iter().any(|line| line.contains("total=3.1ms")), "{:?}", snapshot());
-    }
-
-    #[test]
-    fn verbose_lines_reach_the_buffer_masked_when_on() {
-        let _guard = super::buffer_test_guard();
-        reset();
-
-        VERBOSE.store(true, Ordering::Relaxed);
-        push_verbose("🔬 TRACE key=KeyA total=3.1ms");
-
-        let lines = snapshot();
-        let ours = lines.iter().find(|line| line.contains("total=3.1ms")).unwrap_or_else(|| panic!("{:?}", lines));
-
-        assert!(!ours.contains("KeyA"), "{}", ours);
-        assert!(ours.contains("key=***"), "{}", ours);
-
-        VERBOSE.store(false, Ordering::Relaxed);
-    }
-
-    #[test]
-    fn no_raw_key_code_can_reach_the_buffer_through_the_verbose_door() {
-        let _guard = super::buffer_test_guard();
-        reset();
-        VERBOSE.store(true, Ordering::Relaxed);
-
-        for code in ["KeyA", "KeyZ", "ControlLeft", "KeyB", "Numpad7"] {
-            push_verbose(&format!("🔬 TRACE key={} total=1.0ms", code));
-        }
-
-        let joined = snapshot().join("\n");
-        for code in ["KeyA", "KeyZ", "ControlLeft", "KeyB", "Numpad7"] {
-            assert!(!joined.contains(code), "`{}` leaked:\n{}", code, joined);
-        }
-
-        VERBOSE.store(false, Ordering::Relaxed);
-    }
-
-    #[test]
     fn the_export_carries_the_header_and_every_line() {
         let _guard = super::buffer_test_guard();
         reset();
@@ -517,18 +382,6 @@ mod tests {
     }
 
     #[test]
-    fn the_export_reports_verbose_state_in_its_header() {
-        let _guard = super::buffer_test_guard();
-        reset();
-
-        VERBOSE.store(true, Ordering::Relaxed);
-        assert!(export_header().contains("Verbose logging: on (key identities masked)"));
-
-        VERBOSE.store(false, Ordering::Relaxed);
-        assert!(export_header().contains("Verbose logging: off"));
-    }
-
-    #[test]
     fn export_file_names_are_timestamped_and_do_not_collide() {
         use chrono::TimeZone;
 
@@ -537,147 +390,6 @@ mod tests {
 
         let later = chrono::Local.with_ymd_and_hms(2026, 8, 4, 15, 30, 46).unwrap();
         assert_ne!(export_file_name(at), export_file_name(later));
-    }
-
-    #[test]
-    fn no_per_event_code_path_logs() {
-        const ENGINE: &str = include_str!("../libs/audio/engine.rs");
-        const WORKER_HOST: &str = include_str!("../libs/input_worker_host.rs");
-
-        let engine = ENGINE.split("#[cfg(test)]").next().unwrap();
-        let worker_host = WORKER_HOST.split("#[cfg(test)]").next().unwrap();
-
-        let logging = ["always_print!", "always_eprint!", "debug_print!", "debug_eprint!"];
-
-        for handler in ["fn handle_key_event("] {
-            let body = engine.split(handler).nth(1).expect("handler must exist").split("\n    fn ").next().unwrap();
-            for macro_name in logging {
-                assert!(!body.contains(macro_name));
-            }
-        }
-
-        let read_loop = worker_host.split("for line in BufReader::new(stdout).lines()").nth(1).expect("worker read loop must exist").split("\n    reap(").next().unwrap();
-        for macro_name in logging {
-            assert!(!read_loop.contains(macro_name));
-        }
-    }
-
-    #[test]
-    fn the_verbose_toggle_makes_real_trace_points_reach_the_buffer() {
-        use crate::libs::trace::{ Point, record };
-
-        let _guard = super::buffer_test_guard();
-        reset();
-
-        assert!(std::env::var("SORAKEY_TRACE").is_err());
-
-        set_verbose(true);
-
-        record(Point::WorkerSend, "KeyA", 0.0);
-        record(Point::EngineDequeue, "KeyA", 0.0);
-        record(Point::PlayedSound, "KeyA", 0.4);
-        record(Point::UiEventSent, "KeyA", 0.0);
-        record(Point::UiWrite, "KeyA", 0.0);
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let mut captured = String::new();
-        while std::time::Instant::now() < deadline {
-            captured = snapshot().join("\n");
-            if captured.contains("TRACE") {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(25));
-        }
-
-        assert!(captured.contains("TRACE"), "{}", captured);
-        assert!(captured.contains("total="), "{}", captured);
-        assert!(!captured.contains("KeyA"), "{}", captured);
-        assert!(captured.contains("key=***"), "{captured}");
-
-        set_verbose(false);
-    }
-
-    #[test]
-    fn turning_verbose_off_stops_the_flow() {
-        use crate::libs::trace::{ Point, record };
-
-        let _guard = super::buffer_test_guard();
-        reset();
-
-        set_verbose(true);
-        record(Point::PackLoad, "somepack", 12.0);
-
-        std::thread::sleep(std::time::Duration::from_millis(300));
-
-        set_verbose(false);
-        buffer().lock().unwrap().clear();
-        let generation_before = generation();
-
-        for _ in 0..200 {
-            record(Point::PackLoad, "somepack", 12.0);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(300));
-
-        assert!(!snapshot().iter().any(|line| line.contains("somepack")), "{:?}", snapshot());
-        assert_eq!(generation_before, generation());
-    }
-
-    #[test]
-    fn typing_with_verbose_off_produces_no_pushes() {
-        let _guard = super::buffer_test_guard();
-        reset();
-
-        let generation_before = generation();
-        for _ in 0..500 {
-            push_verbose("🔬 TRACE key=KeyA total=2.0ms");
-        }
-
-        assert!(!snapshot().iter().any(|line| line.contains("total=2.0ms")), "{:?}", snapshot());
-        assert_eq!(generation(), generation_before);
-    }
-
-    #[test]
-    #[ignore = "diagnostic: demonstrates the verbose toggle end to end"]
-    fn demonstrate_verbose_toggle() {
-        use crate::libs::trace::{ Point, record };
-
-        let _guard = super::buffer_test_guard();
-        reset();
-
-        println!("SORAKEY_TRACE env var: {:?}", std::env::var("SORAKEY_TRACE").unwrap_or_else(|_| "<unset>".to_string()));
-
-        println!("\n--- toggle OFF, simulating 50 keystrokes ---");
-        for _ in 0..50 {
-            record(Point::WorkerSend, "KeyA", 0.0);
-            record(Point::UiWrite, "KeyA", 0.0);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        println!("buffer lines captured: {} (expected 0)", len());
-
-        println!("\n--- toggle ON, simulating 3 keystrokes ---");
-        set_verbose(true);
-        for key in ["KeyA", "KeyS", "KeyD"] {
-            record(Point::WorkerSend, key, 0.0);
-            record(Point::EngineDequeue, key, 0.0);
-            record(Point::PlayedSound, key, 0.4);
-            record(Point::UiEventSent, key, 0.0);
-            record(Point::UiWrite, key, 0.0);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        println!("buffer now holds {} line(s):", len());
-        for line in snapshot() {
-            println!("  {}", line);
-        }
-
-        println!("\n--- toggle OFF again, simulating 50 more keystrokes ---");
-        set_verbose(false);
-        let after_off = len();
-        for _ in 0..50 {
-            record(Point::WorkerSend, "KeyA", 0.0);
-            record(Point::UiWrite, "KeyA", 0.0);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        println!("lines at toggle-off: {}, lines now: {} (must be equal)", after_off, len());
     }
 
     #[test]
@@ -691,15 +403,11 @@ mod tests {
         push("📂 App root (from exe): D:\\sorakey\\target\\release");
         push("🎧 Audio engine thread started");
         push("🎮 Starting Raw Input worker process...");
-        VERBOSE.store(true, Ordering::Relaxed);
-        push_verbose("🔬 TRACE key=KeyA         total=     3.1ms  worker->engine=0.2ms");
 
         let path = export_to_file().expect("export must succeed");
         println!("--- exported to: {} ---", path.display());
         println!("{}", std::fs::read_to_string(&path).unwrap());
         println!("--- end ---");
-
-        VERBOSE.store(false, Ordering::Relaxed);
     }
 
     #[test]

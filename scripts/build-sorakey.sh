@@ -19,7 +19,7 @@ asset="sorakey-${arch}"
 # source hash for staleness
 source_id=""
 if command -v sha256sum >/dev/null 2>&1; then
-  source_id=$( { find "$DAEMON_DIR" -name "Cargo.toml" -o -name "Cargo.lock" -o -name "*.rs";
+  source_id=$( { find "$DAEMON_DIR" -path "$DAEMON_DIR/target" -prune -o \( -name "Cargo.toml" -o -name "Cargo.lock" -o -name "*.rs" \) -print;
                  echo "$PLUGIN_DIR/rust-toolchain.toml"; } | sort | xargs cat 2>/dev/null | sha256sum | cut -d' ' -f1)
   if [[ -f "$LIB_DIR/source.sha256" ]] && [[ "$(cat "$LIB_DIR/source.sha256" 2>/dev/null)" == "$source_id" ]] && [[ -x "$BIN" ]]; then
     echo "sorakey up to date (source $source_id)"

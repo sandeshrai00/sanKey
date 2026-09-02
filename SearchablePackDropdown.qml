@@ -323,7 +323,7 @@ Item {
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
                   anchors.rightMargin: Style.spacing.controlPaddingX
-                  text: ""
+                  text: "✕"
                   color: index === resultList.currentIndex ? Style.hoverStateColor(root.foreground, root.accent) : Qt.darker(root.foreground, 1.3)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -374,10 +374,10 @@ Item {
             Row {
               width: parent.width - Style.spacing.md*2
               anchors.horizontalCenter: parent.horizontalCenter
-              spacing: Style.spacing.xs
-              Text {
-                text: ""
-                color: "#ff6b6b"
+spacing: Style.spacing.xs
+               Text {
+                 text: "⚠"
+                 color: "#ff6b6b"
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
               }
@@ -398,7 +398,7 @@ Item {
               spacing: Style.spacing.sm
               Button {
                 text: root.deleting ? "Deleting…" : "Delete"
-                iconText: root.deleting ? "⏳" : ""
+                iconText: root.deleting ? "⏳" : "🗑"
                 foreground: "#ff6b6b"
                 bordered: true
                 enabled: !root.deleting

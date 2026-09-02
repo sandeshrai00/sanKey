@@ -3,19 +3,10 @@ use crossbeam_channel::Sender;
 pub fn start_input_capture(keyboard_tx: Sender<String>, hotkey_tx: Sender<String>) {
     #[cfg(target_os = "linux")]
     {
-        // Use evdev alone when available — rdev would double-fire.
-        let has_keyboard = evdev::enumerate().any(|(_, d)| d.supported_keys().is_some_and(|k| k.contains(evdev::KeyCode::KEY_A)));
-        if has_keyboard {
-            crate::debug_print!("🎮 Starting evdev keyboard listener (rdev skipped)...");
-            crate::libs::evdev_input_listener::start_evdev_keyboard_listener(keyboard_tx, hotkey_tx);
-        } else {
-            crate::debug_print!("🎮 Starting evdev keyboard listener...");
-            crate::libs::evdev_input_listener::start_evdev_keyboard_listener(
-                keyboard_tx.clone(),
-                hotkey_tx.clone(),
-            );
-            crate::debug_print!("🎮 Starting unified input listener (fallback)...");
-            crate::libs::input_listener::start_unified_input_listener(keyboard_tx, hotkey_tx);
-        }
+        crate::always_print!("🎮 Starting evdev keyboard listener...");
+        crate::libs::evdev_input_listener::start_evdev_keyboard_listener(
+            keyboard_tx,
+            hotkey_tx,
+        );
     }
 }

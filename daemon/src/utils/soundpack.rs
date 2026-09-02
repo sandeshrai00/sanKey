@@ -69,37 +69,9 @@ pub fn load_soundpack_metadata(soundpack_id: &str) -> Result<SoundpackMetadata, 
         ::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read config: {}", e))?;
 
-    let mut config: serde_json::Value = serde_json
+    let config: serde_json::Value = serde_json
         ::from_str(&content)
         .map_err(|e| format!("Failed to parse config: {}", e))?;
-
-    // Check if this is V2 config with multi method and convert to single method
-    if let Some(definition_method) = config.get("definition_method").and_then(|v| v.as_str()) {
-        if definition_method == "multi" {
-            crate::always_print!("🔄 [CACHE DEBUG] Found V2 multi method config, converting to single method");
-            let soundpack_dir = paths::soundpacks::soundpack_dir(soundpack_id);
-
-            if
-                let Err(e) = config_converter::convert_v2_multi_to_single(
-                    &config_path,
-                    &soundpack_dir
-                )
-            {
-                crate::always_print!("❌ [CACHE DEBUG] Failed to convert multi to single: {}", e);
-                return Err(format!("Failed to convert multi to single method: {}", e));
-            }
-
-            // Re-read the converted config
-            let new_content = fs
-                ::read_to_string(&config_path)
-                .map_err(|e| format!("Failed to re-read converted config: {}", e))?;
-            config = serde_json
-                ::from_str(&new_content)
-                .map_err(|e| format!("Failed to parse converted config: {}", e))?;
-
-            crate::always_print!("✅ [CACHE DEBUG] Successfully converted to single method");
-        }
-    }
 
     // Debug: Check if config has audio_file field
     let audio_file = config.get("audio_file").and_then(|v| v.as_str());
@@ -172,43 +144,17 @@ pub fn load_soundpack_metadata(soundpack_id: &str) -> Result<SoundpackMetadata, 
             .map(|s| s.to_string()),
         version,
         tags,
-        icon: {
-            // Generate dynamic asset URL
-            if let Some(icon_filename) = config.get("icon").and_then(|v| v.as_str()) {
-                let icon_path = format!(
-                    "{}/{}",
-                    paths::soundpacks::soundpack_dir(soundpack_id),
-                    icon_filename
-                );
-                crate::always_print!(
-                    "🔍 Checking icon for {}: {} -> exists: {}",
-                    soundpack_id,
-                    icon_path,
-                    std::path::Path::new(&icon_path).exists()
-                );
-                if std::path::Path::new(&icon_path).exists() {
-                    // Generate dynamic asset URL instead of base64 data URI
-                    let asset_url = format!("/soundpack-images/{}/{}", soundpack_id, icon_filename);
-                    crate::always_print!("✅ Generated asset URL for {}: {}", soundpack_id, asset_url);
-                    Some(asset_url)
-                } else {
-                    crate::always_print!("❌ Icon not found for {}, setting empty string", soundpack_id);
-                    Some(String::new()) // Empty string if icon file not found
-                }
-            } else {
-                crate::always_print!("ℹ️  No icon specified for {}", soundpack_id);
-                Some(String::new()) // Empty string if no icon specified
-            }
-        },
-        soundpack_type: crate::state::soundpack::SoundpackType::Keyboard,
+        icon: config
+            .get("icon")
+            .and_then(|v| v.as_str())
+.map(|s| s.to_string()),
         folder_path: soundpack_id.to_string(), // Store the relative path (e.g., "keyboard/Super Paper Mario Talk")
         last_modified: metadata
             .modified()
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-            .duration_since(std::time::UNIX_EPOCH)
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
-        last_accessed: 0, // Will be updated when accessed
         // Validation fields
         config_version: final_validation.config_version,
         is_valid_v2: final_validation.is_valid_v2,
@@ -224,8 +170,30 @@ pub fn load_soundpack_metadata(soundpack_id: &str) -> Result<SoundpackMetadata, 
                 "requires_newer_app_version".to_string()
             }
         },
-        can_be_converted: final_validation.can_be_converted,
         // Error tracking - clear error if we successfully loaded metadata
         last_error: last_error,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    /// B5: the metadata read path must stay write-free. The old rescan code
+    /// called `fs::write` here on a V2-multi pack and silently destroyed its
+    /// `method`/`audio_file` fields (the "converted" backup bug). This is the
+    /// smallest check that fails if anyone re-introduces a write to the read
+    /// path — no filesystem, no temp dirs, no daemon interference.
+    #[test]
+    fn the_metadata_read_path_never_writes_to_disk() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/utils/soundpack.rs"))
+            .expect("read own source");
+        let start = src.find("pub fn load_soundpack_metadata").unwrap();
+        let body = &src[start..src.find("#[cfg(test)]").unwrap_or(src.len())];
+        for forbidden in ["fs::write", "fs::create_dir", "fs::rename", "to_string_pretty"] {
+            assert!(
+                !body.contains(forbidden),
+                "load_soundpack_metadata must not write to disk, but it uses `{forbidden}` — \
+                 a read path that mutates the pack is the B5 data-loss bug"
+            );
+        }
+    }
 }

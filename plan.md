@@ -262,7 +262,7 @@ What remains (mild): the only error signal is the panic message on stderr/journa
 
 Each phase is independently deployable and testable. Findings marked `[V]` were verified against the code; corrections are folded into the fix rows.
 
-## Phase 1 — Data Safety (prevent user data loss)
+## Phase 1 — Data Safety (prevent user data loss) ✅ done
 
 **Goal:** No read command can ever modify user files. V1 conversion is deterministic and consistent.
 
@@ -287,7 +287,7 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 
 ---
 
-## Phase 2 — Memory Leak & Engine-Start Failure
+## Phase 2 — Memory Leak & Engine-Start Failure ✅ done
 
 **Goal:** No per-keystroke leak. Engine-start failure is clean and loud.
 
@@ -312,7 +312,7 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 
 ---
 
-## Phase 3 — Correctness Bugs
+## Phase 3 — Correctness Bugs ✅ done
 
 **Goal:** All remaining bugs that cause wrong behavior.
 
@@ -335,11 +335,11 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 5. **Deploy**: `cp target/release/sorakey ~/.local/bin/sorakey && systemctl --user restart sorakey`
 6. **Verify** against the "Verify" block at the end of the phase
 7. **Deploy panel**: `./admin-scripts/dev-sync.sh`
-8. **Move to next phase**
+
 
 ---
 
-## Phase 4 — Performance (hot path)
+## Phase 4 — Performance (hot path) ✅ done
 
 **Goal:** <5ms key-to-sound latency. The risk in this phase is item 4.2 specifically — the others are small.
 
@@ -363,11 +363,11 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 5. **Deploy**: `cp target/release/sorakey ~/.local/bin/sorakey && systemctl --user restart sorakey`
 6. **Verify** against the "Verify" block at the end of the phase
 7. **Deploy panel**: `./admin-scripts/dev-sync.sh`
-8. **Move to next phase**
+
 
 ---
 
-## Phase 5 — Dead Code Sweep (~900 LOC in this phase; ~1,400 total across Phases 2–5)
+## Phase 5 — Dead Code Sweep (~900 LOC in this phase; ~1,400 total across Phases 2–5) ✅ done
 
 **Goal:** Every line in the codebase is reachable.
 
@@ -398,11 +398,11 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 5. **Deploy**: `cp target/release/sorakey ~/.local/bin/sorakey && systemctl --user restart sorakey`
 6. **Verify** against the "Verify" block at the end of the phase
 7. **Deploy panel**: `./admin-scripts/dev-sync.sh`
-8. **Move to next phase**
+
 
 ---
 
-## Phase 6 — UX Fixes (visible to user)
+## Phase 6 — UX Fixes (visible to user) ✅ done
 
 **Goal:** Every button is visible. Every action gives feedback. No confusing states.
 
@@ -432,7 +432,7 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 5. **Deploy**: `cp target/release/sorakey ~/.local/bin/sorakey && systemctl --user restart sorakey`
 6. **Verify** against the "Verify" block at the end of the phase
 7. **Deploy panel**: `./admin-scripts/dev-sync.sh`
-8. **Move to next phase**
+
 
 ---
 
@@ -462,7 +462,7 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 5. **Deploy**: `cp target/release/sorakey ~/.local/bin/sorakey && systemctl --user restart sorakey`
 6. **Verify** against the "Verify" block at the end of the phase
 7. **Deploy panel**: `./admin-scripts/dev-sync.sh`
-8. **Move to next phase**
+
 
 ---
 
@@ -494,7 +494,7 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 5. **Deploy**: `cp target/release/sorakey ~/.local/bin/sorakey && systemctl --user restart sorakey`
 6. **Verify** against the "Verify" block at the end of the phase
 7. **Deploy panel**: `./admin-scripts/dev-sync.sh`
-8. **Move to next phase**
+
 
 ---
 
@@ -522,7 +522,7 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 5. **Deploy**: `cp target/release/sorakey ~/.local/bin/sorakey && systemctl --user restart sorakey`
 6. **Verify** against the "Verify" block at the end of the phase
 7. **Deploy panel**: `./admin-scripts/dev-sync.sh`
-8. **Move to next phase**
+
 
 ---
 
@@ -549,7 +549,7 @@ Each phase is independently deployable and testable. Findings marked `[V]` were 
 5. **Deploy**: `cp target/release/sorakey ~/.local/bin/sorakey && systemctl --user restart sorakey`
 6. **Verify** against the "Verify" block at the end of the phase
 7. **Deploy panel**: `./admin-scripts/dev-sync.sh`
-8. **Move to next phase**
+
 
 ---
 

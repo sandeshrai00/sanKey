@@ -2,25 +2,20 @@ use crossbeam_channel::{ unbounded, Receiver, Sender };
 use rodio::buffer::SamplesBuffer;
 use rodio::{ OutputStream, OutputStreamHandle, Sink };
 use std::collections::HashMap;
-use std::sync::{ Arc, OnceLock };
+use std::sync::Arc;
 
 use crate::libs::device_manager::DeviceManager;
 
 const FADE_IN_MS: f32 = 2.0;
 const FADE_OUT_MS: f32 = 5.0;
-const EVICT_RAMP_MS: u64 = 10;
 const MAX_VOICES: usize = 32;
 
-/// (samples, channels, sample_rate) for a decoded/resampled audio buffer.
-type DecodedAudio = (Arc<Vec<f32>>, u16, u32);
+/// Precomputed, fade-applied playback segment (samples, channels, sample_rate).
+/// Built once at pack load so the keypress path is a lookup + one memcpy.
+pub(super) type Segment = (Arc<Vec<f32>>, u16, u32);
 
-/// Per-key audio data for multi-method packs. Holds the decoded audio samples
-/// for a single per-key audio file, ready for segment playback.
-pub(crate) struct MultiKeyAudio {
-    pub(crate) samples: Arc<Vec<f32>>,
-    pub(crate) channels: u16,
-    pub(crate) sample_rate: u32,
-}
+/// Per-key precomputed segments: (press, release).
+pub(super) type KeySegments = (Option<Segment>, Option<Segment>);
 
 /// Commands the engine thread accepts. Every audio-affecting operation goes
 /// through this channel so the thread that owns `OutputStream` never has to
@@ -38,25 +33,19 @@ pub enum AudioCommand {
         soundpack_id: String,
         update_cache_on_error: bool,
     },
+    /// Internal: the off-engine-thread pack-load worker finished; `seq` is the
+/// request sequence it was spawned for (stale results are dropped).
+    PackLoaded(u64, Result<super::soundpack_loader::LoadedPack, String>),
+    /// Constructed by the device-picker UI (planned in Phase 7.1) — not sent yet.
+    #[allow(dead_code)]
     SwitchDevice(Option<String>), // None = system default
 }
 
-/// Events the engine thread pushes back out for the UI to react to.
-#[derive(Clone, Debug)]
-pub enum UiEvent {
-    KeyDown(String),
-    KeyUp(String),
-    DeviceSwitched(Result<String, String>),
-    PackLoaded {
-        result: Result<String, String>,
-    },
-}
-
-/// Cheap, `Clone + Send` handle to the audio engine thread. UI code and input
+/// Cheap, `Clone + Send` handle to the audio engine thread. Control and input
 /// listeners hold this instead of the engine's internal state.
 #[derive(Clone)]
 pub struct AudioEngineHandle {
-    tx: Sender<AudioCommand>,
+    pub(crate) tx: Sender<AudioCommand>,
 }
 
 impl AudioEngineHandle {
@@ -67,9 +56,6 @@ impl AudioEngineHandle {
         let _ = self.tx.send(command);
     }
 }
-
-static ENGINE_HANDLE: OnceLock<AudioEngineHandle> = OnceLock::new();
-static UI_EVENT_RX: OnceLock<Receiver<UiEvent>> = OnceLock::new();
 
 /// Spawns the audio engine thread and returns a handle to it. Must be called
 /// once, before `dioxus::launch`, so `OutputStream` is opened and lives on a
@@ -85,27 +71,13 @@ pub fn spawn_engine(
     hotkey_rx: Receiver<String>
 ) -> AudioEngineHandle {
     let (cmd_tx, cmd_rx) = unbounded::<AudioCommand>();
-    let (event_tx, event_rx) = unbounded::<UiEvent>();
+    let engine_tx = cmd_tx.clone();
 
     std::thread::spawn(move || {
-        run_engine(cmd_rx, event_tx, keyboard_rx, hotkey_rx);
+        run_engine(engine_tx, cmd_rx, keyboard_rx, hotkey_rx);
     });
 
-    let handle = AudioEngineHandle { tx: cmd_tx };
-    let _ = ENGINE_HANDLE.set(handle.clone());
-    let _ = UI_EVENT_RX.set(event_rx);
-    handle
-}
-
-/// Returns the engine handle. Panics if `spawn_engine` hasn't run yet -
-/// main.rs sets it up before the UI can possibly ask for it.
-pub fn engine_handle() -> AudioEngineHandle {
-    ENGINE_HANDLE.get().expect("Audio engine not started").clone()
-}
-
-/// Returns the `UiEvent` receiver for the UI's single poll loop.
-pub fn ui_event_receiver() -> &'static Receiver<UiEvent> {
-    UI_EVENT_RX.get().expect("Audio engine not started")
+    AudioEngineHandle { tx: cmd_tx }
 }
 
 /// All state the engine thread owns exclusively. Nothing here is behind a
@@ -120,14 +92,15 @@ pub(super) struct EngineState {
     current_device_id: Option<String>,
     pub(super) device_rate: Option<u32>,
 
-    pub(super) keyboard_samples: Option<DecodedAudio>,
-    pub(super) keyboard_samples_original: Option<DecodedAudio>,
-    pub(super) key_map: HashMap<String, Vec<[f32; 2]>>,
-    /// Per-key audio buffers for multi-method packs.
-    /// Maps audio_file → decoded audio data.
-    pub(super) multi_key_audio: HashMap<String, MultiKeyAudio>,
-    /// Maps key name → audio_file name (for multi-method packs).
-    pub(super) multi_key_audio_map: HashMap<String, String>,
+    /// The pack currently playing: precomputed per-key segments + the
+    /// original (native-rate) buffers for re-resampling on device switch.
+    pub(super) pack: Option<super::soundpack_loader::LoadedPack>,
+    /// Sequence of the most recent LoadKeyboardPack request. Worker results
+    /// carry the request's sequence; only the latest is applied, so rapid
+    /// loads can't drop the newest pack (or apply a stale one out of order).
+    pub(super) pending_pack_seq: Option<u64>,
+    /// Monotonic counter handing each load a unique sequence.
+    pub(super) load_seq: u64,
 
     key_pressed: HashMap<String, bool>,
     pub(super) key_sinks: Vec<Sink>,
@@ -177,10 +150,8 @@ impl EngineState {
         ).unwrap_or_else(|e| {
             crate::always_eprint!("❌ [AudioEngine] {} - falling back to default", e);
             open_stream(&device_manager, None).unwrap_or_else(|e2| {
-                crate::always_eprint!("❌ [AudioEngine] default also failed: {} - running muted", e2);
-                // Create a dummy stream failure is not fatal; we still create engine muted
-                // Fallback: try again and if still fails, panic with clear message
-                panic!("No audio device available: {}", e2)
+                crate::always_eprint!("❌ [AudioEngine] no audio device available: {} - check configuration, exiting", e2);
+                std::process::exit(1)
             })
         });
         let current_device_id = opened_device_id.or(config.selected_audio_device.clone());
@@ -192,11 +163,9 @@ impl EngineState {
             device_manager,
             current_device_id,
             device_rate,
-            keyboard_samples: None,
-            keyboard_samples_original: None,
-            key_map: HashMap::new(),
-            multi_key_audio: HashMap::new(),
-            multi_key_audio_map: HashMap::new(),
+            pack: None,
+            pending_pack_seq: None,
+            load_seq: 0,
             key_pressed: HashMap::new(),
             key_sinks: Vec::new(),
             volume: config.effective_volume(),
@@ -211,26 +180,22 @@ impl EngineState {
         if !debounce_press(&mut self.key_pressed, code, down) {
             return;
         }
-        if let Some((start, end)) = lookup_timing(&self.key_map, code, down) {
-            let samples = if let Some(audio_file) = self.multi_key_audio_map.get(code) {
-                // Multi-method pack: use per-key audio
-                self.multi_key_audio.get(audio_file).map(|a| {
-                    (a.samples.clone(), a.channels, a.sample_rate)
-                })
-            } else {
-                // Single-method pack: use shared keyboard_samples
-                self.keyboard_samples.clone()
-            };
-            play_segment(
-                &self.stream_handle,
-                samples,
-                code,
-                start,
-                end,
-                self.volume,
-                &mut self.key_sinks
-            );
-        }
+        let Some(pack) = &self.pack else { return };
+        let Some(segments) = pack.segments.get(code) else { return };
+        let Some(segment) = (if down { &segments.0 } else { &segments.1 }) else {
+            return;
+        };
+        play_segment(&self.stream_handle, segment, self.volume, &mut self.key_sinks);
+    }
+
+    /// Rebuilds precomputed segments at the device's current rate. Original
+    /// (native-rate) buffers are kept so a later switch can re-resample
+    /// without re-reading from disk.
+    fn prepare_pack(&mut self) {
+        let Some(device_rate) = self.device_rate else { return };
+        let Some(pack) = self.pack.take() else { return };
+        let prepared = super::soundpack_loader::prepare_pack_segments(pack, device_rate);
+        self.pack = Some(prepared);
     }
 
     fn switch_device(&mut self, device_id: Option<String>) -> Result<String, String> {
@@ -242,33 +207,10 @@ impl EngineState {
             device_id.as_deref()
         )?;
 
-        // Re-resample cached original samples to the new device's rate so
-        // in-flight soundpacks keep playing correctly without a reload.
+        // Resample the current pack to the new device's rate so in-flight
+        // soundpacks keep playing correctly without a reload (original
+        // native-rate buffers are kept for future switches).
         let new_rate = self.device_manager.get_current_output_sample_rate();
-        if let Some((orig_samples, channels, orig_rate)) = &self.keyboard_samples_original {
-            self.keyboard_samples = Some(
-                resample_if_needed(orig_samples, *channels, *orig_rate, new_rate)
-            );
-        }
-        if !self.multi_key_audio.is_empty() {
-            if let Some(target) = new_rate {
-                let old = std::mem::take(&mut self.multi_key_audio);
-                let mut new_multi = std::collections::HashMap::with_capacity(old.len());
-                for (fname, audio) in old {
-                    if audio.sample_rate == target {
-                        new_multi.insert(fname, audio);
-                    } else {
-                        let resampled = super::resampler::resample_interleaved(&audio.samples, audio.channels, audio.sample_rate, target);
-                        new_multi.insert(fname, super::engine::MultiKeyAudio {
-                            samples: std::sync::Arc::new(resampled),
-                            channels: audio.channels,
-                            sample_rate: target,
-                        });
-                    }
-                }
-                self.multi_key_audio = new_multi;
-            }
-        }
 
         // Drop old voices/stream only after the new one is confirmed open,
         // so a failed switch leaves the previous device still playing.
@@ -277,6 +219,7 @@ impl EngineState {
         self.stream_handle = new_handle;
         self.device_rate = new_rate;
         self.current_device_id = opened_device_id.clone().or(device_id);
+        self.prepare_pack();
 
         let label = self.current_device_id.clone().unwrap_or_else(|| "System Default".to_string());
         Ok(label)
@@ -294,90 +237,21 @@ fn debounce_press(pressed: &mut HashMap<String, bool>, code: &str, down: bool) -
     true
 }
 
-/// Looks up the `[start, end]` (ms) pair for a keydown/keyup event from a
-/// soundpack's timing map. Mirrors the pre-Phase-3 `play_key_event_sound`
-/// logic in `sound_manager.rs`.
-fn lookup_timing(map: &HashMap<String, Vec<[f32; 2]>>, code: &str, down: bool) -> Option<(f32, f32)> {
-    match map.get(code) {
-        Some(arr) if arr.len() == 2 => {
-            let idx = if down { 0 } else { 1 };
-            Some((arr[idx][0], arr[idx][1]))
-        }
-        Some(arr) if arr.len() == 1 => {
-            if !down {
-                return None; // keydown-only mapping, ignore keyup
-            }
-            Some((arr[0][0], arr[0][1]))
-        }
-        _ => None,
-    }
-}
-
 fn play_segment(
     stream_handle: &OutputStreamHandle,
-    samples: Option<DecodedAudio>,
-    code: &str,
-    start_ms: f32,
-    end_ms: f32,
+    segment: &Segment,
     volume: f32,
     sinks: &mut Vec<Sink>
 ) {
-    let Some((samples_arc, channels, sample_rate)) = samples else {
-        return;
-    };
+    let (samples_arc, channels, sample_rate) = segment;
     let samples: &Vec<f32> = samples_arc.as_ref();
 
-    let duration = end_ms - start_ms;
-    if start_ms < 0.0 || duration <= 0.0 {
-        return;
-    }
-
-    let start_sample = ((start_ms / 1000.0) * (sample_rate as f32) * (channels as f32)) as usize;
-    let end_sample = ((end_ms / 1000.0) * (sample_rate as f32) * (channels as f32)) as usize;
-    let end_sample = end_sample.min(samples.len());
-
-    let total_expected = ((duration / 1000.0) * (sample_rate as f32) * (channels as f32)) as usize;
-
-    if start_sample >= samples.len() {
-        crate::always_eprint!(
-            "⚠️ [AudioEngine] Start sample {} past end of buffer (len {}) for '{}'",
-            start_sample,
-            samples.len(),
-            code
-        );
-        return;
-    }
-
-    if end_sample <= start_sample {
-        crate::always_eprint!(
-            "⚠️ [AudioEngine] Invalid segment [{}..{}] (dur={}ms, expected ~{} samples) for '{}'",
-            start_sample,
-            end_sample,
-            duration,
-            total_expected,
-            code
-        );
-        return;
-    }
-
-    if end_sample - start_sample < total_expected / 4 {
-        crate::always_eprint!(
-            "⚠️ [AudioEngine] Suspiciously short segment [{}..{}] (dur={}ms, expected ~{} samples) for '{}'",
-            start_sample,
-            end_sample,
-            duration,
-            total_expected,
-            code
-        );
-    }
-
-    let mut segment_samples = samples[start_sample..end_sample].to_vec();
-    apply_fade(&mut segment_samples, channels, sample_rate);
-    let segment = SamplesBuffer::new(channels, sample_rate, segment_samples);
+    // The fade is pre-applied at pack load; play the segment verbatim.
+    let segment_buf = SamplesBuffer::new(*channels, *sample_rate, samples.clone());
 
     if let Ok(sink) = Sink::try_new(stream_handle) {
         sink.set_volume(volume);
-        sink.append(segment);
+        sink.append(segment_buf);
 
         manage_active_sinks(sinks, MAX_VOICES);
         sinks.push(sink);
@@ -387,7 +261,8 @@ fn play_segment(
 /// Applies a linear fade-in/fade-out to interleaved PCM samples in place.
 /// Operates per-frame (one frame = `channels` consecutive samples) so all
 /// channels in a frame share the same gain and stay in phase.
-fn apply_fade(samples: &mut [f32], channels: u16, sample_rate: u32) {
+/// Called once per segment at pack load (precompute), never per keypress.
+pub(super) fn apply_fade(samples: &mut [f32], channels: u16, sample_rate: u32) {
     let channels = channels.max(1) as usize;
     let frame_count = samples.len() / channels;
     if frame_count == 0 {
@@ -433,26 +308,6 @@ fn manage_active_sinks(sinks: &mut Vec<Sink>, max_voices: usize) {
     }
 }
 
-fn resample_if_needed(
-    original_samples: &Arc<Vec<f32>>,
-    channels: u16,
-    original_rate: u32,
-    target_rate: Option<u32>
-) -> DecodedAudio {
-    match target_rate {
-        Some(target_rate) if target_rate != original_rate => {
-            let resampled = super::resampler::resample_interleaved(
-                original_samples,
-                channels,
-                original_rate,
-                target_rate
-            );
-            (Arc::new(resampled), channels, target_rate)
-        }
-        _ => (original_samples.clone(), channels, original_rate),
-    }
-}
-
 /// Parses the `"KeyA"` / `"UP:KeyA"` wire format the input listeners
 /// (rdev, device_query, evdev) already send, same as the pre-Phase-3 UI
 /// polling loops in `ui.rs` did.
@@ -490,7 +345,11 @@ fn handle_toggle_sound() -> bool {
     enabled
 }
 
-fn handle_command(state: &mut EngineState, event_tx: &Sender<UiEvent>, command: AudioCommand) {
+fn handle_command(
+    cmd_tx: &Sender<AudioCommand>,
+    state: &mut EngineState,
+    command: AudioCommand
+) {
     match command {
         AudioCommand::SetVolume(v) => {
             state.volume = v;
@@ -502,50 +361,76 @@ fn handle_command(state: &mut EngineState, event_tx: &Sender<UiEvent>, command: 
             state.sound_enabled = enabled;
         }
         AudioCommand::LoadKeyboardPack { soundpack_id, update_cache_on_error } => {
-            let result = crate::libs::trace::time(
-                crate::libs::trace::Point::PackLoad,
-                &soundpack_id,
-                || super::soundpack_loader::load_keyboard_pack_into_engine(
-                    state,
-                    &soundpack_id,
-                    update_cache_on_error
-                )
-            );
-            let _ = event_tx.send(UiEvent::PackLoaded { result });
+            // Decode on a worker thread; the old pack keeps playing until the
+            // result arrives. Results carry the request's sequence - only the
+            // newest is applied, in order.
+            state.load_seq += 1;
+            let seq = state.load_seq;
+            state.pending_pack_seq = Some(seq);
+            let rate = state.device_rate;
+            let tx = cmd_tx.clone();
+            std::thread::spawn(move || {
+                let loaded = super::soundpack_loader::load_pack_prepared(&soundpack_id, rate);
+                match &loaded {
+                    Ok(l) => {
+                        super::soundpack_loader::update_soundpack_cache(l, &soundpack_id);
+                    }
+                    Err(e) if update_cache_on_error => {
+                        super::soundpack_loader::capture_soundpack_loading_error(&soundpack_id, e);
+                    }
+                    _ => {}
+                }
+                let _ = tx.send(AudioCommand::PackLoaded(seq, loaded));
+            });
+        }
+        AudioCommand::PackLoaded(seq, result) => {
+            // A device switch cancels pending swaps: the old pack is
+            // re-prepared for the new device instead of being replaced.
+            let Some(latest) = state.pending_pack_seq else {
+                return;
+            };
+            if seq < latest {
+                return; // a newer request supersedes this one; it will be applied
+            }
+            state.pending_pack_seq = None;
+            let Ok(pack) = result else {
+                // Keep the old pack playing.
+                return;
+            };
+            // Already resampled + precomputed at our rate (the worker read
+            // it when it spawned; a device switch would have cancelled this
+            // swap), so the swap itself is just a buffer handover.
+            state.pack = Some(pack);
+            state.key_sinks.clear();
         }
         AudioCommand::SwitchDevice(device_id) => {
             // User-initiated switch: on failure, keep the previous device
             // playing and just report the error - don't silently fall back
             // to default (that's reserved for the device-removed case,
             // where there's no "previous" device left to keep).
-            let label = device_id.clone().unwrap_or_else(|| "System Default".to_string());
-            let result = crate::libs::trace::time(
-                crate::libs::trace::Point::DeviceSwitch,
-                &label,
-                || state.switch_device(device_id)
-            );
-            let _ = event_tx.send(UiEvent::DeviceSwitched(result));
+            state.pending_pack_seq = None;
+            let _ = state.switch_device(device_id);
         }
     }
 }
 
 fn run_engine(
+    cmd_tx: Sender<AudioCommand>,
     cmd_rx: Receiver<AudioCommand>,
-    event_tx: Sender<UiEvent>,
     keyboard_rx: Receiver<String>,
     hotkey_rx: Receiver<String>
 ) {
     let mut state = EngineState::new();
 
-    // Load the configured soundpack once at startup.
+    // Load the configured soundpack once at startup (decode + resample +
+    // precompute in one pass, on this thread - nothing else is running yet).
     let config = crate::state::config_writer::current();
     if !config.keyboard_soundpack.is_empty() {
-        let result = super::soundpack_loader::load_keyboard_pack_into_engine(
-            &mut state,
-            &config.keyboard_soundpack,
-            false
-        );
-        let _ = event_tx.send(UiEvent::PackLoaded { result });
+        if let Ok(pack) =
+            super::soundpack_loader::load_pack_prepared(&config.keyboard_soundpack, state.device_rate)
+        {
+            state.pack = Some(pack);
+        }
     }
 
     // This loop is purely event-driven: every arm below is a channel receive,
@@ -555,7 +440,7 @@ fn run_engine(
     // was still present, so it could fall back to the system default on an
     // unplug. Enumerating devices costs hundreds of milliseconds per call
     // (cpal activates each device as the list is walked), and running that on
-    // this thread - which both plays the sound and emits the UI event -
+    // this thread - which plays every keystroke -
     // stalled keystrokes by up to several seconds. That automatic fallback is
     // gone by product decision: unplugging the selected device now simply goes
     // quiet, the config keeps the selection, and the user reselects a device in
@@ -566,7 +451,7 @@ fn run_engine(
             recv(cmd_rx) -> msg => {
                 match msg {
                     Ok(command) => {
-                        handle_command(&mut state, &event_tx, command);
+                        handle_command(&cmd_tx, &mut state, command);
                     }
                     Err(_) => break, // sender dropped, app is shutting down
                 }
@@ -574,12 +459,7 @@ fn run_engine(
             recv(keyboard_rx) -> msg => {
                 if let Ok(raw) = msg {
                     if let Some((code, down)) = parse_input_event(&raw) {
-                        crate::libs::trace::record(crate::libs::trace::Point::EngineDequeue, &code, 0.0);
-                        crate::libs::trace::time(crate::libs::trace::Point::PlayedSound, &code, || {
-                            state.handle_key_event(&code, down);
-                        });
-                        crate::libs::trace::record(crate::libs::trace::Point::UiEventSent, &code, 0.0);
-                        let _ = event_tx.send(if down { UiEvent::KeyDown(code) } else { UiEvent::KeyUp(code) });
+                        state.handle_key_event(&code, down);
                     }
                 }
             }
@@ -659,7 +539,26 @@ mod tests {
         // the only way playback moves between devices.
         assert!(runtime_source().contains("AudioCommand::SwitchDevice"));
         assert!(runtime_source().contains("fn switch_device"));
-        assert!(runtime_source().contains("UiEvent::DeviceSwitched"));
+    }
+
+    #[test]
+    fn no_per_event_code_path_logs() {
+        // The keystroke handler must stay silent: logging per keystroke is
+        // both a latency cost and a privacy leak (the buffer is shown in
+        // Settings). This pins that on the engine source itself.
+        let logging = ["always_print!", "always_eprint!"];
+        for handler in ["fn handle_key_event("] {
+            let body = runtime_source()
+                .split(handler)
+                .nth(1)
+                .expect("handler must exist")
+                .split("\n    fn ")
+                .next()
+                .unwrap();
+            for macro_name in logging {
+                assert!(!body.contains(macro_name));
+            }
+        }
     }
 
     #[test]

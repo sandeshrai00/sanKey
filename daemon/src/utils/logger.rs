@@ -1,36 +1,3 @@
-/// Logs to console and to the in-RAM ring buffer shown in Settings > Debug.
-pub fn init_debug_logging() {
-    crate::always_print!("🐛 Debug logging enabled");
-}
-pub fn is_debug_enabled() -> bool {
-    true
-}
-
-/// Debug print — only when debug is enabled.
-#[macro_export]
-macro_rules! debug_print {
-    ($($arg:tt)*) => {
-        if $crate::utils::logger::is_debug_enabled() {
-            // format once, then tee to console and buffer
-            let line = format!($($arg)*);
-            println!("{}", line);
-            $crate::utils::log_buffer::push(&line);
-        }
-    };
-}
-
-/// Debug error print — only when debug is enabled.
-#[macro_export]
-macro_rules! debug_eprint {
-    ($($arg:tt)*) => {
-        if $crate::utils::logger::is_debug_enabled() {
-            let line = format!($($arg)*);
-            eprintln!("{}", line);
-            $crate::utils::log_buffer::push(&line);
-        }
-    };
-}
-
 /// Always prints, regardless of debug state.
 #[macro_export]
 macro_rules! always_print {

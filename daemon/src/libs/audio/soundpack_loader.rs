@@ -1,12 +1,26 @@
 use crate::state::paths;
 use crate::state::soundpack::SoundPack;
 use crate::state::soundpack::{ SoundpackCache, SoundpackMetadata };
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::engine::EngineState;
+use super::engine::{ KeySegments, Segment };
 
 /// (samples, channels, sample_rate) for a decoded buffer.
 type DecodedAudio = (Arc<Vec<f32>>, u16, u32);
+
+/// A fully decoded soundpack: original (native-rate) audio per key + the
+/// precomputed, fade-applied segments at the device rate. `None` segments are
+/// keys the pack does not define. `Send` so the worker thread can produce it
+/// off the engine thread.
+pub(crate) struct LoadedPack {
+    pub(super) soundpack: SoundPack,
+    pub(super) soundpack_path: String,
+    /// Native-rate audio for each key (single packs: the shared file), kept
+    /// so a device switch can re-resample without re-reading from disk.
+    pub(super) originals: HashMap<String, DecodedAudio>,
+    pub(super) segments: HashMap<String, KeySegments>,
+}
 
 /// Loads and decodes a soundpack's audio file, then resamples it to
 /// `device_rate` if given. Returns `(original, resampled)`; `original` keeps
@@ -144,86 +158,26 @@ fn create_soundpack_metadata(
         description: soundpack.description.clone(),
         version: soundpack.version.clone().unwrap_or_else(|| "1.0".to_string()),
         tags: soundpack.tags.clone().unwrap_or_default(),
-        icon: {
-            // Generate dynamic URL for icon instead of base64 conversion
-            if let Some(icon_filename) = &soundpack.icon {
-                let icon_path = format!("{}/{}", soundpack_path, icon_filename);
-                if std::path::Path::new(&icon_path).exists() {
-                    // Create dynamic URL that will be served by the asset handler
-                    Some(format!("/soundpack-images/{}/{}", id, icon_filename))
-                } else {
-                    Some(String::new()) // Empty string if icon file not found
-                }
-            } else {
-                Some(String::new()) // Empty string if no icon specified
-            }
-        },
-        soundpack_type: soundpack.soundpack_type.clone(), 
+        icon: soundpack.icon.clone(),
         folder_path: id, // Use the derived folder path for loading
         last_modified,
-        last_accessed: std::time::SystemTime
-            ::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(), // Add validation fields with default values
+        // Add validation fields with default values
         config_version: Some(soundpack.config_version_num),
         is_valid_v2: true, // Assume valid since it loaded successfully
         validation_status: "valid".to_string(),
-        can_be_converted: false,
         // Error tracking - None since we successfully created metadata
         last_error: None,
     })
 }
 
-fn create_key_mappings(
-    soundpack: &SoundPack,
-) -> std::collections::HashMap<String, Vec<(f64, f64)>> {
-    let mut key_mappings = std::collections::HashMap::new();
-    for (key, key_def) in &soundpack.definitions {
-        let converted_mappings: Vec<(f64, f64)> = key_def.timing
-            .iter()
-            .map(|pair| (pair[0] as f64, pair[1] as f64))
-            .collect();
-        key_mappings.insert(key.clone(), converted_mappings);
-    }
-    key_mappings
-}
-
-/// Loads a keyboard soundpack directly into engine-owned state (Phase 3).
-/// Mirrors `load_keyboard_soundpack_optimized` but writes to `EngineState`
-/// fields instead of an `&AudioContext`, since the engine thread owns its
-/// data as plain fields rather than `Arc<Mutex<...>>`.
-pub(super) fn load_keyboard_pack_into_engine(
-    state: &mut EngineState,
-    soundpack_id: &str,
-    update_cache_on_error: bool
-) -> Result<String, String> {
+/// Pure decode of a soundpack's audio — safe to run on any thread. No
+/// resampling, no cache writes, no engine state: the result is handed to the
+/// engine thread which prepares it at the device's rate.
+pub(super) fn load_pack(soundpack_id: &str) -> Result<LoadedPack, String> {
     if soundpack_id.is_empty() {
         return Err("empty soundpack ID".to_string());
     }
 
-    match load_keyboard_pack_into_engine_inner(state, soundpack_id) {
-        Ok(name) => Ok(name),
-        Err(e) => {
-            if update_cache_on_error {
-                capture_soundpack_loading_error(soundpack_id, &e);
-            }
-            Err(e)
-        }
-    }
-}
-
-fn load_keyboard_pack_into_engine_inner(
-    state: &mut EngineState,
-    soundpack_id: &str
-) -> Result<String, String> {
-    // free old audio first so peak stays low
-    let _old_kb = state.keyboard_samples.take();
-    let _old_orig = state.keyboard_samples_original.take();
-    drop(_old_kb);
-    drop(_old_orig);
-    state.multi_key_audio.clear();
-    state.multi_key_audio_map.clear();
     let soundpack_path = paths::soundpacks::soundpack_dir(soundpack_id);
     let config_path = paths::soundpacks::config_json(soundpack_id);
     let config_content = std::fs
@@ -233,40 +187,34 @@ fn load_keyboard_pack_into_engine_inner(
         ::from_str(&config_content)
         .map_err(|e| format!("Failed to parse V2 soundpack config: {}", e))?;
 
+    let mut originals: HashMap<String, DecodedAudio> = HashMap::new();
     if soundpack.definition_method == "multi" {
-        // Multi-method: load each unique per-key audio file once, cache them.
-        // Build map: key -> audio_file and collect unique audio files.
-        let mut key_audio_file: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        let mut unique_audio_files: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // Multi-method: decode each unique per-key audio file once.
+        let mut file_cache: HashMap<String, DecodedAudio> = HashMap::new();
         for (key, key_def) in &soundpack.definitions {
-            if let Some(audio_file) = &key_def.audio_file {
-                key_audio_file.insert(key.clone(), audio_file.clone());
-                unique_audio_files.insert(audio_file.clone());
+            let audio_file = match &key_def.audio_file {
+                Some(f) => f,
+                None => continue,
+            };
+            if let Some(cached) = file_cache.get(audio_file) {
+                originals.insert(key.clone(), cached.clone());
+                continue;
             }
-        }
-
-        // Load each unique audio file once
-        let mut multi_key_audio: std::collections::HashMap<String, super::engine::MultiKeyAudio>
-            = std::collections::HashMap::new();
-        for audio_file in unique_audio_files {
             let sanitized = audio_file.trim_start_matches("./").replace('\\', "/");
             if sanitized.contains("..") || sanitized.contains('\0') || sanitized.starts_with('/') {
                 crate::always_eprint!("⚠️ [Engine] Skipping invalid per-key audio path '{}'", audio_file);
                 continue;
             }
             let file_path = format!("{}/{}", soundpack_path, sanitized);
-            match load_audio_file_for_path(&file_path, state.device_rate) {
-                Ok((_original, resampled)) => {
-                    let (samples, channels, sample_rate) = resampled;
-                    multi_key_audio.insert(audio_file.clone(), super::engine::MultiKeyAudio {
-                        samples,
-                        channels,
-                        sample_rate,
-                    });
+            match load_audio_file_for_path(&file_path, None) {
+                Ok((original, _resampled)) => {
+                    let (_samples, channels, sample_rate) = &original;
                     crate::always_print!(
                         "✅ [Engine] Loaded multi-method audio file '{}' ({}Hz, {}ch)",
                         audio_file, sample_rate, channels
                     );
+                    file_cache.insert(audio_file.clone(), original.clone());
+                    originals.insert(key.clone(), original);
                 }
                 Err(e) => {
                     crate::always_eprint!(
@@ -276,56 +224,119 @@ fn load_keyboard_pack_into_engine_inner(
                 }
             }
         }
-
-        // Build key_mappings from definitions
-        let key_mappings = create_key_mappings(&soundpack);
-
-        state.key_map.clear();
-        for (key, mappings) in key_mappings {
-            let converted: Vec<[f32; 2]> = mappings
-                .into_iter()
-                .map(|(start, end)| [start as f32, end as f32])
-                .collect();
-            state.key_map.insert(key.clone(), converted);
-        }
-
-        state.multi_key_audio = multi_key_audio;
-        state.multi_key_audio_map = key_audio_file;
-        state.keyboard_samples = None;
-        state.keyboard_samples_original = None;
     } else {
-        // Single-method: load the shared audio file
-        let (original, resampled) = load_audio_file(&soundpack_path, &soundpack, state.device_rate)?;
-        let key_mappings = create_key_mappings(&soundpack);
-
-        let (audio_samples, channels, sample_rate) = resampled;
-        state.keyboard_samples = Some((audio_samples, channels, sample_rate));
-        let (orig_samples, orig_channels, orig_rate) = original;
-        state.keyboard_samples_original = Some((orig_samples, orig_channels, orig_rate));
-
-        state.key_map.clear();
-        for (key, mappings) in key_mappings {
-            let converted: Vec<[f32; 2]> = mappings
-                .into_iter()
-                .map(|(start, end)| [start as f32, end as f32])
-                .collect();
-            state.key_map.insert(key, converted);
+        // Single-method: one shared audio file for every key.
+        let (original, _resampled) = load_audio_file(&soundpack_path, &soundpack, None)?;
+        for key in soundpack.definitions.keys() {
+            originals.insert(key.clone(), original.clone());
         }
     }
 
-    state.key_sinks.clear();
-    // give freed pages back to the OS
-    unsafe { libc::malloc_trim(0); }
+    crate::always_print!("✅ [Engine] Decoded keyboard soundpack: {}", soundpack.name);
+    Ok(LoadedPack {
+        soundpack,
+        soundpack_path,
+        originals,
+        segments: HashMap::new(),
+    })
+}
 
-    update_soundpack_cache(&soundpack_path, &soundpack, soundpack_id);
-    crate::always_print!("✅ [Engine] Loaded keyboard soundpack: {}", soundpack.name);
-    Ok(soundpack.name)
+/// Decode + resample + precompute in one shot, safe to run on any thread.
+/// The engine thread only swaps the result in, so a keystroke is never
+/// queued behind a pack load.
+pub(super) fn load_pack_prepared(soundpack_id: &str, device_rate: Option<u32>) -> Result<LoadedPack, String> {
+    let pack = load_pack(soundpack_id)?;
+    match device_rate {
+        Some(rate) => Ok(prepare_pack_segments(pack, rate)),
+        None => Ok(pack),
+    }
+}
+
+/// Resamples the pack's native-rate audio to `device_rate` and slices +
+/// fades the (press, release) segment for every key. Called from the load
+/// worker thread (or at startup); takes the pack by value and moves its
+/// buffers into the result (no full-buffer clone).
+pub(super) fn prepare_pack_segments(pack: LoadedPack, device_rate: u32) -> LoadedPack {
+    let mut segments: HashMap<String, KeySegments> = HashMap::with_capacity(pack.originals.len());
+    // Resample each unique buffer once: single-method packs share one Arc
+    // across every key, multi-method packs one per audio file. Keyed by the
+    // buffer's allocation pointer so shared buffers resample exactly once.
+    let mut resample_cache: HashMap<*const f32, (Arc<Vec<f32>>, u32)> = HashMap::new();
+
+    for (key, def) in &pack.soundpack.definitions {
+        let (samples, channels, file_rate) = match pack.originals.get(key) {
+            Some(d) => d,
+            None => continue,
+        };
+        let (base, base_rate) = if *file_rate != device_rate {
+            let ptr = samples.as_ptr();
+            if let Some((cached, rate)) = resample_cache.get(&ptr) {
+                (cached.clone(), *rate)
+            } else {
+                let resampled = Arc::new(
+                    super::resampler::resample_interleaved(samples, *channels, *file_rate, device_rate)
+                );
+                crate::always_print!(
+                    "🔁 Resampled soundpack audio {}Hz -> {}Hz",
+                    file_rate, device_rate
+                );
+                resample_cache.insert(ptr, (resampled.clone(), device_rate));
+                (resampled, device_rate)
+            }
+        } else {
+            (samples.clone(), *file_rate)
+        };
+
+        let press = def.timing.first().and_then(|t| {
+            build_segment(&base, *channels, base_rate, t[0], t[1])
+        });
+        let release = def.timing.get(1).and_then(|t| {
+            build_segment(&base, *channels, base_rate, t[0], t[1])
+        });
+        segments.insert(key.clone(), (press, release));
+    }
+
+    LoadedPack {
+        soundpack: pack.soundpack,
+        soundpack_path: pack.soundpack_path,
+        originals: pack.originals,
+        segments,
+    }
+}
+
+/// Cuts the [start_ms, end_ms) slice out of `base` and pre-applies the fade.
+/// Returns `None` for malformed/empty segments (logged at load, not per
+/// keypress).
+fn build_segment(
+    base: &Arc<Vec<f32>>,
+    channels: u16,
+    sample_rate: u32,
+    start_ms: f32,
+    end_ms: f32
+) -> Option<Segment> {
+    let duration = end_ms - start_ms;
+    if start_ms < 0.0 || duration <= 0.0 {
+        return None;
+    }
+    let start_sample = ((start_ms / 1000.0) * (sample_rate as f32) * (channels as f32)) as usize;
+    let end_sample = ((end_ms / 1000.0) * (sample_rate as f32) * (channels as f32)) as usize;
+    let end_sample = end_sample.min(base.len());
+    if start_sample >= base.len() || end_sample <= start_sample {
+        crate::always_eprint!(
+            "⚠️ [Engine] Dropping invalid segment [start={}ms end={}ms] (buffer {} samples)",
+            start_ms, end_ms, base.len()
+        );
+        return None;
+    }
+    let mut segment_samples = base[start_sample..end_sample].to_vec();
+    super::engine::apply_fade(&mut segment_samples, channels, sample_rate);
+    Some((Arc::new(segment_samples), channels, sample_rate))
 }
 
 /// Update the soundpack cache after a successful load.
-fn update_soundpack_cache(soundpack_path: &str, soundpack: &SoundPack, soundpack_id: &str) {
+pub(super) fn update_soundpack_cache(pack: &LoadedPack, soundpack_id: &str) {
     let mut cache = SoundpackCache::load();
-    match create_soundpack_metadata(soundpack_path, soundpack) {
+    match create_soundpack_metadata(&pack.soundpack_path, &pack.soundpack) {
         Ok(metadata) => {
             cache.add_soundpack(metadata);
         }
@@ -337,7 +348,7 @@ fn update_soundpack_cache(soundpack_path: &str, soundpack: &SoundPack, soundpack
 }
 
 /// Capture soundpack loading error and update the cache
-fn capture_soundpack_loading_error(soundpack_id: &str, error: &str) {
+pub(super) fn capture_soundpack_loading_error(soundpack_id: &str, error: &str) {
     // Skip creating cache entries for empty soundpack IDs
     if soundpack_id.is_empty() {
         crate::always_print!("⚠️ Skipping cache entry for empty soundpack ID: {}", error);
@@ -363,18 +374,11 @@ fn capture_soundpack_loading_error(soundpack_id: &str, error: &str) {
             version: "unknown".to_string(),
             tags: vec!["error".to_string()],
             icon: None,
-            soundpack_type: crate::state::soundpack::SoundpackType::Keyboard,
             folder_path: soundpack_id.to_string(), // Add folder_path for error entries
             last_modified: 0,
-            last_accessed: std::time::SystemTime
-                ::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
             config_version: None,
             is_valid_v2: false,
             validation_status: "loading_error".to_string(),
-            can_be_converted: false,
             last_error: Some(error.to_string()),
         };
 

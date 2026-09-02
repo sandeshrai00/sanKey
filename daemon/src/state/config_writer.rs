@@ -56,11 +56,6 @@ pub fn apply(mutate: impl FnOnce(&mut AppConfig)) -> bool {
     changed
 }
 
-/// How many config writes have happened.
-pub fn generation() -> u64 {
-    GENERATION.load(Ordering::Acquire)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,8 +249,7 @@ mod tests {
                             0 => apply(|config| { config.volume = 0.5; }),
                             1 => apply(|config| { config.volume = 0.25; }),
                             2 => apply(|config| { config.enable_sound = false; }),
-                            3 => apply(|config| { config.enable_keyboard_sound = false; }),
-                            4 => apply(|config| { config.per_pack_volume.insert("keyboard/test".to_string(), 0.5); }),
+                            3 => apply(|config| { config.per_pack_volume.insert("keyboard/test".to_string(), 0.5); }),
                             5 => apply(|config| { config.auto_start = true; }),
                             6 => apply(|config| { config.keyboard_soundpack = "keyboard/test".to_string(); }),
                             _ => apply(|config| { config.selected_audio_device = Some("test".to_string()); }),
@@ -273,7 +267,7 @@ mod tests {
         apply(|config| { *config = original; });
         // At least one writer's effect must be present; exact values race but no panic proves compose
         assert!(final_config.volume == 0.5 || final_config.volume == 0.25);
-        assert!(!final_config.enable_sound || !final_config.enable_keyboard_sound || final_config.auto_start || true);
+        assert!(!final_config.enable_sound || final_config.auto_start || true);
     }
 
     /// Reader never sees a truncated document.

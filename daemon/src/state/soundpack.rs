@@ -4,17 +4,8 @@ use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
 use std::path::Path;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub enum SoundpackType {
-    Keyboard,
-}
-
 fn default_config_version() -> u32 {
     2
-}
-
-fn default_soundpack_type() -> SoundpackType {
-    SoundpackType::Keyboard
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -75,16 +66,10 @@ pub struct SoundPack {
     pub definition_method: String, // "single" or "multi"
     #[serde(default)]
     pub options: SoundpackOptions,
-    #[serde(default = "default_soundpack_type")]
-    pub soundpack_type: SoundpackType, // Type of soundpack (always Keyboard) - for internal use
     #[serde(default = "default_config_version")]
     pub config_version_num: u32, // Internal config version number
     pub definitions: HashMap<String, KeyDefinition>,
 }
-
-impl SoundPack {}
-
-impl SoundpackType {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SoundpackMetadata {
@@ -95,17 +80,12 @@ pub struct SoundpackMetadata {
     pub version: String,
     pub tags: Vec<String>,
     pub icon: Option<String>,
-    #[serde(default = "default_soundpack_type")]
-    pub soundpack_type: SoundpackType, // Type of soundpack (always Keyboard)
-    #[serde(default)]
     pub folder_path: String, // Relative path from soundpacks directory (e.g., "keyboard/Super Paper Mario Talk")
     pub last_modified: u64,
-    pub last_accessed: u64,
     // Validation fields
     pub config_version: Option<u32>,
     pub is_valid_v2: bool,
     pub validation_status: String,
-    pub can_be_converted: bool,
     // Error tracking
     #[serde(default)]
     pub last_error: Option<String>,
@@ -117,12 +97,7 @@ pub struct SoundpackCache {
     pub last_scan: u64,
     pub cache_version: u32,
     #[serde(default)]
-    pub count: SoundpackCount,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SoundpackCount {
-    pub keyboard: usize,
+    pub count: usize,
 }
 
 impl SoundpackCache {
@@ -161,7 +136,7 @@ impl SoundpackCache {
             soundpacks: HashMap::new(),
             last_scan: 0,
             cache_version: 4,
-            count: SoundpackCount::default(),
+            count: 0,
         }
     }
 
@@ -210,13 +185,9 @@ impl SoundpackCache {
     }
 
     pub fn update_count(&mut self) {
-        let keyboard_count = self.soundpacks
-            .values()
-            .filter(|m| m.soundpack_type == SoundpackType::Keyboard)
-            .count();
-        self.count.keyboard = keyboard_count;
+        self.count = self.soundpacks.len();
 
-        crate::always_print!("📊 Updated count: {} keyboard soundpacks", keyboard_count);
+        crate::always_print!("📊 Updated count: {} soundpacks", self.count);
     }
 
     fn scan_soundpack_type(&mut self, soundpacks_dir: &str, soundpack_type: &str) {
@@ -277,7 +248,6 @@ impl SoundpackCache {
         soundpack_name: &str,
         error: String
     ) {
-        let soundpack_type = SoundpackType::Keyboard;
         let error_metadata = SoundpackMetadata {
             id: full_soundpack_id.to_string(),
             name: format!("Error: {}", soundpack_name),
@@ -286,14 +256,11 @@ impl SoundpackCache {
             version: "unknown".to_string(),
             tags: vec!["error".to_string()],
             icon: None,
-            soundpack_type,
             folder_path: full_soundpack_id.to_string(),
             last_modified: 0,
-            last_accessed: 0,
             config_version: None,
             is_valid_v2: false,
             validation_status: "error".to_string(),
-            can_be_converted: false,
             last_error: Some(error),
         };
         self.soundpacks.insert(full_soundpack_id.to_string(), error_metadata);

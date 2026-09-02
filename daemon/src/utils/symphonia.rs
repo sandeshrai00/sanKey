@@ -43,14 +43,23 @@ pub fn decode_interleaved(path: &str) -> Result<(Vec<f32>, u16, u32), String> {
     loop {
         let packet = match format.next_packet() {
             Ok(p) => p,
-            Err(_) => break,
+            Err(e) => {
+                // Truncated/corrupt packets used to be eaten silently, leaving
+                // audio shorter than its own timing says (see engine
+                // "start sample past end" spam).
+                crate::always_eprint!("⚠️  symphonia: read error in '{}': {}", path, e);
+                break;
+            }
         };
         if packet.track_id() != track_id {
             continue;
         }
         let decoded = match decoder.decode(&packet) {
             Ok(d) => d,
-            Err(_) => continue,
+            Err(e) => {
+                crate::always_eprint!("⚠️  symphonia: decode error in '{}': {}", path, e);
+                continue;
+            }
         };
         if buf.is_none() {
             let spec = *decoded.spec();

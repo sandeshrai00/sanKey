@@ -8,10 +8,18 @@ permissions:
   attestations: write
 jobs:
   build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64
+            target: aarch64-unknown-linux-gnu
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Validate release identity
+        if: matrix.arch == 'x86_64'
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -20,24 +28,53 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.87"
+          targets: ${{ matrix.target }}
           components: rustfmt, clippy
       - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libevdev-dev libxtst-dev libxi-dev pkg-config libgtk-4-dev
-      - name: Build sorakey x86_64
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libevdev-dev libxtst-dev libxi-dev pkg-config
+      - name: Install aarch64 cross toolchain
+        if: matrix.arch == 'aarch64'
         run: |
-          cargo build --locked --release --manifest-path daemon/Cargo.toml
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "target-aarch64-unknown-linux-gnu-linker=aarch64-linux-gnu-gcc" >> daemon/.cargo/config.toml
+      - name: Build sorakey ${{ matrix.arch }}
+        run: |
+          cargo build --locked --release --manifest-path daemon/Cargo.toml --target ${{ matrix.target }}
           mkdir -p dist
-          cp daemon/target/release/sorakey dist/sorakey-x86_64
-          (cd dist && sha256sum sorakey-x86_64 > SHA256SUMS)
-          cat dist/SHA256SUMS
+          cp daemon/target/${{ matrix.target }}/release/sorakey dist/sorakey-${{ matrix.arch }}
+          (cd dist && sha256sum sorakey-${{ matrix.arch }} > SHA256SUMS-${{ matrix.arch }})
+          cat dist/SHA256SUMS-${{ matrix.arch }}
       - name: Attest binary
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: "dist/sorakey-x86_64"
+          subject-path: "dist/sorakey-${{ matrix.arch }}"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sorakey-${{ matrix.arch }}
+          path: |
+            dist/sorakey-${{ matrix.arch }}
+            dist/SHA256SUMS-${{ matrix.arch }}
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Merge SHA256SUMS
+        run: |
+          cat dist/sorakey-*/SHA256SUMS-x86_64 dist/sorakey-*/SHA256SUMS-aarch64 > dist/SHA256SUMS
+          sed -i 's|dist/||g' dist/SHA256SUMS
+          sort -u -o dist/SHA256SUMS dist/SHA256SUMS
+          cat dist/SHA256SUMS
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/sorakey-x86_64
+            dist/sorakey-x86_64/sorakey-x86_64
+            dist/sorakey-aarch64/sorakey-aarch64
             dist/SHA256SUMS
           generate_release_notes: true

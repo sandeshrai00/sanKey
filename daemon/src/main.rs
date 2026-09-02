@@ -16,8 +16,6 @@ fn main() {
         std::process::exit(control::ctl_client(request));
     }
 
-    env_logger::init();
-
     // Only one instance — two would double-play every keystroke.
     let _lock = match acquire_lock() {
         Some(f) => f,
@@ -48,9 +46,19 @@ fn main() {
 
 /// Exclusive lock file — kernel releases it on exit or crash.
 fn acquire_lock() -> Option<std::fs::File> {
-    let dir = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    let path = std::path::PathBuf::from(dir).join("sorakey.lock");
-    let file = std::fs::OpenOptions::new().create(true).write(true).open(&path).ok()?;
+    let path = std::env::var("XDG_RUNTIME_DIR")
+        .map(|dir| std::path::PathBuf::from(dir).join("sorakey.lock"))
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(
+                std::env::var("HOME").unwrap_or_else(|_| ".".into()),
+            )
+            .join(".sorakey.lock")
+        });
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&path)
+        .ok()?;
     let fd = std::os::unix::io::AsRawFd::as_raw_fd(&file);
     let acquired = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) == 0 };
     if acquired {

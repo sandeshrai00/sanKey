@@ -64,13 +64,15 @@ Panel {
   property real perPackVolume: 100
   property string deleteConfirmId: ""
   property bool deleting: false
-  property string deleteToast: ""
-  Timer { id: clearDeleteToast; interval: 3000; onTriggered: root.deleteToast = "" }
+  property string errorToast: ""
+  property string pendingCtlCmd: ""
+  Timer { id: clearErrorToast; interval: 5000; onTriggered: root.errorToast = "" }
 
   readonly property string statusText: {
     if (setupBusy) return "Installing…"
     if (!root.installed) return "Not installed"
     if (!root.running) return "Stopped"
+    if (root.keyboardPack === "" && root.keyboardPacks.length === 0) return "No soundpack"
     return root.muted ? "Muted" : "Playing"
   }
 
@@ -91,6 +93,7 @@ Panel {
   function sendCtl(obj) {
     if (!root.installed) return
     if (ctlProc.running) return
+    pendingCtlCmd = String(obj && obj.cmd ? obj.cmd : "")
     ctlProc.command = [root.sorakeyBin, "ctl", JSON.stringify(obj)]
     ctlProc.running = true
   }
@@ -122,6 +125,11 @@ Panel {
     else root.sendCtl({ cmd: "volume", value: v })
   }
 
+  function resetVolume() {
+    if (!root.keyboardPack) return
+    root.sendCtl({ cmd: "reset_volume", id: root.keyboardPack })
+  }
+
   function deletePack(id) {
     if (!id || root.deleting) return
     root.deleting = true
@@ -136,9 +144,25 @@ Panel {
     if (pick) root.setKeyboardPack(pick)
   }
 
-  function startDaemon() { root.runService(["start", "sorakey"]) }
-  function stopDaemon()  { root.runService(["stop", "sorakey"]) }
-  function restartDaemon() { root.runService(["restart", "sorakey"]) }
+  function startDaemon() {
+    if (stopFlagProc.running) return
+    stopFlagProc.command = ["/usr/bin/bash", "-c", "rm -f " + root.home + "/.local/share/sorakey/stopped"]
+    stopFlagProc.running = true
+    root.runService(["start", "sorakey"])
+  }
+  function stopDaemon() {
+    // sticky stop — Service must not auto-restart what the user stopped
+    if (stopFlagProc.running) return
+    stopFlagProc.command = ["/usr/bin/bash", "-c", "mkdir -p " + root.home + "/.local/share/sorakey && printf stopped > " + root.home + "/.local/share/sorakey/stopped"]
+    stopFlagProc.running = true
+    root.runService(["stop", "sorakey"])
+  }
+  function restartDaemon() {
+    if (stopFlagProc.running) return
+    stopFlagProc.command = ["/usr/bin/bash", "-c", "rm -f " + root.home + "/.local/share/sorakey/stopped"]
+    stopFlagProc.running = true
+    root.runService(["restart", "sorakey"])
+  }
   function doUpdate() { if (root.updateBusy) return; root.updateBusy=true; root.updateStatus="Updating…"; updateProc.command=["omarchy","plugin","update","io.github.sandeshrai00.sorakey","--yes"]; updateProc.running=true }
 
   function install() {
@@ -171,9 +195,7 @@ Panel {
     Quickshell.execDetached(["omarchy","plugin","enable","io.github.sandeshrai00.sorakey","--section",section])
     // save choice — Omarchy resets to right on re-enable
     if (!sectionWrite.running) {
-      sectionWrite.command = ["/bin/sh", "-c",
-        "mkdir -p " + root.home + "/.local/share/sorakey && printf %s " + section +
-        " > " + root.home + "/.local/share/sorakey/bar-section"]
+      sectionWrite.command = ["~/.local/bin/sorakey", "ctl", "{\"cmd\":\"set_bar_section\",\"section\":\"" + section + "\"}"]
       sectionWrite.running = true
     }
   }
@@ -181,12 +203,14 @@ Panel {
   // restore saved bar section
   Process {
     id: sectionRead
-    command: ["/bin/sh", "-c", "cat " + root.home + "/.local/share/sorakey/bar-section 2>/dev/null"]
+    command: ["~/.local/bin/sorakey", "ctl", "{\"cmd\":\"get_bar_section\"}"]
     stdout: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
-      var saved = String(stdout.text || "").trim()
-      if (exitCode === 0 && saved && saved !== root.currentBarSection)
-        root.moveToSection(saved)
+      try {
+        var resp = JSON.parse(String(stdout.text || "").trim())
+        if (resp.ok && resp.section && resp.section !== root.currentBarSection)
+          root.moveToSection(resp.section)
+      } catch(e) {}
     }
   }
 
@@ -211,12 +235,9 @@ Panel {
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       root.updateBusy = false
-      var out = String(stdout.text || "").trim()
       var err = String(stderr.text || "").trim()
-      if (out.indexOf("is up to date") !== -1) root.updateStatus = "Up to date."
-      else if (out.indexOf("Updated") !== -1) root.updateStatus = "Updated."
-      else if (exitCode !== 0) root.updateStatus = err !== "" ? err.split("\n").pop() : "Update failed."
-      else root.updateStatus = out !== "" ? out.split("\n").pop() : "Done."
+      if (exitCode === 0) root.updateStatus = String(stdout.text || "").trim().split("\n").pop()
+      else root.updateStatus = err !== "" ? err : "Update failed."
       clearUpdateTimer.restart()
     }
   }
@@ -284,12 +305,11 @@ Panel {
   }
 
   onOpenedChanged: {
-    if (root.opened) {
-      root.refreshStatus()
-      root.refreshPacks()
-      testType.text = ""
-      root.settingsOpen = false
-    }
+if (root.opened) {
+       root.refreshStatus()
+       root.refreshPacks()
+       root.settingsOpen = false
+     }
   }
 
   // Detect (re)install without a daemon: is the binary there?
@@ -346,15 +366,26 @@ Panel {
     command: [root.sorakeyBin, "ctl", "{}"]
     onExited: function() {
       root.refreshStatus()
+      // show ctl failures the daemon reports
+      if (stdout.text.indexOf("\"ok\":false") !== -1) {
+        try {
+          var e = JSON.parse(String(stdout.text || "").trim())
+          if (e && e.ok === false) {
+            root.errorToast = (root.pendingCtlCmd !== "" ? root.pendingCtlCmd + ": " : "") + String(e.error || "command failed")
+            clearErrorToast.restart()
+          }
+        } catch(err) {}
+      }
+      root.pendingCtlCmd = ""
       if (root.deleting || (root.deleteConfirmId !== "" && stdout.text.indexOf("deleted") !== -1)) {
         try {
           var o = JSON.parse(String(stdout.text || "").trim())
           if (o && o.deleted) {
             var delPretty = Model.prettyPackName(String(o.deleted))
             var fb = o.fallback ? String(o.fallback) : ""
-            if (fb) root.deleteToast = "Deleted \"" + delPretty + "\" → \"" + Model.prettyPackName(fb) + "\""
-            else root.deleteToast = "Deleted \"" + delPretty + "\""
-            clearDeleteToast.restart()
+            if (fb) root.errorToast = "Deleted \"" + delPretty + "\" → \"" + Model.prettyPackName(fb) + "\""
+            else root.errorToast = "Deleted \"" + delPretty + "\""
+            clearErrorToast.restart()
           }
         } catch(e) {}
         root.refreshPacks()
@@ -368,6 +399,11 @@ Panel {
     command: ["true"]
     onExited: function() { root.refreshStatus() }
     stdout: StdioCollector { waitForEnd: true }
+  }
+
+  Process {
+    id: stopFlagProc
+    command: ["true"]
   }
 
   // runs sorakey-setup in background
@@ -385,15 +421,19 @@ Panel {
     }
   }
 
-  // poll when open
+  // poll when open: status every 5s, packs every 30s (packs change only on
+  // import/delete)
   Timer {
     interval: 5000
     repeat: true
     running: root.installed && root.opened
-    onTriggered: {
-      root.refreshStatus()
-      root.refreshPacks()
-    }
+    onTriggered: root.refreshStatus()
+  }
+  Timer {
+    interval: 30000
+    repeat: true
+    running: root.installed && root.opened
+    onTriggered: root.refreshPacks()
   }
   // light poll when closed
   Timer {
@@ -421,7 +461,7 @@ Panel {
     text: "󰌌"
     dimmed: !root.running
     active: root.running && root.muted
-    tooltipText: "Sorakey — " + root.statusText
+    tooltipText: "Sorakey — Playing\nRight-click: Mute\nCtrl+Alt+M: Global mute"
     onPressed: function(b) {
       if (b === Qt.RightButton) {
         if (root.running) root.setMuted(!root.muted)
@@ -513,6 +553,7 @@ Panel {
           ToggleSwitch {
             id: muteSwitch
             checked: root.running && !root.muted
+            enabled: root.running
             foreground: root.bar.foreground
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
@@ -665,15 +706,26 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
               }
               Item { width: 1 }
-              Text {
-                anchors.verticalCenter: parent.verticalCenter
-                text: Math.round(root.perPackVolume) + "%"
-                color: root.bar.foreground
-                opacity: 0.6
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-            }
+Text {
+                 anchors.verticalCenter: parent.verticalCenter
+                 text: Math.round(root.perPackVolume) + "%"
+                 color: root.bar.foreground
+                 opacity: 0.6
+                 font.family: root.bar.fontFamily
+                 font.pixelSize: Style.font.caption
+               }
+               Item { width: 1 }
+               Button {
+                 id: volumeResetButton
+                 text: ""
+                 iconText: "↺"
+                 foreground: root.bar.foreground
+                 opacity: 0.7
+                 enabled: root.running && root.keyboardPack !== ""
+                 tooltipText: "Reset to pack default"
+                 onClicked: root.resetVolume()
+               }
+             }
 
             Item {
               width: parent.width
@@ -701,6 +753,16 @@ Panel {
 
             PanelSectionHeader { text: "SOUNDPACKS"; foreground: root.bar.foreground }
 
+            Text {
+              visible: root.keyboardPack === "" && root.keyboardPacks.length === 0
+              width: parent.width
+              text: "Import a pack to get started"
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
             Row {
               width: parent.width
               spacing: Style.space(8)
@@ -715,7 +777,7 @@ Panel {
                 placeholderText: "Search packs…"
                 deleteConfirmId: root.deleteConfirmId
                 deleting: root.deleting
-                toast: root.deleteToast
+                toast: root.errorToast
                 onChanged: function(v) { root.setKeyboardPack(v) }
                 onDeleteRequested: function(v) { root.deleteConfirmId = v }
                 onConfirmDelete: function(v) { root.deletePack(v) }
@@ -770,28 +832,7 @@ Panel {
               wrapMode: Text.WordWrap
             }
 
-            // key tester
-            Column {
-              width: parent.width
-              spacing: Style.space(6)
-              PanelSectionHeader { text: "TEST TYPING"; foreground: root.bar.foreground }
-              TextField {
-                id: testType
-                width: parent.width
-                text: ""
-                placeholderText: "Click here and type — hear keys"
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-              Text {
-                width: parent.width
-                text: "Uses system listener, no extra process."
-                color: root.bar.foreground
-                opacity: 0.45
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-            }
+            // key tester removed: the daemon listens system-wide, a local TextField does nothing
           }
 
           PanelSeparator { foreground: root.bar.foreground }
@@ -816,32 +857,32 @@ Panel {
               foreground: root.bar.foreground
               bordered: true
               tooltipText: "Restart sorakey"
-              onClicked: root.restartDaemon()
-            }
+onClicked: root.restartDaemon()
+             }
 
-            Button {
-              id: updateButton
-              text: root.updateBusy ? "Updating…" : "Update"
-              iconText: root.updateBusy ? "⏳" : "󰚰"
-              foreground: root.bar.foreground
-              bordered: true
-              tooltipText: "Update Sorakey plugin"
-              enabled: !root.updateBusy
-              onClicked: root.doUpdate()
-            }
+             Item { width: 1; height: 1 }
 
-            Item { width: Math.max(0, parent.width - startStopButton.width - restartButton.width - updateButton.width - removeButton.width - parent.spacing*3 - Style.space(8)); height: 1 }
-
-            Button {
+             Button {
               id: removeButton
               text: ""
-              iconText: ""
+              iconText: "✕"
               foreground: root.bar.foreground
               opacity: 0.7
               tooltipText: "Uninstall"
-              onClicked: root.remove()
-            }
-          }
+onClicked: root.remove()
+             }
+           }
+
+           Text {
+             visible: root.errorToast !== ""
+             width: parent.width
+             text: root.errorToast
+             color: root.bar.foreground
+             opacity: 0.8
+             font.family: root.bar.fontFamily
+             font.pixelSize: Style.font.caption
+             wrapMode: Text.WordWrap
+           }
 
             Text {
               visible: root.updateStatus !== ""

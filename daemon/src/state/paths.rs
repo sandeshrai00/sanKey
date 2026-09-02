@@ -34,23 +34,6 @@ pub mod soundpacks {
     use std::path::{ Path, PathBuf };
     use std::sync::OnceLock;
 
-    pub const BUILTIN_SOUNDPACKS: &[&str] = &[
-        "keyboard/sankey-mx-black-abs",
-        "keyboard/sankey-mx-black-pbt",
-        "keyboard/sankey-mx-blue-abs",
-        "keyboard/sankey-mx-blue-pbt",
-        "keyboard/sankey-mx-brown-abs",
-        "keyboard/sankey-mx-brown-pbt",
-        "keyboard/sankey-mx-red-abs",
-        "keyboard/sankey-crystal-purple",
-        "keyboard/sankey-oreo",
-        "keyboard/sankey-topre-purple",
-    ];
-
-    pub fn is_builtin_soundpack(soundpack_id: &str) -> bool {
-        BUILTIN_SOUNDPACKS.contains(&soundpack_id)
-    }
-
     pub fn get_builtin_soundpacks_dir() -> PathBuf {
         static DIR: OnceLock<PathBuf> = OnceLock::new();
         DIR.get_or_init(|| data_dir().join("soundpacks")).clone()
@@ -82,9 +65,5 @@ pub mod soundpacks {
             .join("config.json")
             .to_string_lossy()
             .to_string()
-    }
-
-    pub fn get_soundpacks_dir() -> String {
-        get_builtin_soundpacks_dir().to_string_lossy().to_string()
     }
 }

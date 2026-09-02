@@ -1,4 +1,3 @@
-use crate::debug_print;
 use crate::state::paths;
 use crate::utils::{ data, path };
 use chrono::{ DateTime, Utc };
@@ -17,7 +16,6 @@ pub struct AppConfig {
     pub keyboard_soundpack: String,
     pub volume: f32,
     pub enable_sound: bool,
-    pub enable_keyboard_sound: bool,
     // Per-pack volume overrides (0.0-1.0 multiplier, 1.0 = pack's recommended_volume)
     #[serde(default)]
     pub per_pack_volume: HashMap<String, f32>,
@@ -116,7 +114,6 @@ impl AppConfig {
         self.keyboard_soundpack == other.keyboard_soundpack
             && self.volume == other.volume
             && self.enable_sound == other.enable_sound
-            && self.enable_keyboard_sound == other.enable_keyboard_sound
             && self.selected_audio_device == other.selected_audio_device
             && self.auto_start == other.auto_start
             && self.per_pack_volume == other.per_pack_volume
@@ -140,7 +137,7 @@ impl AppConfig {
             }
         }
 
-        debug_print!("📖 Loading config from: {}", config_path.display());
+        crate::always_print!("📖 Loading config from: {}", config_path.display());
 
         // read then parse — different errors, different handling
         let parsed = std::fs
@@ -256,8 +253,8 @@ impl AppConfig {
     /// Write config to disk — only via `config_writer::apply` outside this module.
     pub(in crate::state) fn save(&self) -> Result<(), String> {
         let config_path = paths::data::config_json();
-        debug_print!("💾 Saving config to: {}", config_path.display());
-        debug_print!("   keyboard_soundpack: {}", self.keyboard_soundpack);
+        crate::always_print!("💾 Saving config to: {}", config_path.display());
+        crate::always_print!("   keyboard_soundpack: {}", self.keyboard_soundpack);
         data::save_json_to_file_atomically(self, &config_path)
     }
 }
@@ -271,7 +268,6 @@ impl Default for AppConfig {
             keyboard_soundpack: "keyboard/sankey-oreo".to_string(),
             volume: 0.6,
             enable_sound: true,
-            enable_keyboard_sound: true,
             per_pack_volume: HashMap::new(),
             selected_audio_device: None,
             auto_start: false,

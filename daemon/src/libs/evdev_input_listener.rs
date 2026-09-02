@@ -1,5 +1,4 @@
 use std::thread;
-use std::time::Duration;
 
 #[cfg(target_os = "linux")]
 use crossbeam_channel::Sender;
@@ -11,14 +10,11 @@ pub fn start_evdev_keyboard_listener(
 ) {
     crate::always_print!("🔍 [evdev] start_evdev_keyboard_listener() called - spawning thread");
     thread::spawn(move || {
-        use evdev::{EventType, KeyCode};
+        use evdev::KeyCode;
 
         crate::always_print!("🔍 [evdev] Thread started - initializing keyboard listener");
         crate::always_print!("🔍 [evdev] Current user: {:?}", std::env::var("USER"));
         crate::always_print!("🔍 [evdev] Starting Linux keyboard listener (Wayland/X11 compatible)");
-
-        let mut ctrl_pressed = false;
-        let mut alt_pressed = false;
 
         let mut keyboards = Vec::new();
 
@@ -41,8 +37,7 @@ pub fn start_evdev_keyboard_listener(
             let is_keyboard = device.supported_keys().is_some_and(|k| k.contains(KeyCode::KEY_A));
             if is_keyboard {
                 crate::always_print!("🔍 [evdev] Found keyboard device: {:?} - {}", path.display(), device.name().unwrap_or("Unknown"));
-                let _ = device.set_nonblocking(true);
-                keyboards.push(device);
+                keyboards.push((path, device));
             } else {
                 crate::always_print!("🔍 [evdev] Skipping non-keyboard device: {:?}", path.display());
             }
@@ -55,86 +50,78 @@ pub fn start_evdev_keyboard_listener(
         }
 
         crate::always_print!("✅ [evdev] Successfully initialized {} keyboard device(s)", keyboards.len());
-        crate::always_print!("🔍 [evdev] Starting event monitoring loop...");
+        crate::always_print!("🔍 [evdev] Starting blocking event threads...");
 
-        let mut event_count = 0;
-        let mut first_event_logged = false;
+        // One blocking thread per keyboard: fetch_events blocks until the
+        // kernel delivers an event, so key-to-channel latency is ~0 instead
+        // of the old 20ms poll interval. Unplugged devices error out and the
+        // thread just exits (the kernel releases the fd).
+        for (path, mut device) in keyboards {
+            let keyboard_tx = keyboard_tx.clone();
+            let hotkey_tx = hotkey_tx.clone();
+            thread::spawn(move || {
+                use evdev::EventType;
 
-        loop {
-            let mut failed: Vec<usize> = Vec::new();
-            for (idx, device) in keyboards.iter_mut().enumerate() {
-                match device.fetch_events() {
-                    Ok(events) => {
-                        for event in events {
-                            if event.event_type() == EventType::KEY {
-                                event_count += 1;
-                                if !first_event_logged {
-                                    crate::always_print!("✅ [evdev] First keyboard event detected!");
-                                    first_event_logged = true;
-                                }
+                let mut ctrl_pressed = false;
+                let mut alt_pressed = false;
+                let mut event_count = 0;
+                let mut first_event_logged = false;
 
-                                let key_value = event.value();
+                loop {
+                    let mut events = match device.fetch_events() {
+                        Ok(e) => e,
+                        Err(e) => {
+                            crate::always_eprint!("⚠️ [evdev] Error on {}: {} - stopping thread", path.display(), e);
+                            break;
+                        }
+                    };
+                    for event in events.by_ref() {
+                        if event.event_type() != EventType::KEY {
+                            continue;
+                        }
+                        event_count += 1;
+                        if !first_event_logged {
+                            crate::always_print!("✅ [evdev] First keyboard event detected!");
+                            first_event_logged = true;
+                        }
 
-                                let key = KeyCode(event.code());
-                                let key_code = map_evdev_keycode(key);
-                                if !key_code.is_empty() {
-                                        if key_value == 1 {
-                                            match key_code {
-                                                "ControlLeft" | "ControlRight" => {
-                                                    ctrl_pressed = true;
-                                                }
-                                                "AltLeft" | "AltRight" => {
-                                                    alt_pressed = true;
-                                                }
-                                                "KeyM" => {
-                                                    if ctrl_pressed && alt_pressed {
-                                                        crate::always_print!("🔥 [evdev] Hotkey detected: Ctrl+Alt+M - Toggling global sound");
-                                                        let _ = hotkey_tx.send("TOGGLE_SOUND".to_string());
-                                                        continue;
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
+                        let key_value = event.value();
+                        let key = evdev::KeyCode(event.code());
+                        let key_code = map_evdev_keycode(key);
+                        if key_code.is_empty() {
+                            continue;
+                        }
 
-                                            if event_count <= 5 {
-                                                crate::always_print!("🔍 [evdev] Sending key press: {}", key_code);
-                                            }
-                                            let _ = keyboard_tx.send(key_code.to_string());
-                                        }
-                                        else if key_value == 0 {
-                                            match key_code {
-                                                "ControlLeft" | "ControlRight" => {
-                                                    ctrl_pressed = false;
-                                                }
-                                                "AltLeft" | "AltRight" => {
-                                                    alt_pressed = false;
-                                                }
-                                                _ => {}
-                                            }
-
-                                            let _ = keyboard_tx.send(format!("UP:{}", key_code));
-                                        }
+                        if key_value == 1 {
+                            match key_code {
+                                "ControlLeft" | "ControlRight" => ctrl_pressed = true,
+                                "AltLeft" | "AltRight" => alt_pressed = true,
+                                "KeyM" => {
+                                    if ctrl_pressed && alt_pressed {
+                                        crate::always_print!("🔥 [evdev] Hotkey detected: Ctrl+Alt+M - Toggling global sound");
+                                        let _ = hotkey_tx.send("TOGGLE_SOUND".to_string());
+                                        continue;
                                     }
+                                }
+                                _ => {}
                             }
+
+                            if event_count <= 5 {
+                                crate::always_print!("🔍 [evdev] Sending key press: {}", key_code);
+                            }
+                            let _ = keyboard_tx.send(key_code.to_string());
+                        } else if key_value == 0 {
+                            match key_code {
+                                "ControlLeft" | "ControlRight" => ctrl_pressed = false,
+                                "AltLeft" | "AltRight" => alt_pressed = false,
+                                _ => {}
+                            }
+
+                            let _ = keyboard_tx.send(format!("UP:{}", key_code));
                         }
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    }
-                    Err(e) => {
-                        crate::always_eprint!("⚠️ [evdev] Error on device {}: {} - removing", idx, e);
-                        failed.push(idx);
-                    }
                 }
-            }
-            for idx in failed.iter().rev() {
-                keyboards.remove(*idx);
-            }
-            if keyboards.is_empty() {
-                crate::always_eprint!("❌ [evdev] all devices removed, stopping");
-                break;
-            }
-
-            thread::sleep(Duration::from_millis(20));
+            });
         }
     });
 }

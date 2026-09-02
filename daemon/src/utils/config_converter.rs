@@ -90,8 +90,15 @@ pub fn convert_v1_to_v2(
         let mut seen_files = std::collections::HashSet::new();
 
         if let Some(defines) = config.get("defines").and_then(|d| d.as_object()) {
+            // Press before release, then numeric order. A bare code sort ties
+            // press "30" against its release "030", and HashMap iteration order
+            // then decided which file survived the dedupe below — random
+            // concatenation order per run.
             let mut sorted_keys: Vec<_> = defines.keys().collect();
-            sorted_keys.sort_by_key(|k| k.parse::<u32>().unwrap_or(0));
+            sorted_keys.sort_by_key(|k| {
+                let (num, is_press) = iohook_code_and_press(k).unwrap_or((u32::MAX, false));
+                (!is_press, num)
+            });
 
             for key in sorted_keys {
                 if let Some(value) = defines.get(key) {
@@ -328,153 +335,6 @@ pub fn convert_v1_to_v2(
     crate::always_print!("✅ Successfully converted V1 to V2 config");
     crate::always_print!("📁 Output written to: {}", output_path);
 
-    Ok(())
-}
-
-/// Convert V2 multi to single.
-pub fn convert_v2_multi_to_single(
-    config_path: &str,
-    soundpack_dir: &str
-) -> Result<(), Box<dyn std::error::Error>> {
-    crate::always_print!("🔄 Converting V2 multi method to single method...");
-
-    let content = std::fs::read_to_string(config_path)?;
-    let mut config: Value = serde_json::from_str(&content)?;
-
-    if let Some(definition_method) = config.get("definition_method").and_then(|v| v.as_str()) {
-        if definition_method == "single" {
-            crate::always_print!("✅ Already using single method, no conversion needed");
-            return Ok(());
-        }
-    }
-
-    crate::always_print!("🔧 Converting from multi method to single method");
-
-    let mut audio_file_usage = std::collections::HashMap::new();
-    if let Some(definitions) = config.get("definitions").and_then(|d| d.as_object()) {
-        for (key_name, key_def) in definitions {
-            if let Some(key_obj) = key_def.as_object() {
-                if let Some(audio_file) = key_obj.get("audio_file").and_then(|v| v.as_str()) {
-                    *audio_file_usage.entry(audio_file.to_string()).or_insert(0) += 1;
-                    crate::always_print!("🔍 Key '{}' uses audio file: {}", key_name, audio_file);
-                }
-            }
-        }
-    }
-    let main_audio_file = if
-        let Some((audio_file, count)) = audio_file_usage.iter().max_by_key(|(_, count)| *count)
-    {
-        crate::always_print!("🎵 Most used audio file: {} (used by {} keys)", audio_file, count);
-        audio_file.clone()
-    } else {
-        let audio_extensions = ["ogg", "mp3", "wav", "flac"];
-        let mut found_audio = None;
-
-        if let Ok(entries) = std::fs::read_dir(soundpack_dir) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                if let Some(filename) = entry.file_name().to_str() {
-                    let filename_lower = filename.to_lowercase();
-                    for ext in &audio_extensions {
-                        if filename_lower.ends_with(&format!(".{}", ext)) {
-                            found_audio = Some(filename.to_string());
-                            break;
-                        }
-                    }
-                    if found_audio.is_some() {
-                        break;
-                    }
-                }
-            }
-        }
-
-        found_audio.ok_or("No audio file found in soundpack directory")?
-    };
-
-    crate::always_print!("🎵 Using main audio file for single method: {}", main_audio_file);
-
-    config
-        .as_object_mut()
-        .unwrap()
-        .insert("definition_method".to_string(), Value::String("single".to_string()));
-
-    config
-        .as_object_mut()
-        .unwrap()
-        .insert("audio_file".to_string(), Value::String(main_audio_file.clone()));
-
-    if
-        let Some(definitions) = config
-            .get("definitions")
-            .and_then(|d| d.as_object())
-            .cloned()
-    {
-        let mut new_definitions = serde_json::Map::new();
-
-        for (key_name, key_def) in definitions {
-            if let Some(key_obj) = key_def.as_object() {
-                let mut new_key_def = serde_json::Map::new();
-
-                let key_audio_file = key_obj
-                    .get("audio_file")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                if key_audio_file == main_audio_file {
-                    if let Some(timing) = key_obj.get("timing") {
-                        new_key_def.insert("timing".to_string(), timing.clone());
-                        crate::always_print!("✅ Key '{}' kept timing (uses main audio file)", key_name);
-                    } else {
-                        let audio_path = format!("{}/{}", soundpack_dir, main_audio_file);
-                        let duration = get_audio_duration_ms(&audio_path).unwrap_or(100.0);
-
-                        let timing = vec![
-                            Value::Array(
-                                vec![
-                                    Value::Number(serde_json::Number::from_f64(0.0).unwrap()),
-                                    Value::Number(serde_json::Number::from_f64(duration).unwrap())
-                                ]
-                            )
-                        ];
-                        new_key_def.insert("timing".to_string(), Value::Array(timing));
-                        crate::always_print!("⚠️ Key '{}' got default timing (no timing specified)", key_name);
-                    }
-
-                    new_definitions.insert(key_name, Value::Object(new_key_def));
-                } else if !key_audio_file.is_empty() {
-                    crate::always_print!(
-                        "⚠️ Key '{}' uses different audio file '{}', skipping in single method conversion",
-                        key_name,
-                        key_audio_file
-                    );
-                } else {
-                    let audio_path = format!("{}/{}", soundpack_dir, main_audio_file);
-                    let duration = get_audio_duration_ms(&audio_path).unwrap_or(100.0);
-
-                    let timing = vec![
-                        Value::Array(
-                            vec![
-                                Value::Number(serde_json::Number::from_f64(0.0).unwrap()),
-                                Value::Number(serde_json::Number::from_f64(duration).unwrap())
-                            ]
-                        )
-                    ];
-                    new_key_def.insert("timing".to_string(), Value::Array(timing));
-                    crate::always_print!("⚠️ Key '{}' got default timing (no audio_file specified)", key_name);
-                    new_definitions.insert(key_name, Value::Object(new_key_def));
-                }
-            }
-        }
-
-        config
-            .as_object_mut()
-            .unwrap()
-            .insert("definitions".to_string(), Value::Object(new_definitions));
-    }
-
-    let output_json = serde_json::to_string_pretty(&config)?;
-    std::fs::write(config_path, output_json)?;
-
-    crate::always_print!("✅ Successfully converted to single method");
     Ok(())
 }
 
@@ -892,21 +752,24 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     mapping.insert(58444, "Clear".to_string()); // VC_CLEAR = 0xE04C (alternate)
     mapping.insert(58470, "IntlBackslash".to_string()); // VC_LESSER_GREATER = 0xE046
 
-    mapping.insert(3597, "NumLock".to_string()); // Alternative range
-    mapping.insert(3612, "NumpadDivide".to_string()); // Alternative range
-    mapping.insert(3613, "NumpadMultiply".to_string()); // Alternative range
-    mapping.insert(3639, "Numpad7".to_string()); // Alternative range
-    mapping.insert(3640, "Numpad8".to_string()); // Alternative range
-    mapping.insert(3653, "Numpad9".to_string()); // Alternative range
-    mapping.insert(3655, "NumpadAdd".to_string()); // Alternative range
-    mapping.insert(3657, "Numpad4".to_string()); // Alternative range
-    mapping.insert(3663, "Numpad5".to_string()); // Alternative range
-    mapping.insert(3665, "Numpad6".to_string()); // Alternative range
-    mapping.insert(3666, "Numpad1".to_string()); // Alternative range
-    mapping.insert(3667, "Numpad2".to_string()); // Alternative range
-    mapping.insert(3675, "Numpad3".to_string()); // Alternative range
-    mapping.insert(3676, "NumpadEnter".to_string()); // Alternative range
-    mapping.insert(3677, "Numpad0".to_string()); // Alternative range
+    // Alternative 0x0Exx extended-range codes some V1 packs use instead of the
+    // main block's (3637/3612/3597/3645 live in the main block). Values are
+    // copied from scripts/_v1_shared.py — the executed source of truth — so
+    // the two conversion paths agree. The old "Alternative range" block
+    // corrupted 3597/3612/3640 by overwriting them with numpad names; the
+    // parity test now pins both tables to stay identical.
+    mapping.insert(3613, "ControlRight".to_string()); // ControlRight alt
+    mapping.insert(3639, "Numpad7".to_string()); // Numpad7 alt
+    mapping.insert(3640, "AltRight".to_string()); // AltRight alt
+    mapping.insert(3653, "Numpad9".to_string()); // Numpad9 alt
+    mapping.insert(3655, "NumpadAdd".to_string()); // NumpadAdd alt
+    mapping.insert(3657, "Numpad4".to_string()); // Numpad4 alt
+    mapping.insert(3663, "Numpad5".to_string()); // Numpad5 alt
+    mapping.insert(3665, "Numpad6".to_string()); // Numpad6 alt
+    mapping.insert(3666, "Numpad1".to_string()); // Numpad1 alt
+    mapping.insert(3667, "Numpad2".to_string()); // Numpad2 alt
+    mapping.insert(3675, "NumpadDecimal".to_string()); // NumpadDecimal alt
+    mapping.insert(3676, "Numpad0".to_string()); // Numpad0 alt
 
     mapping.insert(60999, "Insert".to_string()); // V1 compatibility
     mapping.insert(61000, "Delete".to_string()); // V1 compatibility
@@ -943,6 +806,87 @@ mod tests {
         back_up_existing_file, concatenate_audio_files_with_timing, convert_audio_format,
         create_iohook_to_web_key_mapping,
     };
+
+    /// The 0x0Exx "alternative" codes must resolve to the same names the
+    /// Python importer produces (scripts/_v1_shared.py, executed
+    /// last-wins). This is what kept the two conversion paths in lockstep
+    /// before the "Alternative range" block silently overwrote 3597/3612/
+    /// 3613/3640 with wrong numpad names.
+    #[test]
+    fn v1_table_matches_the_python_importer_on_the_conflicting_codes() {
+        let m = create_iohook_to_web_key_mapping();
+        assert_eq!(m[&3597], "ControlRight");
+        assert_eq!(m[&3612], "NumpadEnter");
+        assert_eq!(m[&3613], "ControlRight");
+        assert_eq!(m[&3640], "AltRight");
+        assert_eq!(m[&3675], "NumpadDecimal");
+        assert_eq!(m[&3676], "Numpad0");
+        assert!(!m.contains_key(&3677), "3677 has no Python counterpart");
+    }
+
+    /// Full lockstep: every Rust entry must equal the Python final table.
+    /// Run with python3 available (dev machines and CI both have it).
+    #[test]
+    fn rust_v1_table_stays_in_lockstep_with_python() {
+        let output = std::process::Command::new("python3")
+            .args([
+                "-c",
+                "import json, pathlib; ns={}; \
+                 exec(pathlib.Path('scripts/_v1_shared.py').read_text(), ns); \
+                 print(json.dumps({int(k): v for k, v in ns['V1_KEY_TABLE'].items()}))",
+            ])
+            .current_dir(env!("CARGO_MANIFEST_DIR").replace("/daemon", ""))
+            .output();
+        let Ok(output) = output else {
+            return; // no python3 on this box — the per-code test above still pins the conflicts
+        };
+        assert!(output.status.success(), "python3 check failed: {}", String::from_utf8_lossy(&output.stderr));
+        let py: std::collections::HashMap<u32, String> =
+            serde_json::from_str(String::from_utf8_lossy(&output.stdout).trim())
+                .expect("python table must be JSON");
+        let rust = create_iohook_to_web_key_mapping();
+        assert_eq!(
+            py.len(),
+            py.keys().collect::<std::collections::HashSet<_>>().len(),
+            "python table has duplicate keys"
+        );
+        for (code, name) in &py {
+            assert_eq!(
+                rust.get(code),
+                Some(name),
+                "code {code}: python={name:?}, rust={:?} — the two V1→V2 paths diverge",
+                rust.get(code)
+            );
+        }
+        // The Rust table is built by repeated HashMap::insert, so a duplicate
+        // key fails silently (last wins) — the bug that corrupted
+        // 3597/3612/3640. Scan the source for re-inserted codes.
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/utils/config_converter.rs"))
+            .expect("read own source");
+        let start = src.find("fn create_iohook_to_web_key_mapping").unwrap();
+        // Bound the scan to the function body (up to its `mapping` return) so
+        // test strings that mention `mapping.insert(` are not counted.
+        let body_end = src[start..]
+            .find("\n    mapping\n")
+            .map(|i| start + i)
+            .unwrap_or(src.len());
+        let body = &src[start..body_end];
+        let mut codes: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut rest = body;
+        while let Some(i) = rest.find("mapping.insert(") {
+            let after = &rest[i + "mapping.insert(".len()..];
+            let len = after
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .count();
+            let code = &after[..len];
+            codes.entry(code).or_insert(0);
+            *codes.get_mut(code).unwrap() += 1;
+            rest = &after[code.len()..];
+        }
+        let dupes: Vec<_> = codes.into_iter().filter(|(_, n)| *n > 1).collect();
+        assert!(dupes.is_empty(), "duplicate mapping.insert codes: {dupes:?}");
+    }
 
     /// Zero-padded code is a release.
     #[test]
