@@ -195,7 +195,7 @@ Panel {
     Quickshell.execDetached(["omarchy","plugin","enable","io.github.sandeshrai00.sorakey","--section",section])
     // save choice — Omarchy resets to right on re-enable
     if (!sectionWrite.running) {
-      sectionWrite.command = ["~/.local/bin/sorakey", "ctl", "{\"cmd\":\"set_bar_section\",\"section\":\"" + section + "\"}"]
+      sectionWrite.command = [root.sorakeyBin, "ctl", "{\"cmd\":\"set_bar_section\",\"section\":\"" + section + "\"}"]
       sectionWrite.running = true
     }
   }
@@ -203,7 +203,7 @@ Panel {
   // restore saved bar section
   Process {
     id: sectionRead
-    command: ["~/.local/bin/sorakey", "ctl", "{\"cmd\":\"get_bar_section\"}"]
+    command: [root.sorakeyBin, "ctl", "{\"cmd\":\"get_bar_section\"}"]
     stdout: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       try {
@@ -305,12 +305,14 @@ Panel {
   }
 
   onOpenedChanged: {
-if (root.opened) {
-       root.refreshStatus()
-       root.refreshPacks()
-       root.settingsOpen = false
-     }
-  }
+      if (root.opened) {
+        root.refreshStatus()
+        root.refreshPacks()
+        root.settingsOpen = false
+        // clear the typing test box on every open
+        Qt.callLater(function() { if (testType) testType.text = "" })
+      }
+   }
 
   // Detect (re)install without a daemon: is the binary there?
   Process {
@@ -706,24 +708,30 @@ if (root.opened) {
                 anchors.verticalCenter: parent.verticalCenter
               }
               Item { width: 1 }
-Text {
-                 anchors.verticalCenter: parent.verticalCenter
-                 text: Math.round(root.perPackVolume) + "%"
-                 color: root.bar.foreground
-                 opacity: 0.6
-                 font.family: root.bar.fontFamily
-                 font.pixelSize: Style.font.caption
-               }
-               Item { width: 1 }
-               Button {
-                 id: volumeResetButton
-                 text: ""
-                 iconText: "↺"
-                 foreground: root.bar.foreground
-                 opacity: 0.7
-                 enabled: root.running && root.keyboardPack !== ""
-                 tooltipText: "Reset to pack default"
-                 onClicked: root.resetVolume()
+               Item {
+                 implicitWidth: volLabel.implicitWidth
+                 implicitHeight: Style.spacing.controlHeight
+                 Text {
+                   id: volLabel
+                   anchors.left: parent.left
+                   anchors.verticalCenter: parent.verticalCenter
+                   text: Math.round(root.perPackVolume) + "%"
+                   color: root.bar.foreground
+                   opacity: root.keyboardPack !== "" ? 0.85 : 0.6
+                   font.family: root.bar.fontFamily
+                   font.pixelSize: Style.font.caption
+                 }
+                 MouseArea {
+                   anchors.fill: parent
+                   anchors.margins: -Style.space(4)
+                   visible: root.keyboardPack !== ""
+                   cursorShape: Qt.PointingHandCursor
+                   hoverEnabled: true
+                   ToolTip.text: "Reset to pack default"
+                   ToolTip.visible: containsMouse
+                   ToolTip.delay: 400
+                   onClicked: root.resetVolume()
+                 }
                }
              }
 
@@ -832,7 +840,29 @@ Text {
               wrapMode: Text.WordWrap
             }
 
-            // key tester removed: the daemon listens system-wide, a local TextField does nothing
+            // typing test — the daemon listens system-wide, so physical
+            // keystrokes while the panel is open play through this box
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
+              PanelSectionHeader { text: "TEST TYPING"; foreground: root.bar.foreground }
+              TextField {
+               id: testType
+               width: parent.width
+               text: ""
+               placeholderText: "Click here and type — hear keys"
+               font.family: root.bar.fontFamily
+               font.pixelSize: Style.font.caption
+             }
+              Text {
+                width: parent.width
+                text: "Sounds come from your physical keyboard, not this box."
+                color: root.bar.foreground
+                opacity: 0.45
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
           }
 
           PanelSeparator { foreground: root.bar.foreground }
