@@ -248,7 +248,7 @@ Panel {
     onExited: function(exitCode) {
       root.updateBusy = false
       var err = String(stderr.text || "").trim()
-      if (exitCode === 0) root.updateStatus = String(stdout.text || "").trim().split("\n").pop()
+      if (exitCode === 0) root.updateStatus = String(stdout.text || "").trim().split("\n").pop().replace("io.github.sandeshrai00.sorakey", "Sorakey")
       else root.updateStatus = err !== "" ? err : "Update failed."
       clearUpdateTimer.restart()
     }
@@ -915,16 +915,6 @@ Panel {
               }
             }
 
-            Text {
-              visible: root.lastResult !== ""
-              width: parent.width
-              text: "> " + root.lastResult
-              color: root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
 
             // typing test — the daemon listens system-wide, so physical
             // keystrokes while the panel is open play through this box
