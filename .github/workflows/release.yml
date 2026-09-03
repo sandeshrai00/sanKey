@@ -14,9 +14,11 @@ jobs:
         include:
           - arch: x86_64
             target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
           - arch: aarch64
             target: aarch64-unknown-linux-gnu
-    runs-on: ubuntu-latest
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate release identity
@@ -33,20 +35,9 @@ jobs:
           components: rustfmt, clippy
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libevdev-dev libxtst-dev libxi-dev pkg-config
-      - name: Install cross
-        if: matrix.arch == 'aarch64'
-        run: |
-          curl -fsSL https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-gnu.tar.gz -o /tmp/cross.tar.gz
-          tar -xzf /tmp/cross.tar.gz -C /tmp
-          sudo mv /tmp/cross /usr/local/bin/cross
-          cross --version
       - name: Build sorakey ${{ matrix.arch }}
         run: |
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
-            cross build --locked --release --manifest-path daemon/Cargo.toml --target aarch64-unknown-linux-gnu
-          else
-            cargo build --locked --release --manifest-path daemon/Cargo.toml --target x86_64-unknown-linux-gnu
-          fi
+          cargo build --locked --release --manifest-path daemon/Cargo.toml --target ${{ matrix.target }}
           mkdir -p dist
           cp daemon/target/${{ matrix.target }}/release/sorakey dist/sorakey-${{ matrix.arch }}
           (cd dist && sha256sum sorakey-${{ matrix.arch }} > SHA256SUMS-${{ matrix.arch }})
