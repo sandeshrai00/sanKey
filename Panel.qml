@@ -663,6 +663,8 @@ Panel {
               value: root.currentBarSection
               options: [{value:"left",label:"Left"},{value:"center",label:"Center"},{value:"right",label:"Right"}]
               foreground: root.bar.foreground
+              popupBorder: "transparent"
+              opacity: root.muted ? 0.5 : 1.0
               onChanged: function(v){ root.moveToSection(v) }
             }
             PanelSeparator { foreground: root.bar.foreground }
@@ -673,12 +675,13 @@ Panel {
               value: root.audioDeviceSelected
               options: root.audioDevices
               foreground: root.bar.foreground
+              popupBorder: "transparent"
+              opacity: root.muted ? 0.5 : 1.0
               onChanged: function(v){ root.setAudioDevice(v) }
             }
             Button {
               text: "Rescan devices"
               foreground: root.bar.foreground
-              bordered: true
               width: parent.width
               onClicked: root.refreshAudioDevices()
             }
@@ -686,9 +689,9 @@ Panel {
             PanelSectionHeader { text: "MAINTENANCE"; foreground: root.bar.foreground }
             Button {
               text: root.exporting ? "Exporting…" : "Export error logs"
-              iconText: root.exporting ? "⏳" : "󰈯"
+              iconText: root.exporting ? "󰑐" : "󰈯"
+              iconSpinning: root.exporting
               foreground: root.bar.foreground
-              bordered: true
               width: parent.width
               tooltipText: "Save a report of recent errors to a file"
               enabled: !root.exporting && root.installed
@@ -696,9 +699,9 @@ Panel {
             }
             Button {
               text: root.updateBusy ? "Updating…" : "Update"
-              iconText: root.updateBusy ? "⏳" : "󰚰"
+              iconText: root.updateBusy ? "󰑐" : "󰚰"
+              iconSpinning: root.updateBusy
               foreground: root.bar.foreground
-              bordered: true
               width: parent.width
               tooltipText: "Update Sorakey plugin"
               enabled: !root.updateBusy
@@ -731,7 +734,6 @@ Panel {
               text: root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey"
               iconText: "✕"
               foreground: "#ff6b6b"
-              bordered: true
               width: parent.width
               tooltipText: "Remove the plugin and stop the daemon"
               onClicked: {
@@ -751,7 +753,8 @@ Panel {
           Button {
             id: installButton
             text: setupBusy ? "Installing…" : "Install Sorakey"
-            iconText: setupBusy ? "⏳" : "󰎓"
+            iconText: setupBusy ? "󰑐" : "󰎓"
+              iconSpinning: setupBusy
             foreground: root.bar.foreground
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
@@ -856,6 +859,8 @@ Panel {
                 value: root.keyboardPack
                 options: Model.packOptions(root.keyboardPacks)
                 foreground: root.bar.foreground
+                popupBorder: "transparent"
+                opacity: root.muted ? 0.5 : 1.0
                 rowHeight: Style.spacing.controlHeight
                 placeholderText: "Search packs…"
                 deleteConfirmId: root.deleteConfirmId
@@ -871,7 +876,6 @@ Panel {
                 text: "Random"
                 iconText: "󰒝"
                 foreground: root.bar.foreground
-                bordered: true
                 opacity: 0.9
                 y: Style.space(18)
                 height: Style.spacing.controlHeight
@@ -938,24 +942,42 @@ Panel {
             width: parent.width
             spacing: Style.space(8)
 
-            Button {
-              id: startStopButton
-              text: root.running ? "Stop" : "Start"
-              iconText: root.running ? "󰓛" : "󰐊"
-              foreground: root.bar.foreground
-              bordered: true
-              onClicked: root.running ? root.stopDaemon() : root.startDaemon()
-            }
+              BorderSurface {
+                // divider-colored ring (same 12% tint as PanelSeparator)
+                radius: Style.cornerRadius
+                color: "transparent"
+                borderSpec: Border.flat(Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12), 1)
+                implicitWidth: startStopButton.implicitWidth + 2
+                implicitHeight: startStopButton.implicitHeight + 2
+                Button {
+                  id: startStopButton
+                  anchors.fill: parent
+                  anchors.margins: 1
+                  text: root.running ? "Stop" : "Start"
+                  iconText: root.running ? "󰓛" : "󰐊"
+                  foreground: root.bar.foreground
+                  onClicked: root.running ? root.stopDaemon() : root.startDaemon()
+                }
+              }
 
-            Button {
-              id: restartButton
-              text: "Restart"
-              iconText: "󰑐"
-              foreground: root.bar.foreground
-              bordered: true
-              tooltipText: "Restart sorakey"
-onClicked: root.restartDaemon()
-             }
+              BorderSurface {
+                // divider-colored ring (same 12% tint as PanelSeparator)
+                radius: Style.cornerRadius
+                color: "transparent"
+                borderSpec: Border.flat(Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12), 1)
+                implicitWidth: restartButton.implicitWidth + 2
+                implicitHeight: restartButton.implicitHeight + 2
+                Button {
+                  id: restartButton
+                  anchors.fill: parent
+                  anchors.margins: 1
+                  text: "Restart"
+                  iconText: "󰑐"
+                  foreground: root.bar.foreground
+                  tooltipText: "Restart sorakey"
+                  onClicked: root.restartDaemon()
+                }
+              }
 
            }
 

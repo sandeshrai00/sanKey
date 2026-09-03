@@ -91,7 +91,8 @@ Item {
 
       readonly property bool _focused: trigger.activeFocus
       readonly property bool _hot: triggerHover.hovered || root.hasCursor
-      readonly property var _borderSpec: Border.controlSpec(trigger._focused ? "focus" : (trigger._hot ? "hover-cursor" : "normal"), root.foreground, root.accent)
+      // no resting outline (matches kit buttons); hover/focus ring still shows
+      readonly property var _borderSpec: (trigger._focused || trigger._hot) ? Border.controlSpec(trigger._focused ? "focus" : "hover-cursor", root.foreground, root.accent) : Border.none()
 
       color: Style.controlFill(trigger._focused, trigger._hot, root.foreground, root.accent)
       borderSpec: _borderSpec
@@ -398,16 +399,15 @@ spacing: Style.spacing.xs
               spacing: Style.spacing.sm
               Button {
                 text: root.deleting ? "Deleting…" : "Delete"
-                iconText: root.deleting ? "⏳" : "🗑"
+                iconText: root.deleting ? "󰑐" : ""
+                iconSpinning: root.deleting
                 foreground: "#ff6b6b"
-                bordered: true
                 enabled: !root.deleting
                 onClicked: root.confirmDelete(root.deleteConfirmId)
               }
               Button {
                 text: "Cancel"
                 foreground: root.foreground
-                bordered: true
                 enabled: !root.deleting
                 onClicked: { root.deleteConfirmId = ""; root.cancelDelete() }
               }
