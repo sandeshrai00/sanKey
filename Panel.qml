@@ -616,7 +616,7 @@ Panel {
             id: heroIcon
             source: root.heroMatchTheme ? Qt.resolvedUrl("logo.svg")
               : Qt.resolvedUrl(root.bar.foreground.hslLightness > 0.5 ? "logo.svg" : "logo-dark.svg")
-            sourceSize.height: Style.font.display * 2
+            sourceSize.height: Style.font.display * 2.5
             fillMode: Image.PreserveAspectFit
             smooth: true
             mipmap: true
@@ -719,7 +719,8 @@ Dropdown {
               width: parent.width
               value: root.currentBarSection
               options: [{value:"left",label:"Left"},{value:"center",label:"Center"},{value:"right",label:"Right"}]
-              foreground: root.bar.foreground
+              foreground: Color.foreground
+              popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
               rowHeight: Style.spacing.controlHeight + 8
                             opacity: root.muted ? 0.5 : 1.0
               onChanged: function(v){ root.moveToSection(v) }
@@ -730,7 +731,8 @@ Dropdown {
               width: parent.width
               value: root.audioDeviceSelected
               options: root.audioDevices
-              foreground: root.bar.foreground
+              foreground: Color.foreground
+              popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
               rowHeight: Style.spacing.controlHeight + 8
                             opacity: root.muted ? 0.5 : 1.0
               onChanged: function(v){ root.setAudioDevice(v) }
@@ -957,7 +959,8 @@ Dropdown {
                 width: parent.width - randomButton.width - parent.spacing
                 value: root.keyboardPack
                 options: Model.packOptions(root.keyboardPacks)
-                foreground: root.bar.foreground
+                foreground: Color.foreground
+                popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
                                 opacity: root.muted ? 0.5 : 1.0
                 rowHeight: Style.spacing.controlHeight + 8
                 placeholderText: "Search packs…"
