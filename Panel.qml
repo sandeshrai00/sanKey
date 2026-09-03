@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import qs.Ui
@@ -23,9 +24,7 @@ Panel {
   readonly property string pluginVersion: service && service.manifest && service.manifest.version ? String(service.manifest.version) : ""
   property string pluginCommit: ""
 
-  // plugin logo — match the bar foreground: white logo on dark themes, black on light
-  // full logo (with text) for the panel hero, solid keycap for the small bar slot
-  readonly property string logoSource: root.bar.foreground.hslLightness > 0.5 ? "logo.svg" : "logo-dark.svg"
+  // plugin logo — bar follows foreground like other icons, hero wears the theme accent
   readonly property string barLogoSource: root.bar.foreground.hslLightness > 0.5 ? "logo-bar.svg" : "logo-bar-dark.svg"
 
   property bool importing: service ? service.importing : false
@@ -585,7 +584,7 @@ Panel {
 
           Image {
             id: heroIcon
-            source: Qt.resolvedUrl(root.logoSource)
+            source: Qt.resolvedUrl("logo.svg")
             sourceSize.height: Style.font.display * 2
             fillMode: Image.PreserveAspectFit
             smooth: true
@@ -593,6 +592,11 @@ Panel {
             opacity: root.muted ? 0.5 : 1.0
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
+            layer.enabled: true
+            layer.effect: MultiEffect {
+              colorization: 1.0
+              colorizationColor: Color.accent
+            }
           }
 
           Column {
