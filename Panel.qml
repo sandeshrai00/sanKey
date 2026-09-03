@@ -295,8 +295,6 @@ Panel {
       var err = String(stderr.text || "").trim()
       if (exitCode === 0) root.updateStatus = String(stdout.text || "").trim().split("\n").pop().replace("io.github.sandeshrai00.sorakey", "Sorakey")
       else root.updateStatus = err !== "" ? err : "Update failed."
-      stdout.text = ""
-      stderr.text = ""
       clearUpdateTimer.restart()
     }
   }
@@ -452,8 +450,10 @@ Panel {
     id: devicesProc
     command: [root.sorakeyBin, "ctl", "{\"cmd\":\"audio_devices\"}"]
     running: false
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode, exitStatus) {
-      var out = String(devicesProc.stdout || "").trim()
+      var out = String(stdout.text || "").trim()
       var opts = null
       try {
         var r = JSON.parse(out)
@@ -464,7 +464,9 @@ Panel {
         opts = []
       }
       opts.unshift({ value: "", label: "System default" })
-      root.audioDevices = opts
+      var ids = opts.map(function(o){ return o.value }).join("\n")
+      var cur = root.audioDevices.map(function(o){ return o.value }).join("\n")
+      if (ids !== cur) root.audioDevices = opts
     }
   }
 
@@ -497,7 +499,6 @@ Panel {
         } catch(e) {}
         root.refreshPacks()
       }
-      stdout.text = ""
     }
     stdout: StdioCollector { waitForEnd: true }
   }
@@ -526,8 +527,6 @@ Panel {
         root.refreshStatus()
         root.refreshPacks()
       }
-      stdout.text = ""
-      stderr.text = ""
     }
   }
 
