@@ -959,6 +959,7 @@ Panel {
             TextField {
               id: testType
               width: parent.width
+              height: 40
               text: ""
               placeholderText: "Click here and type — hear keys"
               font.family: root.bar.fontFamily
