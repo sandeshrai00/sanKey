@@ -560,7 +560,7 @@ Panel {
       Column {
         id: panelColumn
         width: scrollArea.availableWidth
-        spacing: Style.space(14)
+        spacing: Style.space(16)
 
         // header
         Item {
@@ -883,7 +883,6 @@ Panel {
                 iconText: ""
                 foreground: root.bar.foreground
                 opacity: 0.9
-                y: Style.space(18)
                 height: Style.spacing.controlHeight
                 verticalPadding: Style.spacing.controlPaddingY
                 horizontalPadding: Style.spacing.controlPaddingX
