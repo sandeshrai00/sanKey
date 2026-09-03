@@ -26,8 +26,8 @@ Panel {
 
   // plugin logo — bar follows foreground like other icons, hero wears the theme accent
   readonly property string barLogoSource: root.bar.foreground.hslLightness > 0.5 ? "logo-bar.svg" : "logo-bar-dark.svg"
-  // hero logo color: "theme" (Color.accent) or "default" (foreground white/black)
-  property string logoColorMode: "default"
+  // hero logo follows the theme accent when on, plain foreground white/black when off
+  property bool heroMatchTheme: true
   readonly property string logoModeFile: home + "/.config/sorakey/logo-color-mode"
 
   property bool importing: service ? service.importing : false
@@ -239,14 +239,15 @@ Panel {
     stderr: StdioCollector { waitForEnd: true }
   }
 
-  // restore saved hero logo color mode ("theme" or "default")
+  // restore saved hero theme toggle ("1"/"0", legacy "theme"/"default")
   Process {
     id: logoRead
     command: ["cat", root.logoModeFile]
     stdout: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       var mode = String(stdout.text || "").trim()
-      if (mode === "default" || mode === "theme") root.logoColorMode = mode
+      if (mode === "1" || mode === "theme") root.heroMatchTheme = true
+      else if (mode === "0" || mode === "default") root.heroMatchTheme = false
     }
   }
 
@@ -256,11 +257,10 @@ Panel {
     stderr: StdioCollector { waitForEnd: true }
   }
 
-  function setLogoColorMode(mode) {
-    if (mode !== "default" && mode !== "theme") return
-    root.logoColorMode = mode
+  function setHeroMatchTheme(on) {
+    root.heroMatchTheme = on
     if (!logoWrite.running) {
-      logoWrite.command = ["sh", "-c", "mkdir -p \"$(dirname \"" + root.logoModeFile + "\")\" && printf '%s' \"" + mode + "\" > \"" + root.logoModeFile + "\""]
+      logoWrite.command = ["sh", "-c", "mkdir -p \"$(dirname \"" + root.logoModeFile + "\")\" && printf '%s' \"" + (on ? "1" : "0") + "\" > \"" + root.logoModeFile + "\""]
       logoWrite.running = true
     }
   }
@@ -614,7 +614,7 @@ Panel {
 
           Image {
             id: heroIcon
-            source: root.logoColorMode === "theme" ? Qt.resolvedUrl("logo.svg")
+            source: root.heroMatchTheme ? Qt.resolvedUrl("logo.svg")
               : Qt.resolvedUrl(root.bar.foreground.hslLightness > 0.5 ? "logo.svg" : "logo-dark.svg")
             sourceSize.height: Style.font.display * 2
             fillMode: Image.PreserveAspectFit
@@ -626,7 +626,7 @@ Panel {
             layer.enabled: true
             layer.effect: MultiEffect {
               colorization: 1.0
-              colorizationColor: root.logoColorMode === "theme" ? Color.accent : root.bar.foreground
+              colorizationColor: root.heroMatchTheme ? Color.accent : root.bar.foreground
             }
           }
 
@@ -641,14 +641,14 @@ Panel {
 
             Text {
               text: "Sorakey"
-              color: root.bar.foreground
+              color: root.heroMatchTheme ? Color.accent : root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title
               font.bold: true
             }
             Text {
               text: root.statusText
-              color: root.bar.foreground
+              color: root.heroMatchTheme ? Color.accent : root.bar.foreground
               opacity: 0.6
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.caption
@@ -663,19 +663,25 @@ Panel {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             onToggled: root.setMuted(!root.muted)
+            layer.enabled: root.heroMatchTheme
+            layer.effect: MultiEffect {
+              colorization: 1.0
+              colorizationColor: Qt.lighter(Color.accent, 1.5)
+            }
           }
 
           Button {
             id: settingsButton
             text: ""
             iconText: "󰒓"
-            foreground: root.bar.foreground
+            foreground: root.heroMatchTheme ? Color.accent : root.bar.foreground
             opacity: 0.8
             anchors.right: muteSwitch.left
             anchors.rightMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
             tooltipText: "Settings"
             onClicked: root.settingsOpen = !root.settingsOpen
+          
           }
         }
 
@@ -693,6 +699,7 @@ Panel {
               foreground: root.bar.foreground
               tooltipText: "Back"
               onClicked: root.settingsOpen = false
+            
             }
             Text {
               text: "Settings"
@@ -719,14 +726,13 @@ Dropdown {
             }
             PanelSeparator { foreground: root.bar.foreground }
             PanelSectionHeader { text: "APPEARANCE"; foreground: root.bar.foreground }
-Dropdown {
+            Toggle {
               width: parent.width
-              value: root.logoColorMode
-              options: [{value:"default",label:"Default"},{value:"theme",label:"Match Theme"}]
+              label: "Match theme"
+              description: "Hero logo follows the theme color"
+              checked: root.heroMatchTheme
               foreground: root.bar.foreground
-              rowHeight: Style.spacing.controlHeight + 8
-                            opacity: root.muted ? 0.5 : 1.0
-              onChanged: function(v){ root.setLogoColorMode(v) }
+              onClicked: root.setHeroMatchTheme(!root.heroMatchTheme)
             }
             PanelSeparator { foreground: root.bar.foreground }
             PanelSectionHeader { text: "AUDIO OUTPUT"; foreground: root.bar.foreground }
@@ -747,6 +753,7 @@ Dropdown {
               anchors.horizontalCenter: parent.horizontalCenter
               verticalPadding: Style.spacing.controlPaddingY + 4
               onClicked: root.refreshAudioDevices()
+            
             }
             PanelSeparator { foreground: root.bar.foreground }
             PanelSectionHeader { text: "MAINTENANCE"; foreground: root.bar.foreground }
@@ -766,6 +773,7 @@ Dropdown {
                 tooltipText: "Save a report of recent errors to a file"
                 enabled: !root.exporting && root.installed
                 onClicked: root.triggerExport()
+              
               }
 
               Button {
@@ -779,6 +787,7 @@ Dropdown {
                 tooltipText: "Update Sorakey plugin"
                 enabled: !root.updateBusy
                 onClicked: root.doUpdate()
+              
               }
             }
             Text {
@@ -816,6 +825,7 @@ Dropdown {
                 if (!root.uninstallArmed) { root.uninstallArmed = true; disarmUninstall.restart() }
                 else { root.uninstallArmed = false; root.remove() }
               }
+            
             }
           }
         }
@@ -836,6 +846,7 @@ Dropdown {
             anchors.verticalCenter: parent.verticalCenter
             enabled: !setupBusy
             onClicked: root.install()
+          
           }
         }
 
@@ -956,6 +967,7 @@ Dropdown {
                 horizontalPadding: Style.spacing.controlPaddingX
                 enabled: root.running && root.keyboardPacks.length > 1
                 onClicked: root.pickRandomPack()
+              
               }
             }
 
@@ -970,6 +982,7 @@ Dropdown {
                 opacity: root.importing ? 0.5 : 1.0
                 enabled: !root.importing
                 onClicked: root.triggerImport()
+              
               }
               Button {
                 id: openFolderButton
@@ -978,6 +991,7 @@ Dropdown {
                 foreground: root.bar.foreground
                 opacity: 0.7
                 onClicked: root.openCustomFolder()
+              
               }
             }
 
@@ -1000,6 +1014,7 @@ Dropdown {
               verticalPadding: Style.spacing.controlPaddingY + 4
               selected: true
               onClicked: root.running ? root.stopDaemon() : root.startDaemon()
+            
             }
 
 Button {
@@ -1011,7 +1026,8 @@ Button {
               selected: true
               tooltipText: "Restart sorakey"
               onClicked: root.restartDaemon()
-            }
+            
+}
           }
 
           PanelSeparator { foreground: root.bar.foreground }
@@ -1024,6 +1040,7 @@ Button {
             PanelSectionHeader { text: "TEST TYPING"; foreground: root.bar.foreground }
             TextField {
               id: testType
+              foreground: root.bar.foreground
               width: parent.width
               height: 40
               text: ""
