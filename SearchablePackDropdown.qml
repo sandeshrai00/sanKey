@@ -26,6 +26,7 @@ Item {
   property bool hasCursor: false
 
   readonly property bool popupOpen: popup.opened
+  property double lastClosedAt: 0
   function open() { popup.open() }
   function close() { popup.close() }
   function toggle() { popup.opened ? popup.close() : popup.open() }
@@ -138,9 +139,11 @@ Item {
       MouseArea {
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
-        onClicked: {
+        onPressed: function(mouse) {
           trigger.forceActiveFocus()
-          popup.opened ? popup.close() : popup.open()
+          if (popup.opened) popup.close()
+          else if (Date.now() - root.lastClosedAt > 300) popup.open()
+          mouse.accepted = true
         }
       }
 
@@ -174,6 +177,7 @@ Item {
         }
         onClosed: {
           searchField.text = ""
+          root.lastClosedAt = Date.now()
           // keep confirmId — Panel clears it
         }
 

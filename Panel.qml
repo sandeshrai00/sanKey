@@ -29,6 +29,18 @@ Panel {
   // hero logo follows the theme accent when on, plain foreground white/black when off
   property bool heroMatchTheme: true
   readonly property string logoModeFile: home + "/.config/sorakey/logo-color-mode"
+  // timestamps of last popup close per settings dropdown (debounce trigger re-open race)
+  property double barDropClosedAt: 0
+  property double audioDropClosedAt: 0
+
+  Connections {
+    target: barSectionDrop
+    function onPopupOpenChanged() { if (!barSectionDrop.popupOpen) root.barDropClosedAt = Date.now() }
+  }
+  Connections {
+    target: audioDrop
+    function onPopupOpenChanged() { if (!audioDrop.popupOpen) root.audioDropClosedAt = Date.now() }
+  }
 
   property bool importing: service ? service.importing : false
   property string importStatus: {
@@ -728,15 +740,30 @@ Panel {
             width: parent.width
             spacing: Style.space(6)
             PanelSectionHeader { text: "GENERAL"; foreground: root.bar.foreground }
-Dropdown {
+            Item {
               width: parent.width
-              value: root.currentBarSection
-              options: [{value:"left",label:"Left"},{value:"center",label:"Center"},{value:"right",label:"Right"}]
-              foreground: Color.foreground
-              popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
-              rowHeight: Style.spacing.controlHeight
-                            opacity: root.muted ? 0.5 : 1.0
-              onChanged: function(v){ root.moveToSection(v) }
+              height: barSectionDrop.implicitHeight
+Dropdown {
+                id: barSectionDrop
+                anchors.fill: parent
+                value: root.currentBarSection
+                options: [{value:"left",label:"Left"},{value:"center",label:"Center"},{value:"right",label:"Right"}]
+                foreground: Color.foreground
+                popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
+                rowHeight: Style.spacing.controlHeight
+                opacity: root.muted ? 0.5 : 1.0
+                onChanged: function(v){ root.moveToSection(v) }
+              }
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: false
+                cursorShape: Qt.PointingHandCursor
+                onPressed: function(mouse) {
+                  if (barSectionDrop.popupOpen) barSectionDrop.close()
+                  else if (Date.now() - root.barDropClosedAt > 300) barSectionDrop.open()
+                  mouse.accepted = true
+                }
+              }
             }
             Item {
               width: parent.width
@@ -763,15 +790,30 @@ Dropdown {
             Row {
               width: parent.width
               spacing: Style.space(8)
-              Dropdown {
+              Item {
                 width: parent.width - rescanButton.width - parent.spacing
-                value: root.audioDeviceSelected
-                options: root.audioDevices
-                foreground: Color.foreground
-                popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
-                rowHeight: Style.spacing.controlHeight
-                opacity: root.muted ? 0.5 : 1.0
-                onChanged: function(v){ root.setAudioDevice(v) }
+                height: audioDrop.implicitHeight
+                Dropdown {
+                  id: audioDrop
+                  anchors.fill: parent
+                  value: root.audioDeviceSelected
+                  options: root.audioDevices
+                  foreground: Color.foreground
+                  popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
+                  rowHeight: Style.spacing.controlHeight
+                  opacity: root.muted ? 0.5 : 1.0
+                  onChanged: function(v){ root.setAudioDevice(v) }
+                }
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: false
+                  cursorShape: Qt.PointingHandCursor
+                  onPressed: function(mouse) {
+                    if (audioDrop.popupOpen) audioDrop.close()
+                    else if (Date.now() - root.audioDropClosedAt > 300) audioDrop.open()
+                    mouse.accepted = true
+                  }
+                }
               }
               Button {
                 id: rescanButton
