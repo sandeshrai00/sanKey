@@ -916,47 +916,57 @@ Panel {
             }
 
 
-            // typing test — the daemon listens system-wide, so physical
-            // keystrokes while the panel is open play through this box
-            Column {
-               width: parent.width
-               spacing: Style.space(6)
-                PanelSectionHeader { text: "TEST TYPING"; foreground: root.bar.foreground }
-                TextField {
-                  id: testType
-                  width: parent.width
-                  text: ""
-                  placeholderText: "Click here and type — hear keys"
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.caption
-                }
-              }
           }
 
           PanelSeparator { foreground: root.bar.foreground }
 
           Row {
+            id: controlRow
             width: parent.width
-            spacing: Style.space(8)
+            spacing: 0
 
             Button {
               id: startStopButton
-              bordered: true
+              width: (controlRow.width - 1) / 2
               text: root.running ? "Stop" : "Start"
               foreground: root.bar.foreground
               onClicked: root.running ? root.stopDaemon() : root.startDaemon()
             }
 
+            // vertical divider, same 12% tint as PanelSeparator
+            Rectangle {
+              width: 1
+              height: startStopButton.height
+              color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12)
+            }
+
             Button {
               id: restartButton
-              bordered: true
+              width: (controlRow.width - 1) / 2
               text: "Restart"
               foreground: root.bar.foreground
               tooltipText: "Restart sorakey"
               onClicked: root.restartDaemon()
             }
+          }
 
-           }
+          PanelSeparator { foreground: root.bar.foreground }
+
+          // typing test — the daemon listens system-wide, so physical
+          // keystrokes while the panel is open play through this box
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+            PanelSectionHeader { text: "TEST TYPING"; foreground: root.bar.foreground }
+            TextField {
+              id: testType
+              width: parent.width
+              text: ""
+              placeholderText: "Click here and type — hear keys"
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
 
         }
       }
