@@ -276,6 +276,7 @@ Panel {
       return
     }
     if (o.ok === true) {
+      var daemonJustUp = !root.running
       root.running = true
       root.installed = true
       root.muted = o.muted === true
@@ -283,6 +284,8 @@ Panel {
       root.perPackVolume = (typeof o.per_pack_volume === "number") ? o.per_pack_volume : root.perPackVolume
       root.keyboardPack = String(o.keyboard_pack || "")
       if (typeof o.audio_device !== "undefined") root.audioDeviceSelected = o.audio_device ? String(o.audio_device) : ""
+      // daemon just came (back) up: ctl works now, so (re)load the device list
+      if (daemonJustUp) root.refreshAudioDevices()
     } else {
       root.running = false
     }
@@ -338,6 +341,7 @@ Panel {
       root.installed = (exitCode === 0)
       if (root.installed) {
         root.refreshStatus()
+        root.refreshAudioDevices()
       } else if (!root.automaticSetupAttempted && !setupBusy) {
         root.automaticSetupAttempted = true
         // Auto-run setup on first enable after URL install (like Spotify)
