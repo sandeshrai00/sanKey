@@ -725,16 +725,6 @@ Dropdown {
               onChanged: function(v){ root.moveToSection(v) }
             }
             PanelSeparator { foreground: root.bar.foreground }
-            PanelSectionHeader { text: "APPEARANCE"; foreground: root.bar.foreground }
-            Toggle {
-              width: parent.width
-              label: "Match theme"
-              description: "Hero logo follows the theme color"
-              checked: root.heroMatchTheme
-              foreground: root.bar.foreground
-              onClicked: root.setHeroMatchTheme(!root.heroMatchTheme)
-            }
-            PanelSeparator { foreground: root.bar.foreground }
             PanelSectionHeader { text: "AUDIO OUTPUT"; foreground: root.bar.foreground }
 Dropdown {
               width: parent.width
@@ -826,6 +816,29 @@ Dropdown {
                 else { root.uninstallArmed = false; root.remove() }
               }
             
+            }
+            PanelSeparator { foreground: root.bar.foreground }
+            PanelSectionHeader { text: "APPEARANCE"; foreground: root.bar.foreground }
+            Item {
+              width: parent.width
+              height: Math.max(themeLabel.implicitHeight, themeSwitch.implicitHeight)
+              Text {
+                id: themeLabel
+                text: "Match theme"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.subtitle
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+              ToggleSwitch {
+                id: themeSwitch
+                checked: root.heroMatchTheme
+                foreground: root.bar.foreground
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                onToggled: root.setHeroMatchTheme(!root.heroMatchTheme)
+              }
             }
           }
         }
