@@ -686,27 +686,33 @@ Panel {
             }
             PanelSeparator { foreground: root.bar.foreground }
             PanelSectionHeader { text: "MAINTENANCE"; foreground: root.bar.foreground }
-            Button {
-              bordered: true
-              text: root.exporting ? "Exporting…" : "Export Logs"
-              iconText: root.exporting ? "󱑢" : ""
-              iconSpinning: root.exporting
-              foreground: root.bar.foreground
-              width: parent.width
-              tooltipText: "Save a report of recent errors to a file"
-              enabled: !root.exporting && root.installed
-              onClicked: root.triggerExport()
-            }
-            Button {
-              bordered: true
-              text: root.updateBusy ? "Updating…" : "Update"
-              iconText: root.updateBusy ? "󰅧" : "󰮭"
-              iconSpinning: root.updateBusy
-              foreground: root.bar.foreground
-              width: parent.width
-              tooltipText: "Update Sorakey plugin"
-              enabled: !root.updateBusy
-              onClicked: root.doUpdate()
+            Row {
+                width: parent.width
+                spacing: Style.space(8)
+
+              Button {
+                bordered: true
+                text: root.exporting ? "Exporting…" : "Export Logs"
+                iconText: root.exporting ? "󱑢" : ""
+                iconSpinning: root.exporting
+                foreground: root.bar.foreground
+                width: (parent.width - Style.space(8)) / 2
+                tooltipText: "Save a report of recent errors to a file"
+                enabled: !root.exporting && root.installed
+                onClicked: root.triggerExport()
+              }
+
+              Button {
+                bordered: true
+                text: root.updateBusy ? "Updating…" : "Update"
+                iconText: root.updateBusy ? "󰮭" : "󰮭"
+                iconSpinning: root.updateBusy
+                foreground: root.bar.foreground
+                width: (parent.width - Style.space(8)) / 2
+                tooltipText: "Update Sorakey plugin"
+                enabled: !root.updateBusy
+                onClicked: root.doUpdate()
+              }
             }
             Text {
               visible: root.pluginVersion !== ""
