@@ -9,15 +9,17 @@ use super::engine::{ KeySegments, Segment };
 /// (samples, channels, sample_rate) for a decoded buffer.
 type DecodedAudio = (Arc<Vec<f32>>, u16, u32);
 
-/// A fully decoded soundpack: original (native-rate) audio per key + the
-/// precomputed, fade-applied segments at the device rate. `None` segments are
-/// keys the pack does not define. `Send` so the worker thread can produce it
-/// off the engine thread.
+/// A fully decoded soundpack: the precomputed, fade-applied segments at the
+/// device rate (+ pack metadata for cache/errors). `originals` is always
+/// empty on a prepared pack: native-rate buffers are freed right after
+/// segments are built, and a device switch re-decodes from disk (rare)
+/// instead of pinning 10-20 MB forever. `Send` so the worker thread can
+/// produce it off the engine thread.
 pub(crate) struct LoadedPack {
     pub(super) soundpack: SoundPack,
     pub(super) soundpack_path: String,
-    /// Native-rate audio for each key (single packs: the shared file), kept
-    /// so a device switch can re-resample without re-reading from disk.
+    /// Native-rate audio for each key. Empty after `prepare_pack_segments`;
+    /// only populated transiently between `load_pack` and preparation.
     pub(super) originals: HashMap<String, DecodedAudio>,
     pub(super) segments: HashMap<String, KeySegments>,
 }
@@ -326,7 +328,10 @@ pub(super) fn prepare_pack_segments(pack: LoadedPack, device_rate: u32) -> Loade
     LoadedPack {
         soundpack: pack.soundpack,
         soundpack_path: pack.soundpack_path,
-        originals: pack.originals,
+        // Free the native-rate buffers: segments carry everything playback
+        // needs at the device rate. Halves resident memory per pack; a
+        // device switch re-decodes from disk (see `EngineState::prepare_pack`).
+        originals: HashMap::new(),
         segments,
     }
 }

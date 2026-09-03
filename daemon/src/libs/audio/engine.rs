@@ -1,5 +1,4 @@
 use crossbeam_channel::{ unbounded, Receiver, Sender };
-use rodio::buffer::SamplesBuffer;
 use rodio::{ OutputStream, OutputStreamHandle, Sink };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +10,8 @@ const FADE_OUT_MS: f32 = 5.0;
 const MAX_VOICES: usize = 32;
 
 /// Precomputed, fade-applied playback segment (samples, channels, sample_rate).
-/// Built once at pack load so the keypress path is a lookup + one memcpy.
+/// Built once at pack load; the keypress path is a lookup + an `Arc` refcount
+/// bump (see `ArcSamples`) — no per-hit copy.
 pub(super) type Segment = (Arc<Vec<f32>>, u16, u32);
 
 /// Per-key precomputed segments: (press, release).
@@ -90,8 +90,9 @@ pub(super) struct EngineState {
     current_device_id: Option<String>,
     pub(super) device_rate: Option<u32>,
 
-    /// The pack currently playing: precomputed per-key segments + the
-    /// original (native-rate) buffers for re-resampling on device switch.
+    /// The pack currently playing: precomputed per-key segments at the
+    /// device rate. Native-rate buffers are freed at load (see
+    /// `prepare_pack_segments`); a device switch re-decodes from disk.
     pub(super) pack: Option<super::soundpack_loader::LoadedPack>,
     /// Sequence of the most recent LoadKeyboardPack request. Worker results
     /// carry the request's sequence; only the latest is applied, so rapid
@@ -99,6 +100,13 @@ pub(super) struct EngineState {
     pub(super) pending_pack_seq: Option<u64>,
     /// Monotonic counter handing each load a unique sequence.
     pub(super) load_seq: u64,
+    /// A decode worker is currently running. New requests while set only
+    /// update `pending_pack_seq` + `queued_load` (collapse bursts) instead
+    /// of stacking concurrent full-pack decoders in memory.
+    pub(super) loading_pack: bool,
+    /// Newest request that arrived while a decode was in flight; run when
+    /// the worker lands. `(soundpack_id, update_cache_on_error)`.
+    pub(super) queued_load: Option<(String, bool)>,
 
     key_pressed: HashMap<String, bool>,
     pub(super) key_sinks: Vec<Sink>,
@@ -164,6 +172,8 @@ impl EngineState {
             pack: None,
             pending_pack_seq: None,
             load_seq: 0,
+            loading_pack: false,
+            queued_load: None,
             key_pressed: HashMap::new(),
             key_sinks: Vec::new(),
             volume: config.effective_volume(),
@@ -186,14 +196,33 @@ impl EngineState {
         play_segment(&self.stream_handle, segment, self.volume, &mut self.key_sinks);
     }
 
-    /// Rebuilds precomputed segments at the device's current rate. Original
-    /// (native-rate) buffers are kept so a later switch can re-resample
-    /// without re-reading from disk.
+    /// Rebuilds precomputed segments at the device's current rate. Prepared
+    /// packs carry no native-rate buffers (freed at load to halve resident
+    /// memory), so this re-decodes from disk — rare enough to pay for.
+    /// Same-rate packs are kept as-is with no work at all.
     fn prepare_pack(&mut self) {
         let Some(device_rate) = self.device_rate else { return };
         let Some(pack) = self.pack.take() else { return };
-        let prepared = super::soundpack_loader::prepare_pack_segments(pack, device_rate);
-        self.pack = Some(prepared);
+        let at_rate = pack.segments.values().any(|(press, release)| {
+            press.as_ref().map(|s| s.2 == device_rate).unwrap_or(false)
+                || release.as_ref().map(|s| s.2 == device_rate).unwrap_or(false)
+        });
+        if at_rate {
+            self.pack = Some(pack);
+            return;
+        }
+        match super::soundpack_loader::load_pack_prepared(&pack.soundpack.id, Some(device_rate)) {
+            Ok(reloaded) => {
+                self.pack = Some(reloaded);
+            }
+            Err(e) => {
+                crate::always_eprint!(
+                    "⚠️ [Engine] Device-switch re-decode failed ({}), keeping current audio",
+                    e
+                );
+                self.pack = Some(pack);
+            }
+        }
     }
 
     fn switch_device(&mut self, device_id: Option<String>) -> Result<String, String> {
@@ -232,6 +261,45 @@ fn debounce_press(pressed: &mut HashMap<String, bool>, code: &str, down: bool) -
     true
 }
 
+/// Zero-copy playback cursor over a segment's shared buffer. Cloning the
+/// `Arc` per keypress costs a refcount bump instead of a full `Vec` memcpy
+/// (what `SamplesBuffer::new(samples.clone())` did before).
+struct ArcSamples {
+    samples: Arc<Vec<f32>>,
+    pos: usize,
+    channels: u16,
+    sample_rate: u32,
+}
+
+impl Iterator for ArcSamples {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        let sample = *self.samples.get(self.pos)?;
+        self.pos += 1;
+        Some(sample)
+    }
+}
+
+impl rodio::Source for ArcSamples {
+    fn current_frame_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        let frames = self.samples.len() / self.channels.max(1) as usize;
+        Some(std::time::Duration::from_secs_f64(frames as f64 / self.sample_rate as f64))
+    }
+}
+
 fn play_segment(
     stream_handle: &OutputStreamHandle,
     segment: &Segment,
@@ -239,14 +307,19 @@ fn play_segment(
     sinks: &mut Vec<Sink>
 ) {
     let (samples_arc, channels, sample_rate) = segment;
-    let samples: &Vec<f32> = samples_arc.as_ref();
 
-    // The fade is pre-applied at pack load; play the segment verbatim.
-    let segment_buf = SamplesBuffer::new(*channels, *sample_rate, samples.clone());
+    // The fade is pre-applied at pack load; play the segment verbatim,
+    // sharing the buffer instead of copying it per hit.
+    let source = ArcSamples {
+        samples: samples_arc.clone(),
+        pos: 0,
+        channels: *channels,
+        sample_rate: *sample_rate,
+    };
 
     if let Ok(sink) = Sink::try_new(stream_handle) {
         sink.set_volume(volume);
-        sink.append(segment_buf);
+        sink.append(source);
 
         manage_active_sinks(sinks, MAX_VOICES);
         sinks.push(sink);
@@ -340,6 +413,32 @@ fn handle_toggle_sound() -> bool {
     enabled
 }
 
+/// Decode + prepare off the engine thread; the old pack keeps playing until
+/// the result arrives. Factored out so both fresh requests and the queued
+/// drain (burst collapse) share one spawn path.
+fn spawn_load_worker(
+    cmd_tx: &Sender<AudioCommand>,
+    seq: u64,
+    soundpack_id: String,
+    rate: Option<u32>,
+    update_cache_on_error: bool
+) {
+    let tx = cmd_tx.clone();
+    std::thread::spawn(move || {
+        let loaded = super::soundpack_loader::load_pack_prepared(&soundpack_id, rate);
+        match &loaded {
+            Ok(l) => {
+                super::soundpack_loader::update_soundpack_cache(l, &soundpack_id);
+            }
+            Err(e) if update_cache_on_error => {
+                super::soundpack_loader::capture_soundpack_loading_error(&soundpack_id, e);
+            }
+            _ => {}
+        }
+        let _ = tx.send(AudioCommand::PackLoaded(seq, Box::new(loaded)));
+    });
+}
+
 fn handle_command(
     cmd_tx: &Sender<AudioCommand>,
     state: &mut EngineState,
@@ -356,47 +455,49 @@ fn handle_command(
             state.sound_enabled = enabled;
         }
         AudioCommand::LoadKeyboardPack { soundpack_id, update_cache_on_error } => {
-            // Decode on a worker thread; the old pack keeps playing until the
-            // result arrives. Results carry the request's sequence - only the
-            // newest is applied, in order.
+            // At most one decode runs at a time: a request arriving mid-load
+            // only records itself. When the worker lands, the queued (newest)
+            // request runs instead of every intermediate one — cycling packs
+            // can no longer stack N concurrent ~25 MB decoders.
             state.load_seq += 1;
             let seq = state.load_seq;
             state.pending_pack_seq = Some(seq);
-            let rate = state.device_rate;
-            let tx = cmd_tx.clone();
-            std::thread::spawn(move || {
-                let loaded = super::soundpack_loader::load_pack_prepared(&soundpack_id, rate);
-                match &loaded {
-                    Ok(l) => {
-                        super::soundpack_loader::update_soundpack_cache(l, &soundpack_id);
-                    }
-                    Err(e) if update_cache_on_error => {
-                        super::soundpack_loader::capture_soundpack_loading_error(&soundpack_id, e);
-                    }
-                    _ => {}
-                }
-                let _ = tx.send(AudioCommand::PackLoaded(seq, Box::new(loaded)));
-            });
+            if state.loading_pack {
+                state.queued_load = Some((soundpack_id, update_cache_on_error));
+                return;
+            }
+            state.loading_pack = true;
+            spawn_load_worker(cmd_tx, seq, soundpack_id, state.device_rate, update_cache_on_error);
         }
         AudioCommand::PackLoaded(seq, result) => {
             // A device switch cancels pending swaps: the old pack is
             // re-prepared for the new device instead of being replaced.
-            let Some(latest) = state.pending_pack_seq else {
-                return;
-            };
-            if seq < latest {
-                return; // a newer request supersedes this one; it will be applied
+            state.loading_pack = false;
+            match state.pending_pack_seq {
+                Some(latest) if seq >= latest => {
+                    state.pending_pack_seq = None;
+                    if let Ok(pack) = *result {
+                        // Already resampled + precomputed at our rate (the worker read
+                        // it when it spawned; a device switch would have cancelled this
+                        // swap), so the swap itself is just a buffer handover.
+                        state.pack = Some(pack);
+                        state.key_sinks.clear();
+                    }
+                    // else: keep the old pack playing.
+                }
+                _ => {
+                    // Stale (a newer request supersedes it) or cancelled: drop.
+                }
             }
-            state.pending_pack_seq = None;
-            let Ok(pack) = *result else {
-                // Keep the old pack playing.
-                return;
-            };
-            // Already resampled + precomputed at our rate (the worker read
-            // it when it spawned; a device switch would have cancelled this
-            // swap), so the swap itself is just a buffer handover.
-            state.pack = Some(pack);
-            state.key_sinks.clear();
+            // Drain one queued request, if any — the newest wins, the rest
+            // were already collapsed into it.
+            if let Some((queued_id, queued_ucoe)) = state.queued_load.take() {
+                state.load_seq += 1;
+                let queued_seq = state.load_seq;
+                state.pending_pack_seq = Some(queued_seq);
+                state.loading_pack = true;
+                spawn_load_worker(cmd_tx, queued_seq, queued_id, state.device_rate, queued_ucoe);
+            }
         }
         AudioCommand::SwitchDevice(device_id) => {
             // User-initiated switch: on failure, keep the previous device
@@ -404,6 +505,8 @@ fn handle_command(
             // to default (that's reserved for the device-removed case,
             // where there's no "previous" device left to keep).
             state.pending_pack_seq = None;
+            state.loading_pack = false;
+            state.queued_load = None;
             let _ = state.switch_device(device_id);
         }
     }

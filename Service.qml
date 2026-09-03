@@ -168,6 +168,8 @@ Item {
       var line = lines[lines.length - 1]
       console.info("sorakey freshness: " + line)
       if (line.indexOf("up to date") !== -1) return
+      stdout.text = ""
+      stderr.text = ""
       Quickshell.execDetached(["systemctl", "--user", "restart", "sorakey"])
     }
   }

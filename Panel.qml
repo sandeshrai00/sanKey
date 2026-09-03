@@ -87,10 +87,10 @@ Panel {
   // single persistent result slot: every result feed mirrors here, so the
   // panel shows the latest outcome until the next one (no auto-clear)
   property string lastResult: ""
-  onImportStatusChanged: if (root.importStatus !== "") root.lastResult = root.importStatus
-  onExportStatusChanged: if (root.exportStatus !== "") root.lastResult = root.exportStatus
-  onErrorToastChanged: if (root.errorToast !== "") root.lastResult = root.errorToast
-  onUpdateStatusChanged: if (root.updateStatus !== "") root.lastResult = root.updateStatus
+  onImportStatusChanged: if (root.importStatus !== "") root.lastResult = String(root.importStatus).slice(0, 500)
+  onExportStatusChanged: if (root.exportStatus !== "") root.lastResult = String(root.exportStatus).slice(0, 500)
+  onErrorToastChanged: if (root.errorToast !== "") root.lastResult = String(root.errorToast).slice(0, 500)
+  onUpdateStatusChanged: if (root.updateStatus !== "") root.lastResult = String(root.updateStatus).slice(0, 500)
   property string pendingCtlCmd: ""
   property var audioDevices: []
   property string audioDeviceSelected: ""
@@ -295,6 +295,8 @@ Panel {
       var err = String(stderr.text || "").trim()
       if (exitCode === 0) root.updateStatus = String(stdout.text || "").trim().split("\n").pop().replace("io.github.sandeshrai00.sorakey", "Sorakey")
       else root.updateStatus = err !== "" ? err : "Update failed."
+      stdout.text = ""
+      stderr.text = ""
       clearUpdateTimer.restart()
     }
   }
@@ -489,6 +491,7 @@ Panel {
         } catch(e) {}
         root.refreshPacks()
       }
+      stdout.text = ""
     }
     stdout: StdioCollector { waitForEnd: true }
   }
@@ -517,6 +520,8 @@ Panel {
         root.refreshStatus()
         root.refreshPacks()
       }
+      stdout.text = ""
+      stderr.text = ""
     }
   }
 
