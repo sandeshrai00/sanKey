@@ -657,23 +657,23 @@ Panel {
             width: parent.width
             spacing: Style.space(6)
             PanelSectionHeader { text: "PANEL"; foreground: root.bar.foreground }
-            Dropdown {
+Dropdown {
               width: parent.width
-              label: "Bar section"
               value: root.currentBarSection
               options: [{value:"left",label:"Left"},{value:"center",label:"Center"},{value:"right",label:"Right"}]
               foreground: root.bar.foreground
+              rowHeight: Style.spacing.controlHeight + 8
                             opacity: root.muted ? 0.5 : 1.0
               onChanged: function(v){ root.moveToSection(v) }
             }
             PanelSeparator { foreground: root.bar.foreground }
             PanelSectionHeader { text: "AUDIO OUTPUT"; foreground: root.bar.foreground }
-            Dropdown {
+Dropdown {
               width: parent.width
-              label: "Device"
               value: root.audioDeviceSelected
               options: root.audioDevices
               foreground: root.bar.foreground
+              rowHeight: Style.spacing.controlHeight + 8
                             opacity: root.muted ? 0.5 : 1.0
               onChanged: function(v){ root.setAudioDevice(v) }
             }
@@ -873,7 +873,7 @@ Panel {
                 options: Model.packOptions(root.keyboardPacks)
                 foreground: root.bar.foreground
                                 opacity: root.muted ? 0.5 : 1.0
-                rowHeight: Style.spacing.controlHeight
+                rowHeight: Style.spacing.controlHeight + 8
                 placeholderText: "Search packs…"
                 deleteConfirmId: root.deleteConfirmId
                 deleting: root.deleting
