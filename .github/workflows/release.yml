@@ -9,6 +9,7 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: x86_64
@@ -32,14 +33,18 @@ jobs:
           components: rustfmt, clippy
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libevdev-dev libxtst-dev libxi-dev pkg-config
-      - name: Install aarch64 cross toolchain
+      - name: Install cross
         if: matrix.arch == 'aarch64'
         run: |
-          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "target-aarch64-unknown-linux-gnu-linker=aarch64-linux-gnu-gcc" >> daemon/.cargo/config.toml
+          curl -sSf https://cross.rust-lang.org/install.sh | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Build sorakey ${{ matrix.arch }}
         run: |
-          cargo build --locked --release --manifest-path daemon/Cargo.toml --target ${{ matrix.target }}
+          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+            cross build --locked --release --manifest-path daemon/Cargo.toml --target aarch64-unknown-linux-gnu
+          else
+            cargo build --locked --release --manifest-path daemon/Cargo.toml --target x86_64-unknown-linux-gnu
+          fi
           mkdir -p dist
           cp daemon/target/${{ matrix.target }}/release/sorakey dist/sorakey-${{ matrix.arch }}
           (cd dist && sha256sum sorakey-${{ matrix.arch }} > SHA256SUMS-${{ matrix.arch }})
