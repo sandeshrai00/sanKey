@@ -744,7 +744,7 @@ Panel {
             PanelSectionHeader { text: "DANGER"; foreground: root.bar.foreground }
             Button {
               text: root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey"
-              iconText: ""
+              iconText: "󰛌"
               selected: true
               width: parent.width - Style.space(24)
               anchors.horizontalCenter: parent.horizontalCenter
