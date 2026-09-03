@@ -7,7 +7,7 @@ import qs.Commons
 import "Model.js" as Model
 
 // Sorakey panel — status, mute/volume, soundpacks, install controls.
-// Polls `sorakey ctl status` every 5s when open; ctl/systemctl are one-shot.
+// Polls `sorakey ctl status` every second (open or closed); ctl/systemctl are one-shot.
 Panel {
   id: root
   moduleName: "io.github.sandeshrai00.sorakey"
@@ -464,10 +464,10 @@ Panel {
     }
   }
 
-  // poll when open: status every 5s, packs every 30s (packs change only on
+  // poll when open: status every second, packs every 30s (packs change only on
   // import/delete)
   Timer {
-    interval: 5000
+    interval: 1000
     repeat: true
     running: root.installed && root.opened
     onTriggered: root.refreshStatus()
@@ -478,11 +478,12 @@ Panel {
     running: root.installed && root.opened
     onTriggered: root.refreshPacks()
   }
-  // light poll when closed
+  // light poll when closed (must NOT require root.running: this is the timer
+  // that detects the daemon coming up after install/enable/restart)
   Timer {
-    interval: 30000
+    interval: 1000
     repeat: true
-    running: root.installed && !root.opened && root.running
+    running: root.installed && !root.opened
     onTriggered: root.refreshStatus()
   }
 
@@ -504,7 +505,7 @@ Panel {
     text: "󰌌"
     dimmed: !root.running
     active: root.running && root.muted
-    tooltipText: "Sorakey — Playing\nRight-click: Mute\nCtrl+Alt+M: Global mute"
+    tooltipText: "Sorakey — " + root.statusText + "\nRight-click: Mute\nCtrl+Alt+M: Global mute"
     onPressed: function(b) {
       if (b === Qt.RightButton) {
         if (root.running) root.setMuted(!root.muted)
