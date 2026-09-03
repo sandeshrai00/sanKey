@@ -23,6 +23,9 @@ Panel {
   readonly property string pluginVersion: service && service.manifest && service.manifest.version ? String(service.manifest.version) : ""
   property string pluginCommit: ""
 
+  // plugin logo — match the bar foreground: white logo on dark themes, black on light
+  readonly property string logoSource: root.bar.foreground.hslLightness > 0.5 ? "logo.svg" : "logo-dark.svg"
+
   property bool importing: service ? service.importing : false
   property string importStatus: {
     if (importing) return "Importing…"
@@ -512,7 +515,16 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "󰌌"
+    iconComponent: Component {
+      Image {
+        source: Qt.resolvedUrl(root.logoSource)
+        sourceSize: Qt.size(64, 64)
+        anchors.fill: parent
+        fillMode: Image.PreserveAspectFit
+        smooth: true
+        opacity: (root.running && root.muted) ? 0.5 : 1.0
+      }
+    }
     dimmed: !root.running
     active: root.running && root.muted
     tooltipText: "Sorakey — " + root.statusText + "\nRight-click: Mute\nCtrl+Alt+M: Global mute"
@@ -568,12 +580,12 @@ Panel {
           width: parent.width
           implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, Math.max(muteSwitch.implicitHeight, settingsButton.implicitHeight))
 
-          Text {
+          Image {
             id: heroIcon
-            text: "󰌌"
-            color: root.bar.foreground
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.display
+            source: Qt.resolvedUrl(root.logoSource)
+            sourceSize.height: Style.font.display
+            fillMode: Image.PreserveAspectFit
+            smooth: true
             opacity: root.muted ? 0.5 : 1.0
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
