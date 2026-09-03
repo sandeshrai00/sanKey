@@ -920,14 +920,17 @@ Panel {
 
           Row {
             id: controlRow
-            width: parent.width
-            spacing: 0
+            width: parent.width - Style.space(24)
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(12)
 
             Button {
               id: startStopButton
-              width: (controlRow.width - 1) / 2
+              width: (controlRow.width - 2 * Style.space(12) - 1) / 2
               text: root.running ? "Stop" : "Start"
               foreground: root.bar.foreground
+              verticalPadding: Style.spacing.controlPaddingY + 4
+              selected: true
               onClicked: root.running ? root.stopDaemon() : root.startDaemon()
             }
 
@@ -940,9 +943,11 @@ Panel {
 
             Button {
               id: restartButton
-              width: (controlRow.width - 1) / 2
+              width: (controlRow.width - 2 * Style.space(12) - 1) / 2
               text: "Restart"
               foreground: root.bar.foreground
+              verticalPadding: Style.spacing.controlPaddingY + 4
+              selected: true
               tooltipText: "Restart sorakey"
               onClicked: root.restartDaemon()
             }
