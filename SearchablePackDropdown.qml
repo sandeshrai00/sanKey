@@ -91,8 +91,7 @@ Item {
 
       readonly property bool _focused: trigger.activeFocus
       readonly property bool _hot: triggerHover.hovered || root.hasCursor
-      // no resting outline (matches kit buttons); hover/focus ring still shows
-      readonly property var _borderSpec: (trigger._focused || trigger._hot) ? Border.controlSpec(trigger._focused ? "focus" : "hover-cursor", root.foreground, root.accent) : Border.none()
+      readonly property var _borderSpec: Border.controlSpec(trigger._focused ? "focus" : (trigger._hot ? "hover-cursor" : "normal"), root.foreground, root.accent)
 
       color: Style.controlFill(trigger._focused, trigger._hot, root.foreground, root.accent)
       borderSpec: _borderSpec
