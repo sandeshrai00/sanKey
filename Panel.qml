@@ -863,7 +863,6 @@ Panel {
               SearchablePackDropdown {
                 id: kbPack
                 width: parent.width - randomButton.width - parent.spacing
-                label: "Keyboard"
                 value: root.keyboardPack
                 options: Model.packOptions(root.keyboardPacks)
                 foreground: root.bar.foreground
