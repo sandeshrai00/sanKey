@@ -6,7 +6,7 @@ use crate::libs::cli_args::qualify_soundpack_id;
 use crate::state::paths;
 use std::io::{ BufRead, BufReader, Read, Write };
 use std::os::unix::net::{ UnixListener, UnixStream };
-use std::path::PathBuf;
+use std::path::{ Path, PathBuf };
 
 pub fn socket_path() -> PathBuf {
     match std::env::var("XDG_RUNTIME_DIR") {
@@ -131,7 +131,7 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
 
 fn clamp_percent(v: Option<&serde_json::Value>) -> Option<f32> {
     let n = v?.as_f64()?;
-    if n < 0.0 || n > 100.0 {
+    if !(0.0..=100.0).contains(&n) {
         return None;
     }
     Some(n as f32)
@@ -324,7 +324,7 @@ fn packs() -> String {
     ok(serde_json::json!({ "keyboard": keyboard }))
 }
 
-fn collect_packs(base: &PathBuf, kind: &str) -> Vec<String> {
+fn collect_packs(base: &Path, kind: &str) -> Vec<String> {
     let mut ids: Vec<String> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(base.join(kind)) {
         for e in entries.flatten() {
@@ -440,6 +440,33 @@ fn fail(e: &str) -> String {
     serde_json::json!({ "ok": false, "error": e }).to_string()
 }
 
+/// `sorakey ctl '<json>'` client — one request, one response line.
+pub fn ctl_client(request: &str) -> i32 {
+    let path = socket_path();
+    let mut stream = match UnixStream::connect(&path) {
+        Ok(s) => s,
+        Err(_) => {
+            print!("{}", fail("daemon not running"));
+            return 1;
+        }
+    };
+    if stream.write_all(request.as_bytes()).is_err() || stream.write_all(b"\n").is_err() {
+        print!("{}", fail("write failed"));
+        return 1;
+    }
+    let mut out = String::new();
+    {
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+        let mut reader = BufReader::new(&stream);
+        if reader.read_line(&mut out).is_err() {
+            print!("{}", fail("read failed"));
+            return 1;
+        }
+    }
+    print!("{out}");
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,7 +477,7 @@ mod tests {
         let (server, client) = UnixStream::pair().expect("socketpair");
         let mut client = client;
 
-        let filler: String = std::iter::repeat('a').take(70 * 1024).collect();
+        let filler: String = "a".repeat(70 * 1024);
         let request = format!("{{\"cmd\":\"status\",\"pad\":\"{filler}\"}}\n");
         client
             .write_all(request.as_bytes())
@@ -459,7 +486,7 @@ mod tests {
         let (cmd_tx, _cmd_rx) = crossbeam_channel::unbounded::<AudioCommand>();
         let engine = AudioEngineHandle { tx: cmd_tx };
 
-        let mut server = server;
+        let server = server;
         server
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .expect("timeout");
@@ -489,7 +516,7 @@ mod tests {
         let (cmd_tx, _cmd_rx) = crossbeam_channel::unbounded::<AudioCommand>();
         let engine = AudioEngineHandle { tx: cmd_tx };
 
-        let mut server = server;
+        let server = server;
         server
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .expect("timeout");
@@ -505,31 +532,4 @@ mod tests {
             "status must succeed, got: {response}"
         );
     }
-}
-
-/// `sorakey ctl '<json>'` client — one request, one response line.
-pub fn ctl_client(request: &str) -> i32 {
-    let path = socket_path();
-    let mut stream = match UnixStream::connect(&path) {
-        Ok(s) => s,
-        Err(_) => {
-            print!("{}", fail("daemon not running"));
-            return 1;
-        }
-    };
-    if stream.write_all(request.as_bytes()).is_err() || stream.write_all(b"\n").is_err() {
-        print!("{}", fail("write failed"));
-        return 1;
-    }
-    let mut out = String::new();
-    {
-        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
-        let mut reader = BufReader::new(&stream);
-        if reader.read_line(&mut out).is_err() {
-            print!("{}", fail("read failed"));
-            return 1;
-        }
-    }
-    print!("{out}");
-    0
 }

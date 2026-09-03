@@ -26,15 +26,13 @@ pub fn convert_v1_to_v2(
     output_path: &str,
     soundpack_dir: Option<&str>
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let soundpack_dir = if let Some(dir) = soundpack_dir {
-        dir
-    } else {
-        let inferred_dir = Path::new(v1_config_path)
-            .parent()
-            .and_then(|p| p.to_str())
-            .ok_or("Could not determine soundpack directory")?;
-        inferred_dir
-    };
+    let soundpack_dir = soundpack_dir
+        .unwrap_or(
+            Path::new(v1_config_path)
+                .parent()
+                .and_then(|p| p.to_str())
+                .ok_or("Could not determine soundpack directory")?,
+        );
 
     let content = path
         ::read_file_contents(v1_config_path)
@@ -122,11 +120,11 @@ pub fn convert_v1_to_v2(
         crate::always_print!("🎵 Creating concatenated audio file: {}", concat_filename);
 
         let audio_file_info = match
-            concatenate_audio_files_with_timing(
-                &audio_files_ordered,
-                soundpack_dir,
-                &concat_filename
-            )
+                concatenate_audio_files_with_timing(
+                    &audio_files_ordered,
+                    soundpack_dir,
+                    concat_filename
+                )
         {
             Ok(timing_info) => timing_info,
             Err(e) => {

@@ -40,11 +40,27 @@ omarchy plugin add https://github.com/sandeshrai00/soraKey.git --enable
 
 ## Usage
 
-- **Left-click** the keyboard icon → panel: mute switch, volume slider,
-  soundpack dropdown, **Random**, **Import pack…**, **Open folder**,
-  Start/Stop/Restart, and Settings (bar icon position).
+- **Left-click** the keyboard icon → panel: mute switch, per-pack volume
+  slider, soundpack dropdown (search, delete), **Random**, **Import pack…**,
+  **Open folder**, a live **Test typing** box, and Start/Stop/Restart.
 - **Right-click** → toggle mute. **Scroll** on the icon → volume.
+- **Ctrl+Alt+M** → global mute, from anywhere (system-wide hotkey).
 - **Escape** closes the panel, **Tab** / **Shift+Tab** switches panels.
+- **Settings** (gear in the panel header): bar icon position, audio output
+  device, and **Export error logs** (saves a report of recent errors to a
+  file via a GTK save dialog, or `~/Downloads` when run from a terminal).
+
+The volume slider is **per soundpack**: each pack keeps its own level, and
+clicking the percentage label resets it to that pack's recommended default.
+Packs whose `config.json` sets `options.recommended_volume` start at that
+level automatically.
+
+## Output device
+
+Settings → **AUDIO OUTPUT** lists the system's output devices (plus
+**System default**). Pick one to route keyboard sounds there; **Rescan
+devices** refreshes the list. The choice persists and is reported by
+`status` as `audio_device`.
 
 ## Configure
 
@@ -55,6 +71,14 @@ omarchy bar move io.github.sandeshrai00.sorakey --section center
 Mute, volume and soundpack persist across restarts
 (`~/.local/share/sorakey/data/config.json`); the icon section persists across
 disable/re-enable.
+
+## Auto-start
+
+The daemon is a `systemd` user service, enabled at install, so it starts
+automatically at login. The panel's **Stop** halts it for the current session
+(without disabling it) — it comes back at the next login. **Start** brings it
+back immediately. To turn auto-start off entirely, disable the unit
+(`systemctl --user disable sorakey`) or remove the plugin (see Remove).
 
 ## Update
 
@@ -78,9 +102,12 @@ the source moved past the last tag — then restarts the daemon if it changed.
 # stops the daemon, removes binary + service file, keeps soundpacks as .bak
 ~/.config/omarchy/plugins/io.github.sandeshrai00.sorakey/scripts/uninstall.sh
 omarchy plugin remove io.github.sandeshrai00.sorakey --yes
+omarchy restart shell
 ```
 
-`uninstall.sh --purge` deletes the soundpacks too.
+`uninstall.sh` moves `~/.local/share/sorakey` (packs **and** settings) to a
+`.bak` timestamped folder; `uninstall.sh --purge` deletes it instead. The
+final `omarchy restart shell` drops the bar icon.
 
 ## Import a soundpack
 
@@ -94,11 +121,29 @@ contain a `config.json` (V2 format).
 `sorakey ctl '<json>'` speaks one JSON line in, one JSON line out, over
 `$XDG_RUNTIME_DIR/sorakey.sock`:
 
-- `status` — running, muted, volume, active pack
+- `status` — running, muted, volume, per-pack volume, active pack, audio device
 - `mute {"muted": true|false}`
-- `volume {"value": 0-100}`
-- `keyboard_pack {"id": "keyboard/..."}`
+- `volume {"value": 0-100}` — global level (used when no pack is selected)
+- `per_pack_volume {"id": "keyboard/...", "value": 0-100}`
+- `reset_volume {"id": "keyboard/..."}` — back to the pack's recommended level
+- `keyboard_pack {"id": "keyboard/..."}` — switch the active pack
 - `packs` — list available packs
+- `delete_pack {"id": "keyboard/..."}` — remove a pack (falls back to another)
+- `audio_devices` — list output devices + current selection
+- `select_device {"id": "..."}` — route output there (`null` = system default)
+- `set_bar_section {"section": "left|center|right"}` / `get_bar_section`
+- `diag` — memory (RSS/HWM), per-pack entry + cache sizes, active pack
+- `export_logs` — recent error log as text, with a suggested filename
+
+## Diagnostics & logs
+
+- **Memory / cache**: `sorakey ctl '{"cmd":"diag"}'` reports resident
+  memory, the soundpack cache size, and per-pack volume entries — useful for
+  spotting unbounded growth.
+- **Error logs**: the daemon keeps a rolling buffer of recent errors.
+  Settings → **Export error logs** opens a GTK save dialog (or run
+  `scripts/sorakey-export-logs.py <name>` from a terminal to write straight to
+  `~/Downloads`). The file is named `sorakey-log-<timestamp>.txt`.
 
 ## Files
 
@@ -111,7 +156,7 @@ contain a `config.json` (V2 format).
 | `scripts/sorakey-setup` | One-click installer |
 | `scripts/sorakey-import-pack.py` | GTK4 file-picker + ZIP extractor |
 | `scripts/build-sorakey.sh` | Verified-prebuilt-or-source daemon build |
-| `scripts/uninstall.sh` | Removes daemon, unit file, binary (`--purge`: packs too) |
+| `scripts/uninstall.sh` | Removes daemon, unit file, binary (`--purge`: all data too) |
 | `daemon/` | The `sorakey` Rust daemon (trimmed MechvibesDX core) |
 | `daemon/soundpacks/` | Built-in V2 soundpacks |
 

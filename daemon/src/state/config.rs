@@ -132,7 +132,7 @@ impl AppConfig {
         let config_path = paths::data::config_json();
 
         if let Some(parent) = config_path.parent() {
-            if let Err(_) = path::ensure_directory_exists(parent) {
+            if path::ensure_directory_exists(parent).is_err() {
                 crate::always_eprint!("⚠️  Could not create data directory");
             }
         }
@@ -303,20 +303,11 @@ mod tests {
         );
     }
 
-    #[test]
-
-    /// Missing field in `data_equals` silently drops the change.
-    #[test]
-
     /// Reload before mutate to keep concurrent changes.
     #[test]
     fn reloading_before_mutating_preserves_a_concurrent_change() {
-        let mut on_disk = AppConfig::default();
+        let on_disk = AppConfig { enable_sound: false, ..Default::default() };
 
-        // user mutes
-        on_disk.enable_sound = false;
-
-        // re-read before mutating
         let mut fresh = on_disk.clone();
         fresh.volume = 0.5;
 

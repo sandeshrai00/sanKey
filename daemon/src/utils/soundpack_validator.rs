@@ -127,12 +127,12 @@ pub fn validate_soundpack_config(config_path: &str) -> SoundpackValidationResult
             missing_fields.push("definitions or defines".to_string());
         }
 
-        if !config.get("name").is_some() {
+        if config.get("name").is_none() {
             missing_fields.push("name".to_string());
         }
         SoundpackValidationResult {
             status: SoundpackValidationStatus::MissingRequiredFields(missing_fields.clone()),
-            config_version: config_version,
+            config_version,
             detected_version: package_version,
             is_valid_v2: false,
             can_be_converted: has_defines && has_sound_field, // Can convert if it looks like V1
@@ -151,11 +151,11 @@ fn validate_v2_structure(
     let mut issues = Vec::new();
 
     // required V2 fields
-    if !config.get("name").is_some() {
+    if config.get("name").is_none() {
         missing_fields.push("name".to_string());
     }
 
-    if !config.get("author").is_some() && !config.get("m_author").is_some() {
+    if config.get("author").is_none() && config.get("m_author").is_none() {
         missing_fields.push("author".to_string());
     }
 

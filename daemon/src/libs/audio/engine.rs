@@ -34,8 +34,8 @@ pub enum AudioCommand {
         update_cache_on_error: bool,
     },
     /// Internal: the off-engine-thread pack-load worker finished; `seq` is the
-/// request sequence it was spawned for (stale results are dropped).
-    PackLoaded(u64, Result<super::soundpack_loader::LoadedPack, String>),
+    /// request sequence it was spawned for (stale results are dropped).
+    PackLoaded(u64, Box<Result<super::soundpack_loader::LoadedPack, String>>),
     SwitchDevice(Option<String>), // None = system default
 }
 
@@ -375,7 +375,7 @@ fn handle_command(
                     }
                     _ => {}
                 }
-                let _ = tx.send(AudioCommand::PackLoaded(seq, loaded));
+                let _ = tx.send(AudioCommand::PackLoaded(seq, Box::new(loaded)));
             });
         }
         AudioCommand::PackLoaded(seq, result) => {
@@ -388,7 +388,7 @@ fn handle_command(
                 return; // a newer request supersedes this one; it will be applied
             }
             state.pending_pack_seq = None;
-            let Ok(pack) = result else {
+            let Ok(pack) = *result else {
                 // Keep the old pack playing.
                 return;
             };

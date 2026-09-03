@@ -57,6 +57,7 @@ fn acquire_lock() -> Option<std::fs::File> {
     let file = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
+        .truncate(false) // lock file — the flock is the content, never empty it
         .open(&path)
         .ok()?;
     let fd = std::os::unix::io::AsRawFd::as_raw_fd(&file);

@@ -119,9 +119,6 @@ mod tests {
     fn a_slow_writer_finishing_late_does_not_revert_a_concurrent_change() {
         let mut authority = Authority::new();
 
-        // check starts — only value, no config held
-        let recorded_check_time = 1_700_000_000;
-
         // user changes volume and sound during request
         authority.apply(|config| {
             config.volume = 0.35;
@@ -244,7 +241,7 @@ mod tests {
                 let barrier = Arc::clone(&barrier);
                 std::thread::spawn(move || {
                     barrier.wait();
-                    for round in 0..iterations {
+                    for _ in 0..iterations {
                         match id {
                             0 => apply(|config| { config.volume = 0.5; }),
                             1 => apply(|config| { config.volume = 0.25; }),
@@ -267,7 +264,9 @@ mod tests {
         apply(|config| { *config = original; });
         // At least one writer's effect must be present; exact values race but no panic proves compose
         assert!(final_config.volume == 0.5 || final_config.volume == 0.25);
-        assert!(!final_config.enable_sound || final_config.auto_start || true);
+        // These fields each have a single writer, so their final value is deterministic.
+        assert!(!final_config.enable_sound, "mute writer's effect must survive");
+        assert!(final_config.auto_start, "auto_start writer's effect must survive");
     }
 
     /// Reader never sees a truncated document.

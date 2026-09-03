@@ -125,8 +125,7 @@ pub fn load_soundpack_metadata(soundpack_id: &str) -> Result<SoundpackMetadata, 
                 "requires_newer_app_version".to_string()
             }
         },
-        // Error tracking - clear error if we successfully loaded metadata
-        last_error: last_error,
+        last_error,
     })
 }
 
