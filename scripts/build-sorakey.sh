@@ -9,7 +9,7 @@ LIB_DIR="$HOME/.local/lib/sorakey"
 BIN="$HOME/.local/bin/sorakey"
 REPO="sandeshrai00/soraKey"
 
-mkdir -p "$CACHE_DIR" "$LIB_DIR"
+mkdir -p "$CACHE_DIR" "$LIB_DIR" "$(dirname "$BIN")"
 
 version="$(python3 -c "import json;print(json.load(open('$MANIFEST'))['version'])" 2>/dev/null || echo "0.0.0")"
 arch="$(uname -m)"
@@ -55,14 +55,18 @@ try_download_prebuilt() {
   echo "Trying verified prebuilt $url ..."
   if curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 -o "$tmp/$asset" "$url" 2>/dev/null \
     && curl --proto '=https' --tlsv1.2 -fsSL --max-time 30 -o "$tmp/SHA256SUMS" "$sums" 2>/dev/null; then
-    # normalize SHA256SUMS
-    sed -i "s|dist/||g; s|\*${asset}|${asset}|g" "$tmp/SHA256SUMS" 2>/dev/null || true
-    if (cd "$tmp" && sha256sum -c "${asset}" >/dev/null 2>&1 || (cd "$tmp" && sha256sum -c SHA256SUMS >/dev/null 2>&1)); then
+    # normalize SHA256SUMS, then verify ONLY the downloaded asset.
+    # (The file lists every arch; sha256sum -c over the whole file fails
+    # on the binaries we didn't download, rejecting a good prebuilt.)
+    sed -i "s|dist/||g; s|\*||g" "$tmp/SHA256SUMS" 2>/dev/null || true
+    expected=$(awk -v a="$asset" '$2 == a {print $1; exit}' "$tmp/SHA256SUMS" 2>/dev/null)
+    actual=$(sha256sum "$tmp/$asset" 2>/dev/null | awk '{print $1}')
+    if [[ -n "$expected" && "$expected" == "$actual" ]]; then
       if gh_can_verify; then
         if GH_PROMPT_DISABLED=1 gh attestation verify "$tmp/$asset" --repo "$REPO" \
              --cert-identity-regex "https://github.com/$REPO/.github/workflows/release.*" \
              --deny-self-hosted-runners 2>/dev/null; then
-          install -m 755 "$tmp/$asset" "$BIN"
+          install -m 755 "$tmp/$asset" "$BIN" || return 1
           [[ -n "$source_id" ]] && echo "$source_id" > "$LIB_DIR/source.sha256"
           rm -rf "$tmp"
           echo "Installed verified prebuilt $version $arch (attested)"
@@ -74,7 +78,7 @@ try_download_prebuilt() {
         return 1
       fi
       # no attestation possible — checksum already passed
-      install -m 755 "$tmp/$asset" "$BIN"
+      install -m 755 "$tmp/$asset" "$BIN" || return 1
       [[ -n "$source_id" ]] && echo "$source_id" > "$LIB_DIR/source.sha256"
       rm -rf "$tmp"
       echo "Installed prebuilt $version $arch (release checksum verified; attestation skipped — gh not logged in, run 'gh auth login' for the attested path)"
