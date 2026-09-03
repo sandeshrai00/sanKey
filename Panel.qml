@@ -389,6 +389,7 @@ Panel {
       if (root.opened) {
         root.refreshStatus()
         root.refreshPacks()
+        root.refreshAudioDevices()
         root.settingsOpen = false
         // clear the typing test box on every open
         Qt.callLater(function() { if (testType) testType.text = "" })
@@ -446,6 +447,21 @@ Panel {
   }
 
   // Audio output devices
+  property int devRetries: 0
+  Timer {
+    id: devRetryTimer
+    interval: 600
+    onTriggered: {
+      if (root.devRetries < 3) {
+        root.devRetries += 1
+        root.refreshAudioDevices()
+      } else {
+        root.devRetries = 0
+        root.errorToast = "Device refresh failed"
+        clearErrorToast.restart()
+      }
+    }
+  }
   Process {
     id: devicesProc
     command: [root.sorakeyBin, "ctl", "{\"cmd\":\"audio_devices\"}"]
@@ -454,19 +470,30 @@ Panel {
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode, exitStatus) {
       var out = String(stdout.text || "").trim()
-      var opts = null
+      var devs = null
       try {
         var r = JSON.parse(out)
-        var devs = (r && r.ok && Array.isArray(r.devices)) ? r.devices : []
-        // normalize to [{value,label}] + prepend System default
-        opts = devs.map(function(d){ return { value: String(d.id), label: String(d.name) } })
+        devs = (r && r.ok && Array.isArray(r.devices)) ? r.devices : null
       } catch (e) {
-        opts = []
+        devs = null
       }
+      if (!devs || devs.length === 0) {
+        // failed/empty fetch: retry a few times (daemon may be mid-restart),
+        // keep the existing list instead of wiping it
+        devRetryTimer.restart()
+        return
+      }
+      root.devRetries = 0
+      // normalize to [{value,label}] + prepend System default
+      var opts = devs.map(function(d){ return { value: String(d.id), label: String(d.name) } })
       opts.unshift({ value: "", label: "System default" })
       var ids = opts.map(function(o){ return o.value }).join("\n")
       var cur = root.audioDevices.map(function(o){ return o.value }).join("\n")
       if (ids !== cur) root.audioDevices = opts
+      // saved device vanished from a good enumeration (unplugged/renamed):
+      // fall back to System default instead of showing a raw id
+      if (root.audioDeviceSelected !== "" && ids.split("\n").indexOf(root.audioDeviceSelected) === -1)
+        root.setAudioDevice("")
     }
   }
 
