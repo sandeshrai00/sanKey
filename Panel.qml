@@ -518,10 +518,11 @@ Panel {
     iconComponent: Component {
       Image {
         source: Qt.resolvedUrl(root.logoSource)
-        sourceSize: Qt.size(64, 64)
+        sourceSize.width: 384
         anchors.fill: parent
         fillMode: Image.PreserveAspectFit
         smooth: true
+        mipmap: true
         opacity: (root.running && root.muted) ? 0.5 : 1.0
       }
     }
@@ -583,9 +584,10 @@ Panel {
           Image {
             id: heroIcon
             source: Qt.resolvedUrl(root.logoSource)
-            sourceSize.height: Style.font.display
+            sourceSize.height: Style.font.display * 2
             fillMode: Image.PreserveAspectFit
             smooth: true
+            mipmap: true
             opacity: root.muted ? 0.5 : 1.0
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
