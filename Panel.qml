@@ -24,7 +24,9 @@ Panel {
   property string pluginCommit: ""
 
   // plugin logo — match the bar foreground: white logo on dark themes, black on light
+  // full logo (with text) for the panel hero, solid keycap for the small bar slot
   readonly property string logoSource: root.bar.foreground.hslLightness > 0.5 ? "logo.svg" : "logo-dark.svg"
+  readonly property string barLogoSource: root.bar.foreground.hslLightness > 0.5 ? "logo-bar.svg" : "logo-bar-dark.svg"
 
   property bool importing: service ? service.importing : false
   property string importStatus: {
@@ -517,7 +519,7 @@ Panel {
     bar: root.bar
     iconComponent: Component {
       Image {
-        source: Qt.resolvedUrl(root.logoSource)
+        source: Qt.resolvedUrl(root.barLogoSource)
         sourceSize.width: 384
         anchors.fill: parent
         fillMode: Image.PreserveAspectFit
