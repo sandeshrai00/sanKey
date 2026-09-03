@@ -926,7 +926,7 @@ Panel {
 
             Button {
               id: startStopButton
-              width: (controlRow.width - 2 * Style.space(12) - 1) / 2
+              width: (controlRow.width - Style.space(12)) / 2
               text: root.running ? "Stop" : "Start"
               foreground: root.bar.foreground
               verticalPadding: Style.spacing.controlPaddingY + 4
@@ -934,16 +934,9 @@ Panel {
               onClicked: root.running ? root.stopDaemon() : root.startDaemon()
             }
 
-            // vertical divider, same 12% tint as PanelSeparator
-            Rectangle {
-              width: 1
-              height: startStopButton.height
-              color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12)
-            }
-
-            Button {
+Button {
               id: restartButton
-              width: (controlRow.width - 2 * Style.space(12) - 1) / 2
+              width: (controlRow.width - Style.space(12)) / 2
               text: "Restart"
               foreground: root.bar.foreground
               verticalPadding: Style.spacing.controlPaddingY + 4
