@@ -743,10 +743,9 @@ Panel {
             PanelSeparator { foreground: root.bar.foreground }
             PanelSectionHeader { text: "DANGER"; foreground: root.bar.foreground }
             Button {
-              bordered: true
               text: root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey"
               iconText: ""
-              foreground: "#ff6b6b"
+              selected: true
               width: parent.width - Style.space(24)
               anchors.horizontalCenter: parent.horizontalCenter
               verticalPadding: Style.spacing.controlPaddingY + 4
