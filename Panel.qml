@@ -65,6 +65,13 @@ Panel {
   property string deleteConfirmId: ""
   property bool deleting: false
   property string errorToast: ""
+  // single persistent result slot: every result feed mirrors here, so the
+  // panel shows the latest outcome until the next one (no auto-clear)
+  property string lastResult: ""
+  onImportStatusChanged: if (root.importStatus !== "") root.lastResult = root.importStatus
+  onExportStatusChanged: if (root.exportStatus !== "") root.lastResult = root.exportStatus
+  onErrorToastChanged: if (root.errorToast !== "") root.lastResult = root.errorToast
+  onUpdateStatusChanged: if (root.updateStatus !== "") root.lastResult = root.updateStatus
   property string pendingCtlCmd: ""
   property var audioDevices: []
   property string audioDeviceSelected: ""
@@ -80,7 +87,10 @@ Panel {
 
   property bool setupBusy: false
   property bool settingsOpen: false
+  property bool uninstallArmed: false
+  Timer { id: disarmUninstall; interval: 5000; onTriggered: root.uninstallArmed = false }
   onSettingsOpenChanged: {
+    if (!settingsOpen) root.uninstallArmed = false
     if (settingsOpen && root.pluginCommit === "" && !commitProc.running)
       commitProc.running = true
   }
@@ -646,7 +656,7 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.space(6)
-            PanelSectionHeader { text: "POSITION"; foreground: root.bar.foreground }
+            PanelSectionHeader { text: "PANEL"; foreground: root.bar.foreground }
             Dropdown {
               width: parent.width
               label: "Bar section"
@@ -673,6 +683,7 @@ Panel {
               onClicked: root.refreshAudioDevices()
             }
             PanelSeparator { foreground: root.bar.foreground }
+            PanelSectionHeader { text: "MAINTENANCE"; foreground: root.bar.foreground }
             Button {
               text: root.exporting ? "Exporting…" : "Export error logs"
               iconText: root.exporting ? "⏳" : "󰈯"
@@ -682,17 +693,6 @@ Panel {
               tooltipText: "Save a report of recent errors to a file"
               enabled: !root.exporting && root.installed
               onClicked: root.triggerExport()
-            }
-            Text {
-              visible: root.exportStatus !== ""
-              width: parent.width
-              horizontalAlignment: Text.AlignHCenter
-              text: root.exportStatus
-              color: root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
             }
             Button {
               text: root.updateBusy ? "Updating…" : "Update"
@@ -705,17 +705,6 @@ Panel {
               onClicked: root.doUpdate()
             }
             Text {
-              visible: root.updateStatus !== ""
-              width: parent.width
-              horizontalAlignment: Text.AlignHCenter
-              text: root.updateStatus
-              color: root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-            Text {
               visible: root.pluginVersion !== ""
               width: parent.width
               horizontalAlignment: Text.AlignHCenter
@@ -724,6 +713,31 @@ Panel {
               opacity: 0.45
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.caption
+            }
+            Text {
+              visible: root.lastResult !== ""
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: "> " + root.lastResult
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+            PanelSeparator { foreground: root.bar.foreground }
+            PanelSectionHeader { text: "DANGER"; foreground: root.bar.foreground }
+            Button {
+              text: root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey"
+              iconText: "✕"
+              foreground: "#ff6b6b"
+              bordered: true
+              width: parent.width
+              tooltipText: "Remove the plugin and stop the daemon"
+              onClicked: {
+                if (!root.uninstallArmed) { root.uninstallArmed = true; disarmUninstall.restart() }
+                else { root.uninstallArmed = false; root.remove() }
+              }
             }
           }
         }
@@ -891,9 +905,9 @@ Panel {
             }
 
             Text {
-              visible: root.importStatus !== ""
+              visible: root.lastResult !== ""
               width: parent.width
-              text: root.importStatus
+              text: "> " + root.lastResult
               color: root.bar.foreground
               opacity: 0.6
               font.family: root.bar.fontFamily
@@ -943,41 +957,8 @@ Panel {
 onClicked: root.restartDaemon()
              }
 
-             Item { width: 1; height: 1 }
-
-             Button {
-              id: removeButton
-              text: ""
-              iconText: "✕"
-              foreground: root.bar.foreground
-              opacity: 0.7
-              tooltipText: "Uninstall"
-onClicked: root.remove()
-             }
            }
 
-           Text {
-             visible: root.errorToast !== ""
-             width: parent.width
-             text: root.errorToast
-             color: root.bar.foreground
-             opacity: 0.8
-             font.family: root.bar.fontFamily
-             font.pixelSize: Style.font.caption
-             wrapMode: Text.WordWrap
-           }
-
-            Text {
-              visible: root.updateStatus !== ""
-              width: parent.width
-              horizontalAlignment: Text.AlignHCenter
-              text: root.updateStatus
-              color: root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
         }
       }
     }
