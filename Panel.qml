@@ -26,6 +26,9 @@ Panel {
 
   // plugin logo — bar follows foreground like other icons, hero wears the theme accent
   readonly property string barLogoSource: root.bar.foreground.hslLightness > 0.5 ? "logo-bar.svg" : "logo-bar-dark.svg"
+  // hero logo color: "theme" (Color.accent) or "default" (foreground white/black)
+  property string logoColorMode: "default"
+  readonly property string logoModeFile: home + "/.config/sorakey/logo-color-mode"
 
   property bool importing: service ? service.importing : false
   property string importStatus: {
@@ -236,6 +239,32 @@ Panel {
     stderr: StdioCollector { waitForEnd: true }
   }
 
+  // restore saved hero logo color mode ("theme" or "default")
+  Process {
+    id: logoRead
+    command: ["cat", root.logoModeFile]
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      var mode = String(stdout.text || "").trim()
+      if (mode === "default" || mode === "theme") root.logoColorMode = mode
+    }
+  }
+
+  Process {
+    id: logoWrite
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+  }
+
+  function setLogoColorMode(mode) {
+    if (mode !== "default" && mode !== "theme") return
+    root.logoColorMode = mode
+    if (!logoWrite.running) {
+      logoWrite.command = ["sh", "-c", "mkdir -p \"$(dirname \"" + root.logoModeFile + "\")\" && printf '%s' \"" + mode + "\" > \"" + root.logoModeFile + "\""]
+      logoWrite.running = true
+    }
+  }
+
   Process {
     id: commitProc
     command: ["git", "-C", root.pluginDir, "rev-parse", "--short", "HEAD"]
@@ -335,6 +364,7 @@ Panel {
     root.refreshStatus()
     root.refreshAudioDevices()
     sectionRead.running = true
+    logoRead.running = true
   }
 
   onOpenedChanged: {
@@ -584,7 +614,8 @@ Panel {
 
           Image {
             id: heroIcon
-            source: Qt.resolvedUrl("logo.svg")
+            source: root.logoColorMode === "theme" ? Qt.resolvedUrl("logo.svg")
+              : Qt.resolvedUrl(root.bar.foreground.hslLightness > 0.5 ? "logo.svg" : "logo-dark.svg")
             sourceSize.height: Style.font.display * 2
             fillMode: Image.PreserveAspectFit
             smooth: true
@@ -595,7 +626,7 @@ Panel {
             layer.enabled: true
             layer.effect: MultiEffect {
               colorization: 1.0
-              colorizationColor: Color.accent
+              colorizationColor: root.logoColorMode === "theme" ? Color.accent : root.bar.foreground
             }
           }
 
@@ -685,6 +716,17 @@ Dropdown {
               rowHeight: Style.spacing.controlHeight + 8
                             opacity: root.muted ? 0.5 : 1.0
               onChanged: function(v){ root.moveToSection(v) }
+            }
+            PanelSeparator { foreground: root.bar.foreground }
+            PanelSectionHeader { text: "APPEARANCE"; foreground: root.bar.foreground }
+Dropdown {
+              width: parent.width
+              value: root.logoColorMode
+              options: [{value:"default",label:"Default"},{value:"theme",label:"Match Theme"}]
+              foreground: root.bar.foreground
+              rowHeight: Style.spacing.controlHeight + 8
+                            opacity: root.muted ? 0.5 : 1.0
+              onChanged: function(v){ root.setLogoColorMode(v) }
             }
             PanelSeparator { foreground: root.bar.foreground }
             PanelSectionHeader { text: "AUDIO OUTPUT"; foreground: root.bar.foreground }
