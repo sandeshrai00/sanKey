@@ -594,96 +594,15 @@ fn iohook_code_and_press(define_key: &str) -> Option<(u32, bool)> {
 }
 
 fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
-    let mut mapping = HashMap::new();
+    // Standard range (codes 1-88) shares its codes with the Linux input-event
+    // table in utils/keymap.rs; seeding from it keeps the runtime listener and
+    // the converter on one source of truth. Everything below is IOHook-only
+    // codes that evdev does not use at the same value.
+    let mut mapping: HashMap<u32, String> = crate::utils::keymap::KEY_MAP
+        .iter()
+        .map(|&(code, name)| (code as u32, name.to_string()))
+        .collect();
 
-    mapping.insert(1, "Escape".to_string()); // VC_ESCAPE = 0x0001
-    mapping.insert(2, "Digit1".to_string()); // VC_1 = 0x0002
-    mapping.insert(3, "Digit2".to_string()); // VC_2 = 0x0003
-    mapping.insert(4, "Digit3".to_string()); // VC_3 = 0x0004
-    mapping.insert(5, "Digit4".to_string()); // VC_4 = 0x0005
-    mapping.insert(6, "Digit5".to_string()); // VC_5 = 0x0006
-    mapping.insert(7, "Digit6".to_string()); // VC_6 = 0x0007
-    mapping.insert(8, "Digit7".to_string()); // VC_7 = 0x0008
-    mapping.insert(9, "Digit8".to_string()); // VC_8 = 0x0009
-    mapping.insert(10, "Digit9".to_string()); // VC_9 = 0x000A
-    mapping.insert(11, "Digit0".to_string()); // VC_0 = 0x000B
-    mapping.insert(12, "Minus".to_string()); // VC_MINUS = 0x000C
-    mapping.insert(13, "Equal".to_string()); // VC_EQUALS = 0x000D
-    mapping.insert(14, "Backspace".to_string()); // VC_BACKSPACE = 0x000E
-    mapping.insert(15, "Tab".to_string()); // VC_TAB = 0x000F
-    mapping.insert(16, "KeyQ".to_string()); // VC_Q = 0x0010
-    mapping.insert(17, "KeyW".to_string()); // VC_W = 0x0011
-    mapping.insert(18, "KeyE".to_string()); // VC_E = 0x0012
-    mapping.insert(19, "KeyR".to_string()); // VC_R = 0x0013
-    mapping.insert(20, "KeyT".to_string()); // VC_T = 0x0014
-    mapping.insert(21, "KeyY".to_string()); // VC_Y = 0x0015
-    mapping.insert(22, "KeyU".to_string()); // VC_U = 0x0016
-    mapping.insert(23, "KeyI".to_string()); // VC_I = 0x0017
-    mapping.insert(24, "KeyO".to_string()); // VC_O = 0x0018
-    mapping.insert(25, "KeyP".to_string()); // VC_P = 0x0019
-    mapping.insert(26, "BracketLeft".to_string()); // VC_OPEN_BRACKET = 0x001A
-    mapping.insert(27, "BracketRight".to_string()); // VC_CLOSE_BRACKET = 0x001B
-    mapping.insert(28, "Enter".to_string()); // VC_ENTER = 0x001C
-    mapping.insert(29, "ControlLeft".to_string()); // VC_CONTROL_L = 0x001D
-    mapping.insert(30, "KeyA".to_string()); // VC_A = 0x001E
-    mapping.insert(31, "KeyS".to_string()); // VC_S = 0x001F
-    mapping.insert(32, "KeyD".to_string()); // VC_D = 0x0020
-    mapping.insert(33, "KeyF".to_string()); // VC_F = 0x0021
-    mapping.insert(34, "KeyG".to_string()); // VC_G = 0x0022
-    mapping.insert(35, "KeyH".to_string()); // VC_H = 0x0023
-    mapping.insert(36, "KeyJ".to_string()); // VC_J = 0x0024
-    mapping.insert(37, "KeyK".to_string()); // VC_K = 0x0025
-    mapping.insert(38, "KeyL".to_string()); // VC_L = 0x0026
-    mapping.insert(39, "Semicolon".to_string()); // VC_SEMICOLON = 0x0027
-    mapping.insert(40, "Quote".to_string()); // VC_QUOTE = 0x0028
-    mapping.insert(41, "Backquote".to_string()); // VC_BACKQUOTE = 0x0029
-    mapping.insert(42, "ShiftLeft".to_string()); // VC_SHIFT_L = 0x002A
-    mapping.insert(43, "Backslash".to_string()); // VC_BACK_SLASH = 0x002B
-    mapping.insert(44, "KeyZ".to_string()); // VC_Z = 0x002C
-    mapping.insert(45, "KeyX".to_string()); // VC_X = 0x002D
-    mapping.insert(46, "KeyC".to_string()); // VC_C = 0x002E
-    mapping.insert(47, "KeyV".to_string()); // VC_V = 0x002F
-    mapping.insert(48, "KeyB".to_string()); // VC_B = 0x0030
-    mapping.insert(49, "KeyN".to_string()); // VC_N = 0x0031
-    mapping.insert(50, "KeyM".to_string()); // VC_M = 0x0032
-    mapping.insert(51, "Comma".to_string()); // VC_COMMA = 0x0033
-    mapping.insert(52, "Period".to_string()); // VC_PERIOD = 0x0034
-    mapping.insert(53, "Slash".to_string()); // VC_SLASH = 0x0035
-    mapping.insert(54, "ShiftRight".to_string()); // VC_SHIFT_R = 0x0036
-    mapping.insert(55, "NumpadMultiply".to_string()); // VC_KP_MULTIPLY = 0x0037
-    mapping.insert(56, "AltLeft".to_string()); // VC_ALT_L = 0x0038
-    mapping.insert(57, "Space".to_string()); // VC_SPACE = 0x0039
-    mapping.insert(58, "CapsLock".to_string()); // VC_CAPS_LOCK = 0x003A
-
-    mapping.insert(59, "F1".to_string()); // VC_F1 = 0x003B
-    mapping.insert(60, "F2".to_string()); // VC_F2 = 0x003C
-    mapping.insert(61, "F3".to_string()); // VC_F3 = 0x003D
-    mapping.insert(62, "F4".to_string()); // VC_F4 = 0x003E
-    mapping.insert(63, "F5".to_string()); // VC_F5 = 0x003F
-    mapping.insert(64, "F6".to_string()); // VC_F6 = 0x0040
-    mapping.insert(65, "F7".to_string()); // VC_F7 = 0x0041
-    mapping.insert(66, "F8".to_string()); // VC_F8 = 0x0042
-    mapping.insert(67, "F9".to_string()); // VC_F9 = 0x0043
-    mapping.insert(68, "F10".to_string()); // VC_F10 = 0x0044
-    mapping.insert(69, "NumLock".to_string()); // VC_NUM_LOCK = 0x0045
-    mapping.insert(70, "ScrollLock".to_string()); // VC_SCROLL_LOCK = 0x0046
-
-    mapping.insert(71, "Numpad7".to_string()); // VC_KP_7 = 0x0047
-    mapping.insert(72, "Numpad8".to_string()); // VC_KP_8 = 0x0048
-    mapping.insert(73, "Numpad9".to_string()); // VC_KP_9 = 0x0049
-    mapping.insert(74, "NumpadSubtract".to_string()); // VC_KP_SUBTRACT = 0x004A
-    mapping.insert(75, "Numpad4".to_string()); // VC_KP_4 = 0x004B
-    mapping.insert(76, "Numpad5".to_string()); // VC_KP_5 = 0x004C
-    mapping.insert(77, "Numpad6".to_string()); // VC_KP_6 = 0x004D
-    mapping.insert(78, "NumpadAdd".to_string()); // VC_KP_ADD = 0x004E
-    mapping.insert(79, "Numpad1".to_string()); // VC_KP_1 = 0x004F
-    mapping.insert(80, "Numpad2".to_string()); // VC_KP_2 = 0x0050
-    mapping.insert(81, "Numpad3".to_string()); // VC_KP_3 = 0x0051
-    mapping.insert(82, "Numpad0".to_string()); // VC_KP_0 = 0x0052
-    mapping.insert(83, "NumpadDecimal".to_string()); // VC_KP_SEPARATOR = 0x0053
-
-    mapping.insert(87, "F11".to_string()); // VC_F11 = 0x0057
-    mapping.insert(88, "F12".to_string()); // VC_F12 = 0x0058
     mapping.insert(91, "F13".to_string()); // VC_F13 = 0x005B
     mapping.insert(92, "F14".to_string()); // VC_F14 = 0x005C
     mapping.insert(93, "F15".to_string()); // VC_F15 = 0x005D

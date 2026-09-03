@@ -170,6 +170,32 @@ fn create_soundpack_metadata(
     })
 }
 
+/// Convert a V1 pack to V2 in place, with a backup — the one sanctioned
+/// write-to-a-pack path. The metadata scan is a pure read (B5), so a pack
+/// becomes usable exactly when it is loaded (manually dropped packs; panel
+/// imports arrive pre-converted). A backup that cannot be written means the
+/// conversion is unrecoverable, so refuse to start it rather than convert
+/// without a safety net.
+fn convert_v1_if_needed(config_path: &str) -> Result<(), String> {
+    use crate::utils::soundpack_validator::{ validate_soundpack_config, SoundpackValidationStatus };
+    let validation = validate_soundpack_config(config_path);
+    if validation.status != SoundpackValidationStatus::VersionOneNeedsConversion {
+        return Ok(());
+    }
+    if !validation.can_be_converted {
+        return Err(format!("V1 pack cannot be converted: {}", validation.message));
+    }
+
+    let backup_path = format!("{}.v1.backup", config_path);
+    std::fs::copy(config_path, &backup_path)
+        .map_err(|e| format!("Refusing to convert: could not back up {} to {}: {}", config_path, backup_path, e))?;
+
+    crate::utils::config_converter::convert_v1_to_v2(config_path, config_path, None).map_err(|e| {
+        let _ = std::fs::copy(&backup_path, config_path); // restore the original
+        format!("Failed to convert {} from V1 to V2: {}", config_path, e)
+    })
+}
+
 /// Pure decode of a soundpack's audio — safe to run on any thread. No
 /// resampling, no cache writes, no engine state: the result is handed to the
 /// engine thread which prepares it at the device's rate.
@@ -180,6 +206,7 @@ pub(super) fn load_pack(soundpack_id: &str) -> Result<LoadedPack, String> {
 
     let soundpack_path = paths::soundpacks::soundpack_dir(soundpack_id);
     let config_path = paths::soundpacks::config_json(soundpack_id);
+    convert_v1_if_needed(&config_path)?;
     let config_content = std::fs
         ::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read config: {}", e))?;

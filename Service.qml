@@ -178,6 +178,9 @@ Item {
     // stop on disable/remove/reload
     Quickshell.execDetached(["systemctl", "--user", "stop", "sorakey"])
     Quickshell.execDetached(["systemctl", "--user", "disable", "sorakey"])
-    Quickshell.execDetached(["pkill", "-x", "sorakey"])
+    // exact-path match (the daemon's cmdline is its ExecStart): -x would hit
+    // any other process that happens to be named "sorakey"; the daemon writes
+    // no PID file so there is nothing tighter than this
+    Quickshell.execDetached(["pkill", "-f", Quickshell.env("HOME") + "/.local/bin/sorakey"])
   }
 }

@@ -23,9 +23,15 @@ mkdir -p "$INSTALLED"
 
 # rsync if available, else cp
 if command -v rsync >/dev/null 2>&1; then
-  rsync -a --delete \
+  # process docs are --delete-excluded: an excluded file survives --delete as
+  # a stale copy unless it's purged from the target too
+  rsync -a --delete --delete-excluded \
     --exclude=".git" \
     --exclude="target" \
+    --exclude="plan.md" \
+    --exclude="relse.md" \
+    --exclude="note.md" \
+    --exclude="CLEANUP.md" \
     "$DEV_DIR"/ "$INSTALLED"/
   # keep git worktree
   if [[ -d "$DEV_DIR/.git" ]]; then

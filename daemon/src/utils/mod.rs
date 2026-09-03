@@ -1,5 +1,6 @@
 pub mod auto_startup;
 pub mod config_converter;
+pub mod keymap;
 pub mod constants;
 pub mod data;
 pub mod log_buffer;
