@@ -688,8 +688,8 @@ Panel {
             PanelSectionHeader { text: "MAINTENANCE"; foreground: root.bar.foreground }
             Button {
               bordered: true
-              text: root.exporting ? "Exporting…" : "Export error logs"
-              iconText: root.exporting ? "󰑐" : "󰈯"
+              text: root.exporting ? "Exporting…" : "Export Logs"
+              iconText: root.exporting ? "󱑢" : ""
               iconSpinning: root.exporting
               foreground: root.bar.foreground
               width: parent.width
@@ -700,7 +700,7 @@ Panel {
             Button {
               bordered: true
               text: root.updateBusy ? "Updating…" : "Update"
-              iconText: root.updateBusy ? "󰑐" : "󰚰"
+              iconText: root.updateBusy ? "󰅧" : "󰮭"
               iconSpinning: root.updateBusy
               foreground: root.bar.foreground
               width: parent.width
@@ -734,7 +734,7 @@ Panel {
             Button {
               bordered: true
               text: root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey"
-              iconText: "✕"
+              iconText: ""
               foreground: "#ff6b6b"
               width: parent.width
               tooltipText: "Remove the plugin and stop the daemon"
@@ -875,7 +875,7 @@ Panel {
               Button {
                 id: randomButton
                 text: "Random"
-                iconText: "󰒝"
+                iconText: ""
                 foreground: root.bar.foreground
                 opacity: 0.9
                 y: Style.space(18)
@@ -892,8 +892,8 @@ Panel {
               spacing: Style.space(8)
               Button {
                 id: importButton
-                text: root.importing ? "Importing…" : "Import pack…"
-                iconText: "+"
+                text: root.importing ? "Importing…" : "Import Sound"
+                iconText: "󱇿"
                 foreground: root.bar.foreground
                 opacity: root.importing ? 0.5 : 1.0
                 enabled: !root.importing
@@ -901,8 +901,8 @@ Panel {
               }
               Button {
                 id: openFolderButton
-                text: "Open folder"
-                iconText: "󰉋"
+                text: "Open Folder"
+                iconText: ""
                 foreground: root.bar.foreground
                 opacity: 0.7
                 onClicked: root.openCustomFolder()
@@ -947,7 +947,6 @@ Panel {
               id: startStopButton
               bordered: true
               text: root.running ? "Stop" : "Start"
-              iconText: root.running ? "󰓛" : "󰐊"
               foreground: root.bar.foreground
               onClicked: root.running ? root.stopDaemon() : root.startDaemon()
             }
@@ -956,7 +955,6 @@ Panel {
               id: restartButton
               bordered: true
               text: "Restart"
-              iconText: "󰑐"
               foreground: root.bar.foreground
               tooltipText: "Restart sorakey"
               onClicked: root.restartDaemon()
