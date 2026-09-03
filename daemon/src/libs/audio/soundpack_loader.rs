@@ -275,10 +275,14 @@ pub(super) fn load_pack(soundpack_id: &str) -> Result<LoadedPack, String> {
 /// queued behind a pack load.
 pub(super) fn load_pack_prepared(soundpack_id: &str, device_rate: Option<u32>) -> Result<LoadedPack, String> {
     let pack = load_pack(soundpack_id)?;
-    match device_rate {
-        Some(rate) => Ok(prepare_pack_segments(pack, rate)),
-        None => Ok(pack),
-    }
+    let prepared = match device_rate {
+        Some(rate) => prepare_pack_segments(pack, rate),
+        None => pack,
+    };
+    // Decode + resample scratch is freed by now; hand the pages back instead
+    // of letting this worker thread's arena pin them as RSS.
+    unsafe { libc::malloc_trim(0); }
+    Ok(prepared)
 }
 
 /// Resamples the pack's native-rate audio to `device_rate` and slices +

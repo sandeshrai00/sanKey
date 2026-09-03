@@ -38,6 +38,11 @@ pub fn decode_interleaved(path: &str) -> Result<(Vec<f32>, u16, u32), String> {
     let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2) as u16;
 
     let mut samples = Vec::new();
+    // Pre-size from the track header when known: avoids repeated
+    // realloc-doubling (up to 2× transient) while packets stream in.
+    if let Some(frames) = track.codec_params.n_frames {
+        samples.reserve(frames as usize * channels as usize);
+    }
     let mut buf: Option<SampleBuffer<f32>> = None;
 
     loop {

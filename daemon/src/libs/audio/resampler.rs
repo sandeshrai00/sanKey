@@ -2,6 +2,10 @@ use rubato::{ Resampler, SincFixedIn, SincInterpolationParameters, SincInterpola
 
 /// Resamples interleaved PCM samples from `from_rate` to `to_rate` using a
 /// sinc resampler (rubato). Returns the input unchanged if the rates match.
+///
+/// Memory: streams chunk-by-chunk with reused scratch buffers and
+/// interleaves straight into a pre-sized output — only ~2×1024×channels
+/// scratch is ever live, instead of three full-size buffers (≈3× the file).
 pub fn resample_interleaved(
     samples: &[f32],
     channels: u16,
@@ -14,14 +18,6 @@ pub fn resample_interleaved(
 
     let channels = channels.max(1) as usize;
     let frame_count = samples.len() / channels;
-
-    // Deinterleave into per-channel buffers.
-    let mut deinterleaved: Vec<Vec<f32>> = vec![Vec::with_capacity(frame_count); channels];
-    for frame in 0..frame_count {
-        for c in 0..channels {
-            deinterleaved[c].push(samples[frame * channels + c]);
-        }
-    }
 
     let params = SincInterpolationParameters {
         sinc_len: 64,
@@ -58,30 +54,34 @@ pub fn resample_interleaved(
     // frames (rubato requires fixed-size input), so its output must be
     // truncated to the real (non-padded) length - otherwise the padded tail
     // leaks a sinc-smeared artifact into the resampled audio.
-    let mut output: Vec<Vec<f32>> = vec![Vec::new(); channels];
+    let expected_frame_count = (
+        ((frame_count as f64) * (to_rate as f64)) / (from_rate as f64)
+    ).round() as usize;
+    let mut out = Vec::with_capacity(expected_frame_count * channels + chunk_size * channels);
+    // Reused input scratch: deinterleaved straight from `samples`, no full copy.
+    let mut scratch: Vec<Vec<f32>> = vec![vec![0.0; chunk_size]; channels];
     let mut pos = 0;
 
     while pos < frame_count {
         let remaining = frame_count - pos;
         let this_chunk = remaining.min(chunk_size);
 
-        let input_frames: Vec<Vec<f32>> = deinterleaved
-            .iter()
-            .map(|ch| {
-                let mut buf = ch[pos..pos + this_chunk].to_vec();
-                if this_chunk < chunk_size {
-                    // Pad the final partial chunk with zeros; rubato requires
-                    // fixed-size input frames.
-                    buf.resize(chunk_size, 0.0);
-                }
-                buf
-            })
-            .collect();
+        for (c, row) in scratch.iter_mut().enumerate() {
+            for i in 0..this_chunk {
+                row[i] = samples[(pos + i) * channels + c];
+            }
+            // Zero the tail (leftover from the previous chunk); rubato
+            // requires fixed-size input frames.
+            row[this_chunk..].fill(0.0);
+        }
 
-        match resampler.process(&input_frames, None) {
+        match resampler.process(&scratch, None) {
             Ok(resampled_chunks) => {
-                for (c, chunk) in resampled_chunks.into_iter().enumerate() {
-                    output[c].extend(chunk);
+                let got = resampled_chunks.first().map(|c| c.len()).unwrap_or(0);
+                for f in 0..got {
+                    for ch in resampled_chunks.iter() {
+                        out.push(ch[f]);
+                    }
                 }
             }
             Err(e) => {
@@ -94,25 +94,10 @@ pub fn resample_interleaved(
     }
 
     // Truncate to the length implied by the real (non-padded) input frame
-    // count.
-    let expected_frame_count = (
-        ((frame_count as f64) * (to_rate as f64)) / (from_rate as f64)
-    ).round() as usize;
-    let out_frame_count = output
-        .first()
-        .map(|c| c.len())
-        .unwrap_or(0)
-        .min(expected_frame_count);
+    // count (truncating samples to a multiple of channels == truncating frames).
+    out.truncate(expected_frame_count * channels);
 
-    // Re-interleave.
-    let mut interleaved = Vec::with_capacity(out_frame_count * channels);
-    for frame in 0..out_frame_count {
-        for ch in output.iter() {
-            interleaved.push(ch[frame]);
-        }
-    }
-
-    interleaved
+    out
 }
 
 #[cfg(test)]

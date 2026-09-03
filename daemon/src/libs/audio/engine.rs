@@ -367,8 +367,13 @@ pub(super) fn apply_fade(samples: &mut [f32], channels: u16, sample_rate: u32) {
 }
 
 /// Removes finished sinks, then evicts the oldest voice (ramped down to
-/// avoid a click) if the pool is still at or above `max_voices`.
+/// avoid a click) if the pool is still at or above `max_voices`. The retain
+/// scan is skipped until the pool is full — the common case (a few live
+/// voices) costs nothing per keypress.
 fn manage_active_sinks(sinks: &mut Vec<Sink>, max_voices: usize) {
+    if sinks.len() < max_voices {
+        return;
+    }
     sinks.retain(|s| !s.empty());
     if sinks.len() >= max_voices {
         let old_sink = sinks.remove(0);
@@ -482,6 +487,9 @@ fn handle_command(
                         // swap), so the swap itself is just a buffer handover.
                         state.pack = Some(pack);
                         state.key_sinks.clear();
+                        // The old pack's buffers just freed on this thread;
+                        // return the pages instead of pinning them as RSS.
+                        unsafe { libc::malloc_trim(0); }
                     }
                     // else: keep the old pack playing.
                 }

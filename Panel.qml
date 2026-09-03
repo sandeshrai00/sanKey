@@ -334,13 +334,19 @@ Panel {
     }
     if (o.ok === true) {
       var daemonJustUp = !root.running
-      root.running = true
-      root.installed = true
-      root.muted = o.muted === true
-      root.volume = (typeof o.volume === "number") ? o.volume : root.volume
-      root.perPackVolume = (typeof o.per_pack_volume === "number") ? o.per_pack_volume : root.perPackVolume
-      root.keyboardPack = String(o.keyboard_pack || "")
-      if (typeof o.audio_device !== "undefined") root.audioDeviceSelected = o.audio_device ? String(o.audio_device) : ""
+      // guarded writes: identical poll answers must not fan out bindings at 1Hz
+      if (root.running !== true) root.running = true
+      if (root.installed !== true) root.installed = true
+      var muted = o.muted === true
+      if (root.muted !== muted) root.muted = muted
+      if (typeof o.volume === "number" && root.volume !== o.volume) root.volume = o.volume
+      if (typeof o.per_pack_volume === "number" && root.perPackVolume !== o.per_pack_volume) root.perPackVolume = o.per_pack_volume
+      var pack = String(o.keyboard_pack || "")
+      if (root.keyboardPack !== pack) root.keyboardPack = pack
+      if (typeof o.audio_device !== "undefined") {
+        var dev = o.audio_device ? String(o.audio_device) : ""
+        if (root.audioDeviceSelected !== dev) root.audioDeviceSelected = dev
+      }
       // daemon just came (back) up: ctl works now, so (re)load the device list
       if (daemonJustUp) root.refreshAudioDevices()
     } else {
@@ -539,10 +545,9 @@ Panel {
     running: root.installed && root.opened
     onTriggered: root.refreshPacks()
   }
-  // light poll when closed (must NOT require root.running: this is the timer
-  // that detects the daemon coming up after install/enable/restart)
+  // light poll when closed, 10s (open gets 1s + instant refresh on open)
   Timer {
-    interval: 1000
+    interval: 10000
     repeat: true
     running: root.installed && !root.opened
     onTriggered: root.refreshStatus()
