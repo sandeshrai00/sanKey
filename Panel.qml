@@ -1003,7 +1003,7 @@ Dropdown {
               spacing: Style.space(8)
               Button {
                 id: importButton
-                width: (parent.width - Style.space(8)) / 2
+                width: (parent.width - Style.space(8) * 2 - 1) / 2
                 text: root.importing ? "Importing…" : "Import Sound"
                 foreground: root.bar.foreground
                 opacity: root.importing ? 0.5 : 1.0
@@ -1011,9 +1011,15 @@ Dropdown {
                 onClicked: root.triggerImport()
 
               }
+              Rectangle {
+                width: 1
+                height: importButton.height
+                anchors.verticalCenter: parent.verticalCenter
+                color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12)
+              }
               Button {
                 id: openFolderButton
-                width: (parent.width - Style.space(8)) / 2
+                width: (parent.width - Style.space(8) * 2 - 1) / 2
                 text: "Open Folder"
                 foreground: root.bar.foreground
                 opacity: 0.7
