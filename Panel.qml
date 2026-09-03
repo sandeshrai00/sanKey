@@ -604,7 +604,7 @@ Panel {
       Column {
         id: panelColumn
         width: scrollArea.availableWidth
-        spacing: Style.space(16)
+        spacing: Style.space(12)
 
         // header
         Item {
@@ -646,12 +646,25 @@ Panel {
               font.pixelSize: Style.font.title
               font.bold: true
             }
-            Text {
-              text: root.statusText
-              color: root.heroMatchTheme ? Color.accent : root.bar.foreground
-              opacity: 0.6
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
+            Row {
+              spacing: Style.space(6)
+              Rectangle {
+                width: 8
+                height: 8
+                radius: 4
+                anchors.verticalCenter: parent.verticalCenter
+                color: (!root.installed || !root.running) ? Qt.darker(root.bar.foreground, 2.0)
+                  : (root.muted ? Qt.darker(root.bar.foreground, 1.3)
+                    : (root.heroMatchTheme ? Color.accent : root.bar.foreground))
+              }
+              Text {
+                text: root.statusText
+                color: root.heroMatchTheme ? Color.accent : root.bar.foreground
+                opacity: 0.6
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                anchors.verticalCenter: parent.verticalCenter
+              }
             }
           }
 
@@ -689,7 +702,7 @@ Panel {
         Column {
           visible: root.settingsOpen
           width: parent.width
-          spacing: Style.space(10)
+          spacing: Style.space(8)
           Row {
             width: parent.width
             spacing: Style.space(8)
@@ -937,7 +950,7 @@ Dropdown {
 
           Column {
             width: parent.width
-            spacing: Style.space(10)
+            spacing: Style.space(8)
 
             PanelSectionHeader { text: "SOUNDPACKS"; foreground: root.bar.foreground }
 
@@ -950,13 +963,21 @@ Dropdown {
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.caption
             }
+            Button {
+              visible: root.keyboardPack === "" && root.keyboardPacks.length === 0
+              text: root.importing ? "Importing…" : "Import Sound"
+              foreground: root.bar.foreground
+              selected: true
+              enabled: !root.importing
+              onClicked: root.triggerImport()
+            }
 
             Row {
               width: parent.width
               spacing: Style.space(8)
               SearchablePackDropdown {
                 id: kbPack
-                width: parent.width - randomButton.width - parent.spacing
+                width: parent.width
                 value: root.keyboardPack
                 options: Model.packOptions(root.keyboardPacks)
                 foreground: Color.foreground
@@ -972,78 +993,64 @@ Dropdown {
                 onConfirmDelete: function(v) { root.deletePack(v) }
                 onCancelDelete: function() { root.deleteConfirmId = "" }
               }
-              Button {
-                id: randomButton
-                text: "Random"
-                iconText: ""
-                foreground: root.bar.foreground
-                opacity: 0.9
-                height: Style.spacing.controlHeight
-                verticalPadding: Style.spacing.controlPaddingY
-                horizontalPadding: Style.spacing.controlPaddingX
-                enabled: root.running && root.keyboardPacks.length > 1
-                onClicked: root.pickRandomPack()
-              
-              }
-            }
+                          }
+
+            
+          }
 
             Row {
               width: parent.width
               spacing: Style.space(8)
               Button {
                 id: importButton
+                width: (parent.width - Style.space(8)) / 2
                 text: root.importing ? "Importing…" : "Import Sound"
-                iconText: "󱇿"
                 foreground: root.bar.foreground
                 opacity: root.importing ? 0.5 : 1.0
                 enabled: !root.importing
                 onClicked: root.triggerImport()
-              
+
               }
               Button {
                 id: openFolderButton
+                width: (parent.width - Style.space(8)) / 2
                 text: "Open Folder"
-                iconText: ""
                 foreground: root.bar.foreground
                 opacity: 0.7
                 onClicked: root.openCustomFolder()
-              
+
               }
             }
 
-
-          }
-
-          PanelSeparator { foreground: root.bar.foreground }
-
           Row {
-            id: controlRow
-            width: parent.width - Style.space(24)
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Style.space(12)
-
+            width: parent.width
+            spacing: Style.space(8)
             Button {
-              id: startStopButton
-              width: (controlRow.width - Style.space(12)) / 2
+                id: transportStop
+                width: (parent.width - Style.space(16)) / 3
               text: root.running ? "Stop" : "Start"
               foreground: root.bar.foreground
-              verticalPadding: Style.spacing.controlPaddingY + 4
               selected: true
               onClicked: root.running ? root.stopDaemon() : root.startDaemon()
-            
             }
-
-Button {
-              id: restartButton
-              width: (controlRow.width - Style.space(12)) / 2
+            Button {
+                id: transportRestart
+                width: (parent.width - Style.space(16)) / 3
               text: "Restart"
               foreground: root.bar.foreground
-              verticalPadding: Style.spacing.controlPaddingY + 4
               selected: true
               tooltipText: "Restart sorakey"
               onClicked: root.restartDaemon()
-            
-}
+            }
+            Button {
+                id: transportShuffle
+                width: (parent.width - Style.space(16)) / 3
+              text: "Random"
+              foreground: root.bar.foreground
+              selected: true
+              enabled: root.running && root.keyboardPacks.length > 1
+              onClicked: root.pickRandomPack()
+            }
           }
 
           PanelSeparator { foreground: root.bar.foreground }
@@ -1058,7 +1065,7 @@ Button {
               id: testType
               foreground: root.bar.foreground
               width: parent.width
-              height: 40
+              height: 56
               text: ""
               placeholderText: "Click here and type — hear keys"
               font.family: root.bar.fontFamily

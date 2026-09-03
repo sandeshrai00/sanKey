@@ -327,7 +327,8 @@ Item {
                   color: index === resultList.currentIndex ? Style.hoverStateColor(root.foreground, root.accent) : Qt.darker(root.foreground, 1.3)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
-                  opacity: index === resultList.currentIndex ? 0.9 : 0.45
+                  opacity: (index === resultList.currentIndex || root.deleteConfirmId === root.optionValue(modelData)) ? 0.9 : 0
+                  visible: (index === resultList.currentIndex || root.deleteConfirmId === root.optionValue(modelData))
 
                   MouseArea {
                     anchors.fill: parent
