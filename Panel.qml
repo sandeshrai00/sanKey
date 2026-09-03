@@ -553,7 +553,7 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    gap: Style.gapsOut + Style.space(6)
+    gap: Style.gapsOut
     contentWidth: panel.fittedContentWidth(Style.space(400))
     contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(520))
     focusTarget: keyCatcher
