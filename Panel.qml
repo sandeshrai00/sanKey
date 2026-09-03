@@ -678,37 +678,42 @@ Panel {
               onChanged: function(v){ root.setAudioDevice(v) }
             }
             Button {
-              bordered: true
               text: "Rescan devices"
               foreground: root.bar.foreground
-              width: parent.width
+              selected: true
+              width: parent.width - Style.space(24)
+              anchors.horizontalCenter: parent.horizontalCenter
+              verticalPadding: Style.spacing.controlPaddingY + 4
               onClicked: root.refreshAudioDevices()
             }
             PanelSeparator { foreground: root.bar.foreground }
             PanelSectionHeader { text: "MAINTENANCE"; foreground: root.bar.foreground }
             Row {
-                width: parent.width
+                width: parent.width - Style.space(24)
+                anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Style.space(8)
 
               Button {
-                bordered: true
                 text: root.exporting ? "Exporting…" : "Export Logs"
                 iconText: root.exporting ? "󱑢" : ""
                 iconSpinning: root.exporting
                 foreground: root.bar.foreground
+                selected: true
                 width: (parent.width - Style.space(8)) / 2
+                verticalPadding: Style.spacing.controlPaddingY + 4
                 tooltipText: "Save a report of recent errors to a file"
                 enabled: !root.exporting && root.installed
                 onClicked: root.triggerExport()
               }
 
               Button {
-                bordered: true
                 text: root.updateBusy ? "Updating…" : "Update"
                 iconText: root.updateBusy ? "󰮭" : "󰮭"
                 iconSpinning: root.updateBusy
                 foreground: root.bar.foreground
+                selected: true
                 width: (parent.width - Style.space(8)) / 2
+                verticalPadding: Style.spacing.controlPaddingY + 4
                 tooltipText: "Update Sorakey plugin"
                 enabled: !root.updateBusy
                 onClicked: root.doUpdate()
@@ -742,7 +747,9 @@ Panel {
               text: root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey"
               iconText: ""
               foreground: "#ff6b6b"
-              width: parent.width
+              width: parent.width - Style.space(24)
+              anchors.horizontalCenter: parent.horizontalCenter
+              verticalPadding: Style.spacing.controlPaddingY + 4
               tooltipText: "Remove the plugin and stop the daemon"
               onClicked: {
                 if (!root.uninstallArmed) { root.uninstallArmed = true; disarmUninstall.restart() }
