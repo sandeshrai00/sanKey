@@ -727,41 +727,62 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.space(6)
-            PanelSectionHeader { text: "PANEL"; foreground: root.bar.foreground }
+            PanelSectionHeader { text: "GENERAL"; foreground: root.bar.foreground }
 Dropdown {
               width: parent.width
               value: root.currentBarSection
               options: [{value:"left",label:"Left"},{value:"center",label:"Center"},{value:"right",label:"Right"}]
               foreground: Color.foreground
               popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
-              rowHeight: Style.spacing.controlHeight + 8
+              rowHeight: Style.spacing.controlHeight
                             opacity: root.muted ? 0.5 : 1.0
               onChanged: function(v){ root.moveToSection(v) }
             }
-            PanelSeparator { foreground: root.bar.foreground }
-            PanelSectionHeader { text: "AUDIO OUTPUT"; foreground: root.bar.foreground }
-Dropdown {
+            Item {
               width: parent.width
-              value: root.audioDeviceSelected
-              options: root.audioDevices
-              foreground: Color.foreground
-              popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
-              rowHeight: Style.spacing.controlHeight + 8
-                            opacity: root.muted ? 0.5 : 1.0
-              onChanged: function(v){ root.setAudioDevice(v) }
+              height: Math.max(themeLabel.implicitHeight, themeSwitch.implicitHeight)
+              Text {
+                id: themeLabel
+                text: "Match theme"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.subtitle
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+              ToggleSwitch {
+                id: themeSwitch
+                checked: root.heroMatchTheme
+                foreground: root.bar.foreground
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                onToggled: root.setHeroMatchTheme(!root.heroMatchTheme)
+              }
             }
-            Button {
-              text: "Rescan devices"
-              foreground: root.bar.foreground
-              selected: true
-              width: parent.width - Style.space(24)
-              anchors.horizontalCenter: parent.horizontalCenter
-              verticalPadding: Style.spacing.controlPaddingY + 4
-              onClicked: root.refreshAudioDevices()
-            
+            PanelSectionHeader { text: "AUDIO"; foreground: root.bar.foreground }
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+              Dropdown {
+                width: parent.width - rescanButton.width - parent.spacing
+                value: root.audioDeviceSelected
+                options: root.audioDevices
+                foreground: Color.foreground
+                popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
+                rowHeight: Style.spacing.controlHeight
+                opacity: root.muted ? 0.5 : 1.0
+                onChanged: function(v){ root.setAudioDevice(v) }
+              }
+              Button {
+                id: rescanButton
+                text: "Rescan"
+                foreground: root.bar.foreground
+                selected: true
+                tooltipText: "Rescan audio devices"
+                onClicked: root.refreshAudioDevices()
+              }
             }
-            PanelSeparator { foreground: root.bar.foreground }
-            PanelSectionHeader { text: "MAINTENANCE"; foreground: root.bar.foreground }
+            PanelSectionHeader { text: "SYSTEM"; foreground: root.bar.foreground }
             Row {
                 width: parent.width - Style.space(24)
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -774,7 +795,7 @@ Dropdown {
                 foreground: root.bar.foreground
                 selected: true
                 width: (parent.width - Style.space(8)) / 2
-                verticalPadding: Style.spacing.controlPaddingY + 4
+                verticalPadding: Style.spacing.controlPaddingY
                 tooltipText: "Save a report of recent errors to a file"
                 enabled: !root.exporting && root.installed
                 onClicked: root.triggerExport()
@@ -788,7 +809,7 @@ Dropdown {
                 foreground: root.bar.foreground
                 selected: true
                 width: (parent.width - Style.space(8)) / 2
-                verticalPadding: Style.spacing.controlPaddingY + 4
+                verticalPadding: Style.spacing.controlPaddingY
                 tooltipText: "Update Sorakey plugin"
                 enabled: !root.updateBusy
                 onClicked: root.doUpdate()
@@ -816,7 +837,6 @@ Dropdown {
               font.pixelSize: Style.font.caption
               wrapMode: Text.WordWrap
             }
-            PanelSeparator { foreground: root.bar.foreground }
             PanelSectionHeader { text: "DANGER"; foreground: root.bar.foreground }
             Button {
               text: root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey"
@@ -824,36 +844,13 @@ Dropdown {
               selected: true
               width: parent.width - Style.space(24)
               anchors.horizontalCenter: parent.horizontalCenter
-              verticalPadding: Style.spacing.controlPaddingY + 4
+              verticalPadding: Style.spacing.controlPaddingY
               tooltipText: "Remove the plugin and stop the daemon"
               onClicked: {
                 if (!root.uninstallArmed) { root.uninstallArmed = true; disarmUninstall.restart() }
                 else { root.uninstallArmed = false; root.remove() }
               }
             
-            }
-            PanelSeparator { foreground: root.bar.foreground }
-            PanelSectionHeader { text: "APPEARANCE"; foreground: root.bar.foreground }
-            Item {
-              width: parent.width
-              height: Math.max(themeLabel.implicitHeight, themeSwitch.implicitHeight)
-              Text {
-                id: themeLabel
-                text: "Match theme"
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.subtitle
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-              }
-              ToggleSwitch {
-                id: themeSwitch
-                checked: root.heroMatchTheme
-                foreground: root.bar.foreground
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                onToggled: root.setHeroMatchTheme(!root.heroMatchTheme)
-              }
             }
           }
         }
