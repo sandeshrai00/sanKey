@@ -1090,7 +1090,9 @@ SoraDropdown {
               text: root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey"
               iconText: "󰛌"
               radius: root.friendlyRadius
-              selected: true
+              selected: !root.uninstallArmed
+              foreground: root.uninstallArmed ? "#ff6b6b" : root.bar.foreground
+              bordered: root.uninstallArmed
               width: parent.width - Style.space(24)
               anchors.horizontalCenter: parent.horizontalCenter
               verticalPadding: root.buttonYPadding
