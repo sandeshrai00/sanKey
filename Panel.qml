@@ -122,11 +122,20 @@ Panel {
   // the fix action is the button below it.
   readonly property string healthHint: {
     if (root.captureBusy) return "Enabling keyboard sounds… approve the one-time dialog."
-    if (root.inputError !== "") return "The keyboard is not reachable, so no keys can make sounds."
+    if (root.inputError !== "") return ""
     if (root.packLoaded === false && root.packError !== "") return "Soundpack failed: " + root.packError
     if (root.audioError !== "") return "Audio problem: " + root.audioError
     return ""
   }
+
+  // Controls that only make sense once keys can be heard. Pack problems
+  // are excluded on purpose: the pack picker is the remedy there.
+  readonly property bool captureReady: root.installed && root.inputError === ""
+  // In-panel trust explanation for the permission step. Static words only:
+  // what is happening, why, what the button does, and the privacy promise.
+  // Shown instead of healthHint when capture is blocked.
+  readonly property bool showWhyBlock: root.inputError !== "" && !root.captureBusy
+  readonly property string whyLearnMoreUrl: "https://github.com/sandeshrai00/soraKey/blob/main/docs/keyboard-access.md"
 
   function enableCapture() {
     if (root.captureBusy || captureProc.running) return
@@ -811,7 +820,7 @@ Panel {
           ToggleSwitch {
             id: muteSwitch
             checked: root.running && !root.muted
-            enabled: root.running
+            enabled: root.running && root.inputError === ""
             foreground: root.bar.foreground
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
@@ -1053,11 +1062,62 @@ Dropdown {
 
           // health banner — the fix action is a button, never a command
           Column {
-            visible: root.healthHint !== ""
+            visible: root.healthHint !== "" || root.showWhyBlock || root.captureBusy
             width: parent.width
             spacing: Style.space(6)
             PanelSectionHeader { text: "NEEDS ATTENTION"; foreground: root.bar.foreground }
+            // blocked state: one plain line, one big button, one learn-more
+            // link. Details live in docs/keyboard-access.md, not here.
+            Column {
+              visible: root.showWhyBlock
+              width: parent.width
+              spacing: Style.space(8)
+              Text {
+                width: parent.width
+                text: "Sorakey Need Keyboard Permission."
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+                wrapMode: Text.WordWrap
+              }
+              Text {
+                width: parent.width
+                text: "Sorakey needs keyboard access to play sounds as you type. One approval — then it just works."
+                color: root.bar.foreground
+                opacity: 0.8
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+              Button {
+                width: parent.width
+                text: root.captureBusy ? "Enabling…" : "Enable keyboard sounds"
+                foreground: root.bar.foreground
+                selected: true
+                fontSize: Style.font.subtitle
+                verticalPadding: Style.space(12)
+                enabled: !root.captureBusy
+                onClicked: root.enableCapture()
+              }
+              Text {
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                text: "Learn more →"
+                color: root.bar.foreground
+                opacity: 0.7
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                font.underline: true
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: Quickshell.execDetached(["xdg-open", root.whyLearnMoreUrl])
+                }
+              }
+            }
             Text {
+              visible: root.healthHint !== ""
               width: parent.width
               text: root.healthHint
               color: "#ff6b6b"
@@ -1066,29 +1126,25 @@ Dropdown {
               wrapMode: Text.WordWrap
             }
             Row {
+              visible: !root.running
               width: parent.width
               spacing: Style.space(8)
               Button {
-                text: root.captureBusy ? "Enabling…" : "Enable keyboard sounds"
+                width: parent.width
+                text: "Start"
                 foreground: root.bar.foreground
                 selected: true
-                visible: root.inputError !== ""
-                enabled: !root.captureBusy
-                onClicked: root.enableCapture()
-              }
-              Button {
-                text: "Restart daemon"
-                foreground: root.bar.foreground
-                onClicked: root.restartDaemon()
+                onClicked: root.startDaemon()
               }
             }
             PanelSeparator { foreground: root.bar.foreground }
           }
 
-          PanelSeparator { foreground: root.bar.foreground }
+          PanelSeparator { visible: root.captureReady; foreground: root.bar.foreground }
 
           // keyboard volume — per pack
           Column {
+            visible: root.captureReady
             width: parent.width
             spacing: Style.space(6)
 
@@ -1147,9 +1203,10 @@ Dropdown {
           }
 
           // Soundpacks
-          PanelSeparator { foreground: root.bar.foreground }
+          PanelSeparator { visible: root.captureReady; foreground: root.bar.foreground }
 
           Column {
+            visible: root.captureReady
             width: parent.width
             spacing: Style.space(8)
 
@@ -1200,6 +1257,7 @@ Dropdown {
           }
 
             Row {
+              visible: root.captureReady
               width: parent.width
               spacing: Style.space(8)
               Button {
@@ -1230,6 +1288,7 @@ Dropdown {
             }
 
           Row {
+            visible: root.captureReady
             width: parent.width
             spacing: Style.space(8)
             Button {
@@ -1260,11 +1319,12 @@ Dropdown {
             }
           }
 
-          PanelSeparator { foreground: root.bar.foreground }
+          PanelSeparator { visible: root.captureReady; foreground: root.bar.foreground }
 
           // typing test — the daemon listens system-wide, so physical
           // keystrokes while the panel is open play through this box
           Column {
+            visible: root.captureReady
             width: parent.width
             spacing: Style.space(6)
             PanelSectionHeader { text: "TEST TYPING"; foreground: root.bar.foreground }

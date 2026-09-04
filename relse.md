@@ -233,15 +233,15 @@ gh release delete v0.1.2 --cleanup-tag
 **Tag only** (release already gone, or you want to clean the tag):
 
 ```bash
-git tag -d v0.1.2
-git push origin :refs/tags/v0.1.2
+git tag -d v0.1.1
+git push origin :refs/tags/v0.1.1
 ```
 
 **Re-releasing the same version after a full delete** (tag is gone, so
 re-tagging is allowed):
 
 ```bash
-git tag v0.1.2
+git tag v0.1.1
 git push origin --tags
 ```
 CI runs again and recreates the release.
