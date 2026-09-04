@@ -92,9 +92,6 @@ Panel {
   // one-tap keyboard-access enable flow (panel button → script → GUI approval)
   property bool captureBusy: false
   property string captureStatus: ""
-  // set when the box has no approval dialog at all (exit 3): offer the
-  // terminal route instead of the (impossible) GUI one
-  property bool captureNoAgent: false
   property string deleteConfirmId: ""
   property bool deleting: false
   property string errorToast: ""
@@ -154,7 +151,6 @@ Panel {
     if (root.captureBusy || captureProc.running) return
     root.captureBusy = true
     root.captureStatus = ""
-    root.captureNoAgent = false
     captureProc.command = ["/usr/bin/bash", root.pluginDir + "/scripts/sorakey-enable-capture.sh"]
     captureProc.running = true
   }
@@ -731,21 +727,17 @@ Panel {
       var out = String(stdout.text || "").trim()
       if (exitCode === 0) {
         root.captureStatus = "Keyboard sounds enabled."
-        root.captureNoAgent = false
         root.errorToast = ""
       } else if (exitCode === 2) {
         root.captureStatus = ""
-        root.captureNoAgent = false
         root.errorToast = ""
       } else if (exitCode === 3) {
         root.captureStatus = ""
-        root.captureNoAgent = true
         root.errorToast = ""
       } else {
         var err = String(stderr.text || "").trim()
         var msg = err !== "" ? err.split("\n").pop() : (out !== "" ? out.split("\n").pop() : "Could not enable — try again.")
         root.captureStatus = ""
-        root.captureNoAgent = false
         root.errorToast = String(msg).slice(0, 500)
         clearErrorToast.restart()
       }
@@ -1233,13 +1225,14 @@ SoraDropdown {
                 onClicked: root.enableCapture()
               }
               Button {
-                visible: root.captureNoAgent
+                visible: root.inputError !== ""
                 width: parent.width
-                text: "Fix in terminal"
+                text: "Enable Keyboard Sound with terminal"
                 radius: root.friendlyRadius
                 foreground: root.bar.foreground
+                selected: true
                 verticalPadding: root.buttonYPadding
-                tooltipText: "No approval dialog on this system — open a terminal to approve there"
+                tooltipText: "Opens your terminal — approve there with sudo"
                 onClicked: root.fixInTerminal()
               }
               Text {
