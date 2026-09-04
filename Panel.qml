@@ -92,6 +92,9 @@ Panel {
   // one-tap keyboard-access enable flow (panel button → script → GUI approval)
   property bool captureBusy: false
   property string captureStatus: ""
+  // set when the box has no approval dialog at all (exit 3): offer the
+  // terminal route instead of the (impossible) GUI one
+  property bool captureNoAgent: false
   property string deleteConfirmId: ""
   property bool deleting: false
   property string errorToast: ""
@@ -151,8 +154,19 @@ Panel {
     if (root.captureBusy || captureProc.running) return
     root.captureBusy = true
     root.captureStatus = ""
+    root.captureNoAgent = false
     captureProc.command = ["/usr/bin/bash", root.pluginDir + "/scripts/sorakey-enable-capture.sh"]
     captureProc.running = true
+  }
+
+  // Last-resort route for boxes without any approval dialog: open the
+  // system terminal (whatever is installed) with the enable script in
+  // sudo mode, so the password goes into the user's own terminal.
+  function fixInTerminal() {
+    var term = Quickshell.env("TERMINAL") || "xdg-terminal-exec"
+    var script = root.pluginDir + "/scripts/sorakey-enable-capture.sh"
+    Quickshell.execDetached([term, "--", "/usr/bin/bash", "-c",
+      "\"" + script + "\" --use-sudo; echo; read -n1 -rp 'Press any key to close…'"])
   }
 
   property bool setupBusy: false
@@ -703,6 +717,7 @@ Panel {
   // one-tap keyboard-access enable (tailscale pkexec pattern): runs the
   // enable script, whose pkexec call pops the shell's GUI approval dialog.
   // Exit 0 = verified working, 2 = not approved (stay truthful + Retry),
+  // 3 = no dialog on this box (offer the terminal route instead),
   // anything else = hard error shown in the result line.
   Process {
     id: captureProc
@@ -713,14 +728,21 @@ Panel {
       var out = String(stdout.text || "").trim()
       if (exitCode === 0) {
         root.captureStatus = "Keyboard sounds enabled."
+        root.captureNoAgent = false
         root.errorToast = ""
       } else if (exitCode === 2) {
         root.captureStatus = ""
+        root.captureNoAgent = false
+        root.errorToast = ""
+      } else if (exitCode === 3) {
+        root.captureStatus = ""
+        root.captureNoAgent = true
         root.errorToast = ""
       } else {
         var err = String(stderr.text || "").trim()
         var msg = err !== "" ? err.split("\n").pop() : (out !== "" ? out.split("\n").pop() : "Could not enable — try again.")
         root.captureStatus = ""
+        root.captureNoAgent = false
         root.errorToast = String(msg).slice(0, 500)
         clearErrorToast.restart()
       }
@@ -1206,6 +1228,16 @@ SoraDropdown {
                 verticalPadding: Style.space(12)
                 enabled: !root.captureBusy
                 onClicked: root.enableCapture()
+              }
+              Button {
+                visible: root.captureNoAgent
+                width: parent.width
+                text: "Fix in terminal"
+                radius: root.friendlyRadius
+                foreground: root.bar.foreground
+                verticalPadding: root.buttonYPadding
+                tooltipText: "No approval dialog on this system — open a terminal to approve there"
+                onClicked: root.fixInTerminal()
               }
               Text {
                 width: parent.width

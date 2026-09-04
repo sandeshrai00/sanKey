@@ -46,3 +46,21 @@ reuses precomputed audio — no work per key beyond playback.
 **I use a different layout / multiple keyboards.**
 Access covers all keyboards on the system, and key detection is
 layout-independent.
+
+## No approval dialog appeared?
+
+Some customized systems have no approval dialog (no polkit agent). The
+panel then offers **Fix in terminal** instead: it opens your own terminal
+(your system terminal, whatever is installed) and runs the same enable
+step with `sudo`, so you type your password into your own terminal.
+Nothing is typed anywhere else, ever.
+
+Manual equivalent, if you prefer doing it yourself:
+
+```bash
+sudo install -m 644 udev/70-sorakey-keyboard.rules /etc/udev/rules.d/70-sorakey-keyboard.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=input --action=change
+```
+
+(run from the plugin directory; sounds start within seconds, no logout)
