@@ -1,86 +1,132 @@
 # Sorakey release guide (copy-paste ready)
 
 Repo: github.com/sandeshrai00/soraKey
-Binary built by CI: `sorakey-x86_64` (Rust 1.87, pinned in rust-toolchain.toml)
+Binaries built by CI: `sorakey-x86_64` + `sorakey-aarch64`
+(Rust 1.87, pinned in rust-toolchain.toml)
 
 ---
 
-## RULE: when do I need a new release?
+## 0. The one rule (read this first)
 
-The release exists to ship the compiled **daemon binary** (`sorakey-x86_64`).
-The freshness check in the shell (`scripts/build-sorakey.sh`) only accepts the
-GitHub prebuilt when **the tagged commit's daemon source == current daemon
-source**. If not, every user compiles from source (slow).
+A release exists for ONE thing: shipping the compiled **daemon binary**.
+The installer (`scripts/build-sorakey.sh`) only downloads the GitHub
+prebuilt when **the tagged commit's daemon source == your current daemon
+source**. Otherwise every user compiles from source (slow, needs Rust).
 
 | What you changed | New release? |
 |---|---|
 | anything in `daemon/` (any `.rs`, `Cargo.toml`) | **YES — must release** |
 | `rust-toolchain.toml` | **YES — must release** |
-| only `Panel.qml`, `Service.qml`, `Model.js`, `scripts/*.py`, README, note.md | NO — plugin files ship from the repo, users get them with `omarchy plugin update` |
+| only `Panel.qml`, `Service.qml`, `Model.js`, `Sora*.qml`, `SearchablePackDropdown.qml`, `scripts/*.py`, `scripts/*.sh`, README, docs | **NO** — plugin files ship from the repo; users get them with `omarchy plugin update` |
 
-Check what has changed since the last tag:
-
-```bash
-git log --oneline v0.1.2..HEAD        # replace v0.1.2 with your last tag
-git diff --name-only v0.1.2..HEAD -- daemon rust-toolchain.toml   # non-empty = release needed
-```
+Three files must ALWAYS agree with each other: the git tag,
+`manifest.json:version`, and `daemon/Cargo.toml:version`.
+CI checks all three and fails the run if they differ.
 
 ---
 
-## Steps to release a new version (e.g. 0.1.1 -> 0.1.2)
+## 1. Which situation are you in? (pick ONE, follow only that block)
 
-### 1. Bump the version in BOTH files (they must match)
+### Situation A — Normal new version (e.g. 0.1.1 → 0.1.2)
 
-`manifest.json`:
-
-```json
-  "version": "0.1.2",
-```
-
-`daemon/Cargo.toml`:
-
-```toml
-version = "0.1.2"
-```
-
-CI compares the tag name with `manifest.json:version`. If they disagree the
-release run fails at "Validate release identity" and no release is created.
-
-### 2. Commit the bump
+You changed `daemon/` and the last release already exists on GitHub.
 
 ```bash
+# 1. Bump BOTH files to the new number (they must match):
+#    manifest.json  ->  "version": "0.1.2",
+#    daemon/Cargo.toml  ->  version = "0.1.2"
+
+# 2. Commit ONLY the bump:
 git add manifest.json daemon/Cargo.toml
 git commit -m "bump 0.1.2"
+
+# 3. Push code, then tag, then push THAT ONE tag (not --tags):
+git push origin main
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
-### 3. Tag + push (this triggers CI)
+Tag name is exactly `v` + version: `v0.1.2`.
+Not `0.1.2`. Not `v1.2`. The tag, manifest, and Cargo.toml must all
+say the same number or CI refuses to build.
+
+### Situation B — Same version again after a FULL delete
+
+You deleted the release AND its tag on GitHub (releases page is empty),
+and you want the same number back (e.g. `v0.1.1` again).
+This is allowed ONLY because the tag is gone. Otherwise: always bump
+(see Situation A).
 
 ```bash
-git tag v0.1.2
-git push origin main --tags
+# 1. No version bump needed — but VERIFY both files agree:
+python3 -c 'import json; print(json.load(open("manifest.json"))["version"])'
+grep -m1 '^version' daemon/Cargo.toml
+# both lines must print the same number. If not, fix them first.
+
+# 2. Delete any stale LOCAL tags with this number (or older junk):
+git tag -d v0.1.1 v0.1.2 v0.1.3 2>/dev/null; true
+# (adjust the list to whatever `git tag` shows locally)
+
+# 3. Push code, then tag, then push THAT ONE tag:
+git push origin main
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
-Tag name is exactly `v` + version: `v0.1.2`, not `0.1.2`, not `v1.2`.
+Why step 2 matters: `git push --tags` would resurrect every stale local
+tag onto your clean remote and fire CI on old commits. Push ONE tag,
+by name, always.
 
-### 4. Watch CI (~3-5 min)
+### Situation C — No tags on GitHub at all (starting from scratch)
+
+Releases page empty, `git ls-remote --tags origin` empty. Same as
+Situation B: pick your starting number (whatever `manifest.json`
+already says is fine), make sure `daemon/Cargo.toml` matches it,
+push main, tag, push the one tag. There is no "first release" magic —
+CI treats every tag push the same.
+
+```bash
+git push origin main
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+### Situation D — Only QML/scripts/docs changed (no release at all)
+
+Do nothing release-related. Just push main:
+
+```bash
+git push origin main
+```
+
+Users get the files via `omarchy plugin update`. The daemon prebuilt
+keeps working because the daemon source didn't move. DO NOT tag —
+an identical-source tag only restarts CI for no reason.
+
+---
+
+## 2. What CI does after you push the tag (~5–8 min)
 
 Open: https://github.com/sandeshrai00/soraKey/actions
-Workflow name: `release-sorakey`. It:
+Workflow: `release-sorakey`. It:
 
-1. validates tag == manifest version
-2. builds `sorakey-x86_64` from the tagged commit
-3. writes `SHA256SUMS`
-4. attests the binary (provenance)
-5. creates **Release v0.1.2** with both files attached
+1. checks tag == `manifest.json` version == `daemon/Cargo.toml` version
+   (any mismatch → run fails here, nothing ships);
+2. runs `cargo test` + `clippy -D warnings` + `cargo fmt --check`
+   (red suite → run fails here, nothing ships);
+3. builds the daemon on x86_64 AND aarch64 runners;
+4. merges both into one `SHA256SUMS`, attests both binaries;
+5. creates **Release vX.Y.Z** with exactly 3 assets:
+   `sorakey-x86_64`, `sorakey-aarch64`, `SHA256SUMS`.
 
-### 5. Verify the release landed
+## 3. Verify the release landed
 
 Open: https://github.com/sandeshrai00/soraKey/releases
 
-You must see `v0.1.2` with exactly 2 assets:
-`sorakey-x86_64` and `SHA256SUMS`.
+You must see your version with exactly **3 assets**.
+If an arch is missing, that runner failed — open its job log.
 
-### 6. Verify on your machine
+Then on your machine (fresh state test):
 
 ```bash
 omarchy restart shell
@@ -88,28 +134,28 @@ sleep 5
 journalctl --user --since "1 min ago" | grep -i sorakey
 ```
 
-Expected: `sorakey freshness: ... up to date` (installed binary already matches)
-or `Installed verified prebuilt 0.1.2` (prebuilt downloaded).
-If you see `building from source` — something is wrong (tag/source mismatch).
+Expected: `Installed verified prebuilt X.Y.Z ... (attested)` or
+`... up to date`. If you see `building from source`, the tag and the
+source disagree — see "Fixing mistakes" below.
 
 ---
 
-## Writing the release description
+## 4. Writing the release description
 
-CI auto-generates the description from your commit titles
-(`generate_release_notes: true`) — `feat:`/`fix:` lines show up automatically.
-That is often enough. To edit it:
+CI auto-generates notes from commit titles
+(`generate_release_notes: true`) — `feat:`/`fix:` lines show up on
+their own. To write your own:
 
-1. GitHub → **Releases** → click the release (e.g. v0.1.2)
-2. Click the pencil icon (Edit) next to the title
-3. Replace the body, keep the title as `v0.1.2`
-4. **Update**
+1. GitHub → **Releases** → click the release;
+2. pencil icon (Edit) next to the title;
+3. replace the body, keep the title as `vX.Y.Z`;
+4. **Update**.
 
-Copy-paste template:
+Template:
 
 ```markdown
 ## What's new
-- (one line per user-visible change, from your commit subjects)
+- (one line per user-visible change)
 
 ## Install / update
 - Existing users: `omarchy plugin update` (or restart the shell) — the
@@ -118,137 +164,91 @@ Copy-paste template:
 
 ## Assets
 - `sorakey-x86_64` — prebuilt daemon (x86_64 Linux, Rust 1.87)
-- `SHA256SUMS` — checksum for the binary (verified + attested by CI)
-```
-
-Example body (what 0.1.2 would say):
-
-```markdown
-## What's new
-- Per-pack keyboard volume with recommended volume
-- Pack search + delete inside the dropdown
-- Import: clear error messages (names the missing file), 20MB size limit
-- Import: panel closes for the file dialog, result arrives as notification
-
-## Install / update
-- Existing users: `omarchy plugin update` (or restart the shell) — the
-  verified prebuilt binary downloads automatically.
-- Fresh install: `omarchy plugin add https://github.com/sandeshrai00/soraKey.git`
-
-## Assets
-- `sorakey-x86_64` — prebuilt daemon (x86_64 Linux, Rust 1.87)
-- `SHA256SUMS` — checksum for the binary (verified + attested by CI)
+- `sorakey-aarch64` — prebuilt daemon (ARM64 Linux, Rust 1.87)
+- `SHA256SUMS` — checksums (verified + attested by CI)
 ```
 
 To list what changed since the last release (for "What's new"):
 
 ```bash
-git log --oneline v0.1.1..HEAD
+git log --oneline v0.1.0..HEAD        # replace v0.1.0 with the PREVIOUS tag
 ```
+
+(If there is no previous tag yet, plain `git log --oneline` lists
+everything — the release is the whole history.)
 
 ---
 
-## Fixing mistakes
+## 5. Fixing mistakes (which fix for which problem)
 
-**CI failed at "Validate release identity"** (tag/version mismatch):
-fix the version, commit, delete the tag, re-tag, re-push:
+**CI failed at "Validate release identity" (tag/version mismatch):**
+your tag says one number, a version file says another. Fix the files,
+commit, delete the tag locally AND remotely, re-tag, push the one tag:
 
 ```bash
 git tag -d v0.1.2
 git push origin :refs/tags/v0.1.2
 git tag v0.1.2
-git push origin --tags
+git push origin v0.1.2
 ```
 
-**You committed daemon changes AFTER tagging** (common):
-the prebuilt is now stale — users build from source until you release again.
-Just bump to the next version and repeat the steps.
+**You committed daemon changes AFTER tagging (common):**
+the prebuilt is now stale — users build from source until you release
+again. Don't re-tag the same number (the tag already exists → CI's
+`release_matches_source` logic and GitHub both treat tags as permanent).
+Bump and follow Situation A.
 
-**You want to change the release description**: pencil icon (see above).
-Release files themselves can NOT be replaced — a new binary means a new tag.
+**CI failed at tests/clippy/fmt:**
+fix the code locally until `cargo test`, `cargo clippy -- -D warnings`,
+and `cargo fmt --check` are all green (run them in `daemon/`), commit,
+then delete + re-tag + push (same commands as the mismatch fix above).
+The tag must move to the fixed commit — CI always builds the tagged
+commit, never main.
 
-**Reusing a version number is normally impossible** (tags are permanent —
-only exception: you deleted the tag first, see "Deleting a release" below).
-Always bump.
+**Only the description is wrong:**
+pencil icon, edit, Update. Release FILES can never be replaced — a new
+binary always means a new tag (or Situation B after a full delete).
+
+**Reusing a version number:**
+normally impossible (tags are permanent). The ONLY exception is
+Situation B: release + tag both fully deleted first. Otherwise bump.
 
 ---
 
-## Pre-release (unstable build)
+## 6. Pre-release (unstable build, optional)
 
-A pre-release is a normal release **marked** "pre-release". It still
-downloads the same way (the freshness check uses the same URL), but on
-GitHub it sits under *Pre-releases* instead of being the default latest
-release. Use it for experimental daemon changes you want testable but not
-final.
+A pre-release is a normal release **marked** "pre-release". It downloads
+exactly the same way; on GitHub it just sits under *Pre-releases*.
+Use it for experimental daemon changes you want testable but not final.
+Promoting it to final later is one checkbox — **no new tag needed**.
 
-Good thing: pre-release → final is just a checkbox — **no new tag needed**.
+After CI created the release, GitHub UI: open release → pencil →
+check **"This is a pre-release"** → Update. (Or
+`gh release edit vX.Y.Z --prerelease`; needs `gh auth login`.)
 
-After CI created the release, do one of:
-
-**GitHub UI:**
-1. Releases page → open the release (e.g. v0.1.3)
-2. Pencil icon (Edit)
-3. Check **"This is a pre-release"**
-4. **Update**
-
-**Terminal (needs `gh auth login`):**
-
-```bash
-gh release edit v0.1.3 --prerelease
-```
-
-**Make it final again** (uncheck in the same UI, or):
-
-```bash
-gh release edit v0.1.3 --prerelease=false
-```
-
-Note: CI (`release.yml`) always creates a NORMAL release — the pre-release
-mark is your manual step after it runs. Don't add `prerelease: true` to the
-workflow, that would make every release a pre-release.
+Don't add `prerelease: true` to the workflow — that would mark EVERY
+release as pre-release. CI always creates normal releases; the mark is
+your manual step.
 
 ---
 
-## Deleting a release (last resort)
+## 7. Deleting a release (last resort)
 
-**Warning:** deleting a release removes the binary. Every user on that
-version falls back to compiling from source until you ship a replacement.
-If the mistake is only the description — don't delete, just edit the
-description (pencil icon).
+**Warning:** deleting removes the binary. Every user on that version
+falls back to compiling from source until you ship a replacement. If
+only the description is wrong — edit it, don't delete.
 
-**GitHub UI:**
-1. Releases page → open the release
-2. Scroll to the very bottom → **"Delete release v0.1.2"** → confirm
-
-**Terminal (needs `gh auth login`):**
-
-```bash
-# delete release, keep tag:
-gh release delete v0.1.2 --yes
-
-# delete release AND tag:
-gh release delete v0.1.2 --cleanup-tag
-```
-
-**Tag only** (release already gone, or you want to clean the tag):
-
-```bash
-git tag -d v0.1.1
-git push origin :refs/tags/v0.1.1
-```
-
-**Re-releasing the same version after a full delete** (tag is gone, so
-re-tagging is allowed):
-
-```bash
-git tag v0.1.1
-git push origin --tags
-```
-CI runs again and recreates the release.
+- **Release + tag:** GitHub UI → open release → bottom →
+  "Delete release" → confirm; then delete the tag too, or it keeps
+  pointing at the old commit:
+  `git push origin :refs/tags/vX.Y.Z` (+ `git tag -d vX.Y.Z` locally).
+- **Tag only:** `git tag -d vX.Y.Z` + `git push origin :refs/tags/vX.Y.Z`.
+- After a FULL delete (release gone, tag gone), reusing the number is
+  allowed → follow Situation B.
 
 ---
 
-## Quick sanity checks (paste anytime)
+## 8. Quick sanity checks (paste anytime)
 
 ```bash
 # versions agree? (both lines must print the same number)
@@ -256,8 +256,10 @@ python3 -c 'import json; print(json.load(open("manifest.json"))["version"])'
 grep -m1 '^version' daemon/Cargo.toml
 
 # do I need a release? (any output = yes)
-git diff --name-only $(git describe --tags --abbrev=0)..HEAD -- daemon rust-toolchain.toml
+# NOTE: needs at least one tag to compare against. No tags yet?
+# use: git diff --name-only HEAD -- daemon rust-toolchain.toml
+git diff --name-only $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD)..HEAD -- daemon rust-toolchain.toml
 
 # what will the next release contain?
-git log --oneline $(git describe --tags --abbrev=0)..HEAD
+git log --oneline
 ```
