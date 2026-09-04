@@ -119,8 +119,10 @@ Panel {
   }
 
   // Short human-readable cause for the banner. Never terminal commands —
-  // the fix action is the button below it.
+  // the fix action is the button below it. Silent while the WhyBlock column
+  // is showing (it carries its own phase text during the enable run).
   readonly property string healthHint: {
+    if (root.showWhyBlock) return ""
     if (root.captureBusy) return "Enabling keyboard sounds… approve the one-time dialog."
     if (root.inputError !== "") return ""
     if (root.packLoaded === false && root.packError !== "") return "Soundpack failed: " + root.packError
@@ -143,14 +145,45 @@ Panel {
   readonly property int friendlyRadius: root.roundedCorners ? Math.max(Style.cornerRadius, 12) : Style.cornerRadius
   // In-panel trust explanation for the permission step. Static words only:
   // what is happening, why, what the button does, and the privacy promise.
-  // Shown instead of healthHint when capture is blocked.
-  readonly property bool showWhyBlock: root.inputError !== "" && !root.captureBusy
+  // Shown instead of healthHint when capture is blocked. Stays visible
+  // DURING the enable run too, so the box never vanishes mid-approval —
+  // the buttons flip to their loading state instead.
+  readonly property bool showWhyBlock: root.inputError !== ""
+  // enable-run phase text: approval dialog first, then the script's verify
+  // loop (up to ~10s). Driven by a timer, cleared on process exit.
+  property string capturePhase: ""
+  Timer {
+    id: capturePhaseTimer
+    interval: 8000
+    onTriggered: if (root.captureBusy) root.capturePhase = "Verifying access…"
+  }
+  // post-success settling: the script exits 0 as soon as the rule works,
+  // but the daemon only re-scans keyboards every ~5s, so status still
+  // reports blocked for a few seconds after. Latch a finishing state
+  // until the daemon itself clears inputError (15s cap), so the panel
+  // never flashes idle Enable buttons mid-handoff. No double-taps.
+  property bool captureSettling: false
+  Timer {
+    id: captureSettleTimer
+    interval: 15000
+    onTriggered: root.captureSettling = false
+  }
+  onInputErrorChanged: {
+    if (root.inputError === "" && root.captureSettling) {
+      root.captureSettling = false
+      captureSettleTimer.stop()
+    }
+  }
   readonly property string whyLearnMoreUrl: "https://github.com/sandeshrai00/soraKey/blob/main/docs/keyboard-access.md"
 
+  // one input while busy OR settling: buttons, spinner, phase text share it
+  readonly property bool captureWorking: root.captureBusy || root.captureSettling
   function enableCapture() {
-    if (root.captureBusy || captureProc.running) return
+    if (root.captureWorking || captureProc.running) return
     root.captureBusy = true
     root.captureStatus = ""
+    root.capturePhase = "Waiting for approval…"
+    capturePhaseTimer.restart()
     captureProc.command = ["/usr/bin/bash", root.pluginDir + "/scripts/sorakey-enable-capture.sh"]
     captureProc.running = true
   }
@@ -721,10 +754,17 @@ Panel {
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       root.captureBusy = false
+      root.capturePhase = ""
+      capturePhaseTimer.stop()
       var out = String(stdout.text || "").trim()
       if (exitCode === 0) {
         root.captureStatus = "Keyboard sounds enabled."
         root.errorToast = ""
+        // daemon lags the script by seconds (5s rescan): hold a finishing
+        // state until status itself clears inputError (or the 15s cap).
+        root.captureSettling = true
+        root.capturePhase = "Finishing up…"
+        captureSettleTimer.restart()
       } else if (exitCode === 2) {
         root.captureStatus = ""
         root.errorToast = ""
@@ -1212,13 +1252,15 @@ SoraDropdown {
               }
               Button {
                 width: parent.width
-                text: root.captureBusy ? "Enabling…" : "Enable keyboard sounds"
+                text: root.captureWorking ? "Enabling…" : "Enable keyboard sounds"
+                iconText: ""
                 radius: root.friendlyRadius
                 foreground: root.bar.foreground
                 selected: true
+                iconSpinning: root.captureWorking
                 fontSize: Style.font.subtitle
                 verticalPadding: Style.space(12)
-                enabled: !root.captureBusy
+                enabled: !root.captureWorking
                 onClicked: root.enableCapture()
               }
               Button {
@@ -1230,7 +1272,18 @@ SoraDropdown {
                 selected: true
                 verticalPadding: root.buttonYPadding
                 tooltipText: "Opens your terminal — approve there with sudo"
+                enabled: !root.captureWorking
                 onClicked: root.fixInTerminal()
+              }
+              Text {
+                visible: root.captureWorking && root.capturePhase !== ""
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                text: root.capturePhase
+                color: root.bar.foreground
+                opacity: 0.7
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
               }
               Text {
                 width: parent.width
