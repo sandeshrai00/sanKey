@@ -162,6 +162,9 @@ Panel {
   // Last-resort route for boxes without any approval dialog: open the
   // system terminal (whatever is installed) with the enable script in
   // sudo mode, so the password goes into the user's own terminal.
+  // Quoting: the script path is quoted but --use-sudo stays OUTSIDE those
+  // quotes (still inside the -c string) — quoting them together would make
+  // bash look for a file literally named "... --use-sudo".
   function fixInTerminal() {
     var term = Quickshell.env("TERMINAL") || "xdg-terminal-exec"
     var script = root.pluginDir + "/scripts/sorakey-enable-capture.sh"
