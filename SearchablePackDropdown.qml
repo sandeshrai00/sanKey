@@ -39,6 +39,10 @@ Item {
   property string deleteConfirmId: ""
   property bool deleting: false
   property string toast: ""
+  // Rounded-corner floor (see Panel): Style.cornerRadius can be 0.
+  // Follows Panel's Rounded-corners toggle; off = theme default.
+  property bool roundedCorners: false
+  readonly property int friendlyRadius: root.roundedCorners ? Math.max(Style.cornerRadius, 12) : Style.cornerRadius
   function prettyForValue(v) {
     for (var i = 0; i < options.length; i++) if (optionValue(options[i]) === v) return optionLabel(options[i])
     return Model.prettyPackName(String(v))
@@ -88,7 +92,7 @@ Item {
       id: trigger
       width: parent.width
       height: root.rowHeight
-      radius: Style.cornerRadius
+      radius: root.friendlyRadius
 
       readonly property bool _focused: trigger.activeFocus
       readonly property bool _hot: triggerHover.hovered || root.hasCursor
@@ -167,7 +171,7 @@ Item {
         background: BorderSurface {
           color: root.background
           borderSpec: root.popupBorderSpec
-          radius: Style.cornerRadius
+          radius: root.friendlyRadius
         }
 
         onOpened: {
@@ -189,9 +193,10 @@ Item {
             width: parent.width
             height: root.popupRowHeight + Style.spacing.controlPaddingX
 
-            TextField {
-              id: searchField
-              anchors.fill: parent
+              SoraTextField {
+                id: searchField
+                anchors.fill: parent
+                roundedCorners: root.roundedCorners
               anchors.margins: Style.spacing.md
               placeholderText: root.placeholderText
               foreground: root.foreground
@@ -248,7 +253,7 @@ Item {
             ListView {
               id: resultList
               anchors.fill: parent
-              spacing: Style.spacing.labelGap
+              spacing: root.roundedCorners ? Style.spacing.sm : Style.spacing.labelGap
               clip: true
               boundsBehavior: Flickable.StopAtBounds
               model: root.filtered
@@ -287,11 +292,16 @@ Item {
                 }
               }
 
+              // Rounded highlight pills (intentional divergence from the
+              // shell's square-row original — friendlier list, matches the
+              // rounded trigger/popup around it).
               delegate: Rectangle {
                 required property var modelData
                 required property int index
                 width: resultList.width
                 height: Math.max(root.popupRowHeight, rowContent.implicitHeight + Style.spacing.rowPaddingX)
+                radius: root.friendlyRadius
+                clip: true
                 color: index === resultList.currentIndex
                   ? Style.hoverFillFor(root.foreground, root.accent)
                   : "transparent"
@@ -406,12 +416,14 @@ spacing: Style.spacing.xs
                 iconText: root.deleting ? "󰑐" : ""
                 iconSpinning: root.deleting
                 foreground: "#ff6b6b"
+                radius: root.friendlyRadius
                 enabled: !root.deleting
                 onClicked: root.confirmDelete(root.deleteConfirmId)
               }
               Button {
                 text: "Cancel"
                 foreground: root.foreground
+                radius: root.friendlyRadius
                 enabled: !root.deleting
                 onClicked: { root.deleteConfirmId = ""; root.cancelDelete() }
               }

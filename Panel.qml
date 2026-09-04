@@ -131,6 +131,13 @@ Panel {
   // Controls that only make sense once keys can be heard. Pack problems
   // are excluded on purpose: the pack picker is the remedy there.
   readonly property bool captureReady: root.installed && root.inputError === ""
+  // Rounded-corner floor: Style.cornerRadius mirrors Hyprland rounding,
+  // which can be 0 (square desktop). Our controls stay friendly regardless.
+  // Flipped from Settings ("Rounded corners"); persisted like heroMatchTheme.
+  // Default off: fresh installs match the desktop theme until the user opts in.
+  property bool roundedCorners: false
+  readonly property string roundedModeFile: home + "/.config/sorakey/rounded-corners"
+  readonly property int friendlyRadius: root.roundedCorners ? Math.max(Style.cornerRadius, 12) : Style.cornerRadius
   // In-panel trust explanation for the permission step. Static words only:
   // what is happening, why, what the button does, and the privacy promise.
   // Shown instead of healthHint when capture is blocked.
@@ -318,6 +325,32 @@ Panel {
     }
   }
 
+  // restore saved rounded-corners toggle ("1"/"0", absent = on)
+  Process {
+    id: roundedRead
+    command: ["cat", root.roundedModeFile]
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      var mode = String(stdout.text || "").trim()
+      if (mode === "0") root.roundedCorners = false
+      else if (mode === "1") root.roundedCorners = true
+    }
+  }
+
+  Process {
+    id: roundedWrite
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+  }
+
+  function setRoundedCorners(on) {
+    root.roundedCorners = on
+    if (!roundedWrite.running) {
+      roundedWrite.command = ["sh", "-c", "mkdir -p \"$(dirname \"" + root.roundedModeFile + "\")\" && printf '%s' \"" + (on ? "1" : "0") + "\" > \"" + root.roundedModeFile + "\""]
+      roundedWrite.running = true
+    }
+  }
+
   Process {
     id: commitProc
     command: ["git", "-C", root.pluginDir, "rev-parse", "--short", "HEAD"]
@@ -446,6 +479,7 @@ Panel {
     root.refreshAudioDevices()
     sectionRead.running = true
     logoRead.running = true
+    roundedRead.running = true
   }
 
   onOpenedChanged: {
@@ -821,6 +855,7 @@ Panel {
             id: muteSwitch
             checked: root.running && !root.muted
             enabled: root.running && root.inputError === ""
+            rounded: root.roundedCorners
             foreground: root.bar.foreground
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
@@ -836,6 +871,7 @@ Panel {
             id: settingsButton
             text: ""
             iconText: "󰒓"
+            radius: root.friendlyRadius
             foreground: root.heroMatchTheme ? Color.accent : root.bar.foreground
             opacity: 0.8
             anchors.right: muteSwitch.left
@@ -858,6 +894,7 @@ Panel {
             Button {
               text: ""
               iconText: "󰅖"
+              radius: root.friendlyRadius
               foreground: root.bar.foreground
               tooltipText: "Back"
               onClicked: root.settingsOpen = false
@@ -880,10 +917,11 @@ Panel {
             Item {
               width: parent.width
               height: barSectionDrop.implicitHeight
-Dropdown {
+SoraDropdown {
                 id: barSectionDrop
                 anchors.fill: parent
                 value: root.currentBarSection
+                roundedCorners: root.roundedCorners
                 options: [{value:"left",label:"Left"},{value:"center",label:"Center"},{value:"right",label:"Right"}]
                 foreground: Color.foreground
                 popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
@@ -917,10 +955,33 @@ Dropdown {
               ToggleSwitch {
                 id: themeSwitch
                 checked: root.heroMatchTheme
+                rounded: root.roundedCorners
                 foreground: root.bar.foreground
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 onToggled: root.setHeroMatchTheme(!root.heroMatchTheme)
+              }
+            }
+            Item {
+              width: parent.width
+              height: Math.max(roundLabel.implicitHeight, roundSwitch.implicitHeight)
+              Text {
+                id: roundLabel
+                text: "Rounded corners"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.subtitle
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+              ToggleSwitch {
+                id: roundSwitch
+                checked: root.roundedCorners
+                rounded: true
+                foreground: root.bar.foreground
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                onToggled: root.setRoundedCorners(!root.roundedCorners)
               }
             }
             PanelSectionHeader { text: "AUDIO"; foreground: root.bar.foreground }
@@ -930,10 +991,11 @@ Dropdown {
               Item {
                 width: parent.width - rescanButton.width - parent.spacing
                 height: audioDrop.implicitHeight
-                Dropdown {
+                SoraDropdown {
                   id: audioDrop
                   anchors.fill: parent
                   value: root.audioDeviceSelected
+                  roundedCorners: root.roundedCorners
                   options: root.audioDevices
                   foreground: Color.foreground
                   popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
@@ -955,6 +1017,7 @@ Dropdown {
               Button {
                 id: rescanButton
                 text: "Rescan"
+                radius: root.friendlyRadius
                 foreground: root.bar.foreground
                 selected: true
                 tooltipText: "Rescan audio devices"
@@ -970,6 +1033,7 @@ Dropdown {
               Button {
                 text: root.exporting ? "Exporting…" : "Export Logs"
                 iconText: root.exporting ? "󱑢" : ""
+                radius: root.friendlyRadius
                 iconSpinning: root.exporting
                 foreground: root.bar.foreground
                 selected: true
@@ -984,6 +1048,7 @@ Dropdown {
               Button {
                 text: root.updateBusy ? "Updating…" : "Update"
                 iconText: root.updateBusy ? "󰮭" : "󰮭"
+                radius: root.friendlyRadius
                 iconSpinning: root.updateBusy
                 foreground: root.bar.foreground
                 selected: true
@@ -1020,6 +1085,7 @@ Dropdown {
             Button {
               text: root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey"
               iconText: "󰛌"
+              radius: root.friendlyRadius
               selected: true
               width: parent.width - Style.space(24)
               anchors.horizontalCenter: parent.horizontalCenter
@@ -1044,6 +1110,7 @@ Dropdown {
             id: installButton
             text: setupBusy ? "Installing…" : "Install Sorakey"
             iconText: setupBusy ? "󰑐" : "󰎓"
+            radius: root.friendlyRadius
               iconSpinning: setupBusy
             foreground: root.bar.foreground
             anchors.left: parent.left
@@ -1093,6 +1160,7 @@ Dropdown {
               Button {
                 width: parent.width
                 text: root.captureBusy ? "Enabling…" : "Enable keyboard sounds"
+                radius: root.friendlyRadius
                 foreground: root.bar.foreground
                 selected: true
                 fontSize: Style.font.subtitle
@@ -1132,6 +1200,7 @@ Dropdown {
               Button {
                 width: parent.width
                 text: "Start"
+                radius: root.friendlyRadius
                 foreground: root.bar.foreground
                 selected: true
                 onClicked: root.startDaemon()
@@ -1224,6 +1293,7 @@ Dropdown {
             Button {
               visible: root.keyboardPack === "" && root.keyboardPacks.length === 0
               text: root.importing ? "Importing…" : "Import Sound"
+              radius: root.friendlyRadius
               foreground: root.bar.foreground
               selected: true
               enabled: !root.importing
@@ -1237,6 +1307,7 @@ Dropdown {
                 id: kbPack
                 width: parent.width
                 value: root.keyboardPack
+                roundedCorners: root.roundedCorners
                 options: Model.packOptions(root.keyboardPacks)
                 foreground: Color.foreground
                 popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
@@ -1264,6 +1335,7 @@ Dropdown {
                 id: importButton
                 width: (parent.width - Style.space(8) * 2 - 1) / 2
                 text: root.importing ? "Importing…" : "Import Sound"
+                radius: root.friendlyRadius
                 foreground: root.bar.foreground
                 opacity: root.importing ? 0.5 : 1.0
                 enabled: !root.importing
@@ -1280,6 +1352,7 @@ Dropdown {
                 id: openFolderButton
                 width: (parent.width - Style.space(8) * 2 - 1) / 2
                 text: "Open Folder"
+                radius: root.friendlyRadius
                 foreground: root.bar.foreground
                 opacity: 0.7
                 onClicked: root.openCustomFolder()
@@ -1295,6 +1368,7 @@ Dropdown {
                 id: transportStop
                 width: (parent.width - Style.space(16)) / 3
               text: root.running ? "Stop" : "Start"
+              radius: root.friendlyRadius
               foreground: root.bar.foreground
               selected: true
               onClicked: root.running ? root.stopDaemon() : root.startDaemon()
@@ -1303,6 +1377,7 @@ Dropdown {
                 id: transportRestart
                 width: (parent.width - Style.space(16)) / 3
               text: "Restart"
+              radius: root.friendlyRadius
               foreground: root.bar.foreground
               selected: true
               tooltipText: "Restart sorakey"
@@ -1312,6 +1387,7 @@ Dropdown {
                 id: transportShuffle
                 width: (parent.width - Style.space(16)) / 3
               text: "Random"
+              radius: root.friendlyRadius
               foreground: root.bar.foreground
               selected: true
               enabled: root.running && root.keyboardPacks.length > 1
@@ -1328,9 +1404,10 @@ Dropdown {
             width: parent.width
             spacing: Style.space(6)
             PanelSectionHeader { text: "TEST TYPING"; foreground: root.bar.foreground }
-            TextField {
+            SoraTextField {
               id: testType
               foreground: root.bar.foreground
+              roundedCorners: root.roundedCorners
               width: parent.width
               height: 56
               text: ""
