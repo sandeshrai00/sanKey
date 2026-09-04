@@ -30,112 +30,164 @@ Item {
   signal packsImported(string packId)
   function notify(title, msg) { Quickshell.execDetached(["notify-send","-a","Sorakey", title, msg]); clearImportTimer.restart() }
 
-  function importSoundpack() {
-    if (importing) return
+  // Detached pickers (reload-proof): the file dialog used to run as a
+  // direct child of this service, and every plugin reload ("Local plugin
+  // changed, reloading" — dev-sync, updates, editor saves) SIGTERMs
+  // direct children, murdering the picker mid-dialog with no trace.
+  // Now the picker is double-forked (scripts/sorakey-detached-run) and
+  // reports via ~/.cache/sorakey/<kind>-result, which this service polls.
+  // <kind>-result.open means "dialog may still be open", so a restarted
+  // service resumes polling instead of losing the result.
+  readonly property string pickCacheDir: Quickshell.env("HOME") + "/.cache/sorakey"
+  property string pickKind: "" // "import" | "export" | "" (idle)
+  property int pickTicks: 0    // 1s polls; 300 = 5 min timeout
+  function pickResultFile(kind) { return root.pickCacheDir + "/" + kind + "-result" }
+
+  function startPick(kind, script) {
+    if (root.pickKind !== "") return
     if (!pluginDir) {
-      lastImportError = "Service pluginDir is empty (manifest not injected)"
-      lastImportResult = ""
+      if (kind === "import") root.lastImportError = "Service pluginDir is empty (manifest not injected)"
+      else root.lastExportError = "Service pluginDir is empty"
       return
     }
-    if (!importHelper.running) {
-      importing = true
-      lastImportError = ""
-      lastImportResult = ""
-      importHelper.command = ["/usr/bin/python3",
-        pluginDir + "/scripts/sorakey-import-pack.py"]
-      importHelper.running = true
+    if (kind === "import") {
+      if (root.importing) return
+      root.importing = true
+      root.lastImportError = ""
+      root.lastImportResult = ""
+    } else {
+      if (root.exporting) return
+      root.exporting = true
+      root.lastExportError = ""
+      root.lastExportResult = ""
+    }
+    var result = root.pickResultFile(kind)
+    root.pickKind = kind
+    root.pickTicks = 0
+    Quickshell.execDetached(["/usr/bin/bash", root.pluginDir + "/scripts/sorakey-detached-run",
+      result, "/usr/bin/env", "GTK_USE_PORTAL=0", "/usr/bin/python3",
+      root.pluginDir + "/scripts/" + script, "--result-file", result])
+    pickTimer.restart()
+  }
+
+  function importSoundpack() { root.startPick("import", "sorakey-import-pack.py") }
+  function exportLogs() { root.startPick("export", "sorakey-export-logs.py") }
+
+  function handleImportLine(last) {
+    if (last.startsWith("OK:")) {
+      root.lastImportResult = last.substring(3).trim()
+      root.lastImportError = ""
+      root.packsImported(root.lastImportResult)
+      root.notify("Soundpack imported", root.lastImportResult)
+    } else if (last.startsWith("ERROR:")) {
+      var msg = last.substring(6).trim()
+      if (msg === "Cancelled" || msg.toLowerCase().indexOf("cancel") !== -1) {
+        root.lastImportError = ""
+        root.lastImportResult = ""
+        return
+      }
+      root.lastImportError = msg
+      root.lastImportResult = ""
+      root.notify("Import failed", msg)
+    } else {
+      root.lastImportError = "Import failed — try again."
+      root.lastImportResult = ""
+      root.notify("Import failed", root.lastImportError)
     }
   }
 
-  function exportLogs() {
-    if (exporting) return
-    if (!pluginDir) {
-      lastExportError = "Service pluginDir is empty"
-      lastExportResult = ""
-      return
+  function handleExportLine(last) {
+    if (last.startsWith("OK:")) {
+      root.lastExportResult = last.substring(3).trim()
+      root.lastExportError = ""
+      root.notify("Logs exported", root.lastExportResult)
+    } else if (last.startsWith("ERROR:")) {
+      var msg = last.substring(6).trim()
+      if (msg === "Cancelled" || msg.toLowerCase().indexOf("cancel") !== -1) {
+        root.lastExportError = ""
+        root.lastExportResult = ""
+        return
+      }
+      root.lastExportError = msg
+      root.lastExportResult = ""
+      root.notify("Export failed", msg)
+    } else {
+      root.lastExportError = "Export failed — try again."
+      root.lastExportResult = ""
+      root.notify("Export failed", root.lastExportError)
     }
-    if (!exportHelper.running) {
-      exporting = true
-      lastExportError = ""
-      lastExportResult = ""
-      exportHelper.command = ["/usr/bin/python3",
-        pluginDir + "/scripts/sorakey-export-logs.py"]
-      exportHelper.running = true
+  }
+
+  function finishPick() {
+    var kind = root.pickKind
+    root.pickKind = ""
+    root.importing = false
+    root.exporting = false
+    pickTimer.stop()
+    if (kind !== "") Quickshell.execDetached(["/usr/bin/rm", "-f",
+      root.pickResultFile(kind), root.pickResultFile(kind) + ".open",
+      root.pickResultFile(kind) + ".pid"])
+  }
+
+  function pickTimeout() {
+    if (root.pickKind === "import") {
+      root.lastImportError = "Picker timed out — try again."
+      root.lastImportResult = ""
+      root.notify("Import failed", root.lastImportError)
+    } else if (root.pickKind === "export") {
+      root.lastExportError = "Picker timed out — try again."
+      root.lastExportResult = ""
+      root.notify("Export failed", root.lastExportError)
     }
+    root.finishPick()
   }
 
   Timer { id: clearImportTimer; interval: 10000; onTriggered: { root.lastImportResult = ""; root.lastExportResult = "" } }
 
-  Process {
-    id: importHelper
-    stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true }
-    onExited: function(exitCode) {
-      root.importing = false
-      var output = String(stdout.text || "").trim()
-      var errOutput = String(stderr.text || "").trim()
-      var lines = output.split("\n")
-      var last = lines[lines.length - 1]
-      if (last.startsWith("OK:")) {
-        root.lastImportResult = last.substring(3).trim()
-        root.lastImportError = ""
-        root.packsImported(root.lastImportResult)
-        root.notify("Soundpack imported", root.lastImportResult)
-      } else if (last.startsWith("ERROR:")) {
-        var msg = last.substring(6).trim()
-        if (msg === "Cancelled" || msg.toLowerCase().indexOf("cancel") !== -1) {
-          root.lastImportError = ""
-          root.lastImportResult = ""
-          return
-        }
-        root.lastImportError = msg
-        root.lastImportResult = ""
-        root.notify("Import failed", msg)
-      } else if (exitCode !== 0) {
-        root.lastImportError = errOutput || "Import failed — try again."
-        root.lastImportResult = ""
-        root.notify("Import failed", root.lastImportError)
-      } else {
-        root.lastImportError = "Import failed — try again."
-        root.lastImportResult = ""
-        root.notify("Import failed", root.lastImportError)
-      }
+  Timer {
+    id: pickTimer
+    interval: 1000
+    repeat: true
+    running: false
+    onTriggered: {
+      if (root.pickKind === "" || pickRead.running) return
+      root.pickTicks += 1
+      if (root.pickTicks > 300) { root.pickTimeout(); return }
+      // WAITING = dialog still open; DEAD = picker process gone with no
+      // result (crash/kill) — fail fast instead of idling to the timeout.
+      pickRead.command = ["/usr/bin/bash", "-c",
+        'if [ -s "$1" ]; then cat "$1";' +
+        ' elif [ -f "$2" ] && kill -0 "$(cat "$2")" 2>/dev/null; then echo WAITING;' +
+        ' else echo DEAD; fi',
+        "_", root.pickResultFile(root.pickKind), root.pickResultFile(root.pickKind) + ".pid"]
+      pickRead.running = true
     }
   }
 
   Process {
-    id: exportHelper
+    id: pickRead
     stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true }
-    onExited: function(exitCode) {
-      root.exporting = false
-      var output = String(stdout.text || "").trim()
-      var errOutput = String(stderr.text || "").trim()
-      var lines = output.split("\n")
-      var last = lines[lines.length - 1]
-      if (last.startsWith("OK:")) {
-        root.lastExportResult = last.substring(3).trim()
-        root.lastExportError = ""
-        root.notify("Logs exported", root.lastExportResult)
-      } else if (last.startsWith("ERROR:")) {
-        var msg = last.substring(6).trim()
-        if (msg === "Cancelled" || msg.toLowerCase().indexOf("cancel") !== -1) {
-          root.lastExportError = ""
+    onExited: function() {
+      var lines = String(stdout.text || "").trim().split("\n")
+      var line = lines[lines.length - 1]
+      if (line === "" || line === "WAITING") return
+      if (line === "DEAD") {
+        if (root.pickKind === "import") {
+          root.lastImportError = "Picker closed unexpectedly — try again."
+          root.lastImportResult = ""
+          root.notify("Import failed", root.lastImportError)
+        } else if (root.pickKind === "export") {
+          root.lastExportError = "Picker closed unexpectedly — try again."
           root.lastExportResult = ""
-          return
-        }
-        root.lastExportError = msg
-        root.lastExportResult = ""
-        root.notify("Export failed", msg)
-      } else if (exitCode !== 0) {
-        root.lastExportError = errOutput || "Export failed — try again."
-        root.lastExportResult = ""
-        root.notify("Export failed", root.lastExportError)
-      } else {
-        root.lastExportError = "Export failed — try again."
-        root.lastExportResult = ""
-        root.notify("Export failed", root.lastExportError)
+          root.notify("Export failed", root.lastExportError)
+        } else return
+        root.finishPick()
+        return
       }
+      if (root.pickKind === "import") root.handleImportLine(line)
+      else if (root.pickKind === "export") root.handleExportLine(line)
+      else return
+      root.finishPick()
     }
   }
 
@@ -156,6 +208,30 @@ Item {
       startProc.running = true
     }
     freshnessCheck.running = true
+    // resume a picker left in flight by a plugin reload: the dialog runs
+    // detached and survives, so keep polling for its result file instead
+    // of stranding it (markers older than 10 min are stale crashes).
+    resumePoll.command = ["/usr/bin/bash", "-c",
+      'for k in import export; do m="$1/$k-result.open"; r="$1/$k-result";' +
+      ' if [ -f "$m" ]; then' +
+      ' if [ -n "$(find "$m" -mmin +10 2>/dev/null)" ]; then rm -f "$m" "$r" "$r.pid";' +
+      ' else echo "$k"; fi; fi; done',
+      "_", root.pickCacheDir]
+    resumePoll.running = true
+  }
+
+  Process {
+    id: resumePoll
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: function() {
+      var kind = String(stdout.text || "").trim().split("\n").pop()
+      if (kind !== "import" && kind !== "export") return
+      if (kind === "import" && !root.importing) root.importing = true
+      if (kind === "export" && !root.exporting) root.exporting = true
+      root.pickKind = kind
+      root.pickTicks = 0
+      pickTimer.restart()
+    }
   }
 
   // after update, rebuild or fetch prebuilt and restart if needed

@@ -1,0 +1,26 @@
+#!/bin/bash
+# sorakey-detached-run — launch a helper fully detached from the shell.
+#
+# WHY: the shell reloads the plugin on any file change ("Local plugin
+# changed, reloading"), and teardown SIGTERMs the service's direct
+# children. A file picker open during a reload/sync/update was murdered
+# mid-dialog with no trace. Double-forking here reparents the helper to
+# init, so no reload can reach it. The helper reports via <result-file>,
+# which Service.qml polls (and resumes polling after its own restart).
+#
+# Usage: sorakey-detached-run <result-file> <cmd> [args...]
+#   - touches <result-file>.open as an "in flight" marker (Service resumes
+#     on it after a restart), removes any stale <result-file>
+#   - <cmd> must append its single result line (OK:.../ERROR:...) to
+#     <result-file> when done (our pickers take --result-file for this)
+set -u
+result="$1"; shift
+mkdir -p "$(dirname "$result")"
+rm -f "$result" "$result.pid"
+touch "$result.open"
+# Double fork: the inner shell exits at once, leaving <cmd> (via setsid,
+# new session, no terminal) reparented to init. Output goes to the
+# result log next to the result file, never to a pipe that can die.
+# $! (the picker's pid) is recorded so the service can tell a dead picker
+# from a still-open dialog instead of waiting out the full timeout.
+bash -c 'setsid "$@" </dev/null >>"$0.log" 2>&1 & echo $! >"$0.pid"' "$result" "$@"

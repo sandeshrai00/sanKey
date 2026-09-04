@@ -14,6 +14,36 @@ try:
 except Exception:
     Gtk = None
 
+# Detached-run support: see sorakey-import-pack.py — result line goes to
+# --result-file too, so Service.qml can poll it after a plugin reload.
+RESULT_FILE = None
+
+
+def emit(line):
+    print(line, flush=True)
+    if RESULT_FILE:
+        try:
+            with open(RESULT_FILE, "w") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
+
+
+def take_result_file_argv():
+    global RESULT_FILE
+    args = []
+    skip_next = False
+    for i in range(len(sys.argv)):
+        if skip_next:
+            skip_next = False
+            continue
+        if sys.argv[i] == "--result-file" and i + 1 < len(sys.argv):
+            RESULT_FILE = sys.argv[i + 1]
+            skip_next = True
+        else:
+            args.append(sys.argv[i])
+    sys.argv = args
+
 
 def safe_filename(name):
     """Daemon-controlled name -> basename with no separators or dot-dots."""
@@ -41,14 +71,18 @@ def get_log_contents():
 
 def gui_main():
     if Gtk is None:
-        print("ERROR:GTK 4 missing — file dialog can't open", flush=True)
+        emit("ERROR:GTK 4 missing — file dialog can't open")
         sys.exit(1)
 
     contents, name_or_err = get_log_contents()
     if contents is None:
-        print(f"ERROR:{name_or_err}", flush=True)
+        emit(f"ERROR:{name_or_err}")
         sys.exit(1)
 
+    # Portal-native FileDialog, parent-less (as originally): the "auto-close"
+    # deaths were proven to be reload-kills, fixed by the detached launch.
+    # A 1x1 parent window was tried and removed: Hyprland tiles it into a
+    # big blank window.
     dialog = Gtk.FileDialog(title="Save Error Logs")
     dialog.set_initial_name(name_or_err)
 
@@ -67,11 +101,11 @@ def gui_main():
     loop = GLib.MainLoop()
 
     def fail_and_quit(msg):
-        print(f"ERROR:{msg}", flush=True)
+        emit(f"ERROR:{msg}")
         loop.quit()
 
     def succeed_and_quit(path):
-        print(f"OK:{path}", flush=True)
+        emit(f"OK:{path}")
         loop.quit()
 
     def on_done(source, result, user_data=None):
@@ -92,8 +126,8 @@ def gui_main():
             fail_and_quit("No file selected")
             return
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(contents)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(contents)
         except Exception as e:
             fail_and_quit(f"Could not write {path}: {e}")
             return
@@ -109,7 +143,7 @@ def gui_main():
 def cli_main():
     contents, name_or_err = get_log_contents()
     if contents is None:
-        print(f"ERROR:{name_or_err}", flush=True)
+        emit(f"ERROR:{name_or_err}")
         sys.exit(1)
     # cli mode: write to Downloads directly
     downloads = os.path.expanduser("~/Downloads")
@@ -117,11 +151,12 @@ def cli_main():
     path = os.path.join(downloads, name_or_err)
     with open(path, "w", encoding="utf-8") as f:
         f.write(contents)
-    print(f"OK:{path}", flush=True)
+    emit(f"OK:{path}")
     sys.exit(0)
 
 
 if __name__ == "__main__":
+    take_result_file_argv()
     if len(sys.argv) > 1:
         cli_main()
     else:

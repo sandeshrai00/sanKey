@@ -29,6 +29,41 @@ MAX_PACK_SIZE = 20 * 1024 * 1024
 # non-zip extensions for dialog filter
 NON_ZIP_EXTS = (".7z", ".rar", ".tar", ".gz", ".bz2", ".xz")
 
+# Detached-run support: when launched via scripts/sorakey-detached-run
+# (immune to plugin-reload SIGTERM), stdout goes to a log nobody reads —
+# the single result line ALSO goes to --result-file, which Service.qml
+# polls (and resumes polling after its own restart).
+RESULT_FILE = None
+
+
+def emit(line):
+    """Result line to stdout AND to the result file (if any)."""
+    print(line, flush=True)
+    if RESULT_FILE:
+        try:
+            with open(RESULT_FILE, "w") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
+
+
+def take_result_file_argv():
+    """Strip --result-file PATH from argv (any position)."""
+    global RESULT_FILE
+    args = []
+    it = iter(range(len(sys.argv)))
+    skip_next = False
+    for i in range(len(sys.argv)):
+        if skip_next:
+            skip_next = False
+            continue
+        if sys.argv[i] == "--result-file" and i + 1 < len(sys.argv):
+            RESULT_FILE = sys.argv[i + 1]
+            skip_next = True
+        else:
+            args.append(sys.argv[i])
+    sys.argv = args
+
 
 def _short(value, limit=50):
     """Short one-line error text."""
@@ -449,28 +484,33 @@ def import_zip(zip_path):
 
 def cli_main():
     if len(sys.argv) < 2:
-        print("Usage: sorakey-import-pack.py <path-to-zip>")
+        print("Usage: sorakey-import-pack.py [--result-file PATH] <path-to-zip>")
         sys.exit(1)
     path = sys.argv[1]
     if not os.path.isfile(path):
-        print(f"ERROR:File not found: {path}", flush=True)
+        emit(f"ERROR:File not found: {path}")
         sys.exit(1)
     try:
         soundpack_id, err = import_zip(path)
     except Exception as e:
-        print(f"ERROR:Import failed: {_short(e)}", flush=True)
+        emit(f"ERROR:Import failed: {_short(e)}")
         sys.exit(1)
     if err:
-        print(f"ERROR:{err}", flush=True)
+        emit(f"ERROR:{err}")
         sys.exit(1)
-    print(f"OK:{soundpack_id}", flush=True)
+    emit(f"OK:{soundpack_id}")
     sys.exit(0)
 
 
 def gui_main():
     if Gtk is None:
-        print("ERROR:GTK 4 missing — file dialog can't open", flush=True)
+        emit("ERROR:GTK 4 missing — file dialog can't open")
         sys.exit(1)
+    # Portal-native FileDialog, parent-less (as originally): the "auto-close"
+    # deaths were proven to be reload-kills (no response callback ever fired
+    # — a portal dismiss always fires one), fixed by the detached launch.
+    # A 1x1 parent window was tried and removed: Hyprland tiles it into a
+    # big blank window. Parent-less + detached is the correct combination.
     dialog = Gtk.FileDialog(title="Import Soundpack")
     filter_zip = Gtk.FileFilter()
     filter_zip.set_name("Soundpack ZIP")
@@ -487,11 +527,11 @@ def gui_main():
     loop = GLib.MainLoop()
 
     def fail_and_quit(msg):
-        print(f"ERROR:{msg}", flush=True)
+        emit(f"ERROR:{msg}")
         loop.quit()
 
     def succeed_and_quit(msg):
-        print(f"OK:{msg}", flush=True)
+        emit(f"OK:{msg}")
         loop.quit()
 
     def on_done(source, result, user_data=None):
@@ -526,6 +566,7 @@ def gui_main():
 
 
 if __name__ == "__main__":
+    take_result_file_argv()
     if len(sys.argv) > 1:
         cli_main()
     else:
