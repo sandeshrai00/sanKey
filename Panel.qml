@@ -1154,7 +1154,7 @@ SoraDropdown {
               }
               Text {
                 width: parent.width
-                text: "Sorakey needs keyboard access to play sounds as you type. One approval — then it just works."
+                text: "Sorakey needs keyboard access to play sounds as you type. Just Basic Permission."
                 color: root.bar.foreground
                 opacity: 0.8
                 font.family: root.bar.fontFamily
