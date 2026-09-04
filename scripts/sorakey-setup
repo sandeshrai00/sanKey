@@ -43,16 +43,26 @@ EOF
 systemctl --user daemon-reload
 systemctl --user enable --now sorakey || die "could not start the sorakey service"
 
-# 4. input group
-step "Checking input group (keyboard capture)"
-if id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
-  echo "input group: OK"
+# 4. input group (user-only check, no sudo in plugin)
+step "Checking keyboard capture (/dev/input access)"
+INPUT_OK=1
+if ! id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
+  INPUT_OK=0
+fi
+if [[ ! -r /dev/input/event0 ]]; then
+  INPUT_OK=0
+fi
+if [[ "$INPUT_OK" -eq 1 ]]; then
+  echo "keyboard capture: OK"
 else
   echo
-  echo "You are NOT in the 'input' group, so keyboard sounds need one"
-  echo "privileged step. Run this in your terminal, then log out and back in:"
+  echo "BLOCKED: daemon will run but hear 0 keyboards until you do this once:"
   echo
   echo "    sudo usermod -aG input $USER"
+  echo
+  echo "Then log out and back in, and Restart sorakey from the panel."
+  echo "The panel now shows 'No keyboard access' with Copy/Rescan/Restart"
+  echo "instead of silent 'Playing'. No sudo is run by this installer."
 fi
 
 if command -v omarchy >/dev/null 2>&1; then

@@ -94,12 +94,19 @@ Panel {
   property string pendingCtlCmd: ""
   property var audioDevices: []
   property string audioDeviceSelected: ""
+  // keyboard-capture health from `ctl status.input` — null until first reading.
+  // When present and !ok, the daemon runs but sees 0 keyboards (/dev/input
+  // permission). Panel must show "No keyboard access" instead of "Playing".
+  property var inputHealth: null
+  readonly property bool inputBlocked: root.installed && root.running && root.inputHealth !== null && root.inputHealth.ok === false
+  readonly property string inputFixCmd: "sudo usermod -aG input $USER"
   Timer { id: clearErrorToast; interval: 5000; onTriggered: root.errorToast = "" }
 
   readonly property string statusText: {
     if (setupBusy) return "Installing…"
     if (!root.installed) return "Not installed"
     if (!root.running) return "Stopped"
+    if (root.inputBlocked) return "No keyboard access"
     if (root.keyboardPack === "" && root.keyboardPacks.length === 0) return "No soundpack"
     return root.muted ? "Muted" : "Playing"
   }
@@ -345,6 +352,11 @@ Panel {
         var dev = o.audio_device ? String(o.audio_device) : ""
         if (root.audioDeviceSelected !== dev) root.audioDeviceSelected = dev
       }
+      if (typeof o.input !== "undefined" && o.input && typeof o.input === "object") {
+        var ih = { ok: o.input.ok !== false, total: o.input.total || 0, keyboards: o.input.keyboards || 0, hint: String(o.input.hint || "") }
+        var prev = root.inputHealth ? JSON.stringify(root.inputHealth) : ""
+        if (JSON.stringify(ih) !== prev) root.inputHealth = ih
+      }
       // daemon just came (back) up: ctl works now, so (re)load the device list
       if (daemonJustUp) root.refreshAudioDevices()
     } else {
@@ -373,6 +385,19 @@ Panel {
     // empty string = system default
     root.audioDeviceSelected = id
     root.sendCtl({ cmd: "select_device", id: id === "" ? null : id })
+  }
+
+  function rescanInput() {
+    if (!root.installed) return
+    if (inputProc.running) return
+    inputProc.running = true
+  }
+
+  function copyInputFix() {
+    // best-effort clipboard, never fails the panel
+    Quickshell.execDetached(["sh", "-c", "printf '%s' '" + root.inputFixCmd + "' | (command -v wl-copy >/dev/null && wl-copy || command -v xclip >/dev/null && xclip -selection clipboard || true)"])
+    root.errorToast = "Copied: " + root.inputFixCmd
+    clearErrorToast.restart()
   }
 
   property bool automaticSetupAttempted: false
@@ -444,6 +469,25 @@ Panel {
       }
     }
     stdout: StdioCollector { waitForEnd: true }
+  }
+
+  // Keyboard-capture health (no sudo, user-only rescan)
+  Process {
+    id: inputProc
+    command: [root.sorakeyBin, "ctl", "{\"cmd\":\"input_rescan\"}"]
+    running: false
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      try {
+        var r = JSON.parse(String(stdout.text || "").trim())
+        var inp = r && r.input ? r.input : (r && r.ok && r.input ? r.input : null)
+        if (inp && typeof inp === "object") {
+          root.inputHealth = { ok: inp.ok !== false, total: inp.total || 0, keyboards: inp.keyboards || 0, hint: String(inp.hint || "") }
+        }
+      } catch (e) {}
+      root.refreshStatus()
+    }
   }
 
   // Audio output devices
@@ -960,6 +1004,81 @@ Dropdown {
           spacing: Style.space(14)
 
           PanelSeparator { foreground: root.bar.foreground }
+
+          // blocking input-access banner: daemon runs but sees 0 keyboards
+          // (/dev/input permission). Shown instead of silent "Playing".
+          Column {
+            visible: root.inputBlocked
+            width: parent.width
+            spacing: Style.space(8)
+            Rectangle {
+              width: parent.width
+              height: inputBannerCol.implicitHeight + Style.space(16)
+              radius: 8
+              color: Qt.rgba(0.8, 0.2, 0.2, 0.12)
+              border.color: Qt.rgba(0.8, 0.2, 0.2, 0.5)
+              border.width: 1
+              Column {
+                id: inputBannerCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.margins: Style.space(8)
+                spacing: Style.space(6)
+                Text {
+                  width: parent.width
+                  text: "No keyboard access — sound can't trigger"
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                  wrapMode: Text.WordWrap
+                }
+                Text {
+                  width: parent.width
+                  text: "Daemon sees 0 keyboards (/dev/input blocked). Run once, then log out/in:"
+                  color: root.bar.foreground
+                  opacity: 0.8
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+                Text {
+                  width: parent.width
+                  text: root.inputFixCmd
+                  color: root.bar.foreground
+                  font.family: "monospace"
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+                Row {
+                  width: parent.width
+                  spacing: Style.space(8)
+                  Button {
+                    text: "Copy"
+                    foreground: root.bar.foreground
+                    selected: true
+                    tooltipText: "Copy fix command"
+                    onClicked: root.copyInputFix()
+                  }
+                  Button {
+                    text: "Rescan"
+                    foreground: root.bar.foreground
+                    selected: true
+                    tooltipText: "Re-check keyboard access"
+                    onClicked: root.rescanInput()
+                  }
+                  Button {
+                    text: "Restart"
+                    foreground: root.bar.foreground
+                    selected: true
+                    tooltipText: "Restart daemon after relogin"
+                    onClicked: root.restartDaemon()
+                  }
+                }
+              }
+            }
+          }
 
           // keyboard volume — per pack
           Column {
