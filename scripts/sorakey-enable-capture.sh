@@ -55,7 +55,7 @@ run_privileged() {
   if [[ "$USE_SUDO" -eq 0 ]] && command -v pkexec >/dev/null 2>&1; then
     out=$(pkexec bash -c "$snippet" 2>&1) && return 0
     printf '%s' "$out" > "${PK_ERR_FILE:-/dev/null}" 2>/dev/null || true
-    note "(approval not granted — staying on the safe side)"
+    note "(not approved)"
   elif command -v sudo >/dev/null 2>&1; then
     if sudo bash -c "$snippet"; then return 0; fi
   fi
@@ -74,17 +74,17 @@ map_priv_error() {
   esac
 }
 
-step "Checking keyboard access"
+step "Keyboard sounds"
 if user_can_read_keyboard; then
-  note "keyboard access: OK ($(find_keyboard_node) readable)"
+  note "Ready — type to hear it."
   if [[ -f "$DST" ]] && ! cmp -s "$SRC" "$DST"; then
-    note "installed rule is outdated — refreshing on next approval"
+    note "Installed permission is outdated — it refreshes on next approval."
   fi
   exit 0
 fi
-note "keyboard access: BLOCKED (no readable keyboard node)"
+note "Keyboard permission needed for sounds."
 
-step "Enabling keyboard access (one approval)"
+step "Approving (one time)"
 PK_ERR_FILE=$(mktemp)
 if ! run_privileged "install -m 644 '$SRC' '$DST' && udevadm control --reload-rules && udevadm trigger --subsystem-match=input --action=change"; then
   err=$(cat "$PK_ERR_FILE" 2>/dev/null)
@@ -106,15 +106,15 @@ if ! run_privileged "install -m 644 '$SRC' '$DST' && udevadm control --reload-ru
 fi
 rm -f "$PK_ERR_FILE"
 
-# udev applies ACLs asynchronously — poll briefly as the user.
-step "Verifying access"
+# udev applies access shortly — check briefly as the user.
+step "Checking"
 for _ in $(seq 1 10); do
   if user_can_read_keyboard; then
-    note "keyboard access: OK ($(find_keyboard_node) readable, no logout needed)"
+    note "Done — type to hear it."
     exit 0
   fi
   sleep 1
 done
 
-echo "sorakey-enable-capture: rule installed but nodes still unreadable" >&2
+echo "sorakey-enable-capture: approved, but keys are still unreadable" >&2
 exit 1
