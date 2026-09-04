@@ -328,7 +328,7 @@ Panel {
     }
   }
 
-  // restore saved rounded-corners toggle ("1"/"0", absent = on)
+  // restore saved rounded-corners toggle ("1" = on, anything else = off)
   Process {
     id: roundedRead
     command: ["cat", root.roundedModeFile]
@@ -980,7 +980,7 @@ SoraDropdown {
               ToggleSwitch {
                 id: roundSwitch
                 checked: root.roundedCorners
-                rounded: true
+                rounded: root.roundedCorners
                 foreground: root.bar.foreground
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
