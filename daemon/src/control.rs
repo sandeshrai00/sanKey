@@ -1,17 +1,18 @@
 //! Control API over Unix socket (`$XDG_RUNTIME_DIR/sorakey.sock`).
 //! One JSON line in, one out. All writes go through config_writer + engine.
 
-use crate::libs::audio::{ AudioCommand, AudioEngineHandle };
+use crate::libs::audio::{AudioCommand, AudioEngineHandle};
 use crate::libs::cli_args::qualify_soundpack_id;
 use crate::state::paths;
-use std::io::{ BufRead, BufReader, Read, Write };
-use std::os::unix::net::{ UnixListener, UnixStream };
-use std::path::{ Path, PathBuf };
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 
 pub fn socket_path() -> PathBuf {
     match std::env::var("XDG_RUNTIME_DIR") {
         Ok(dir) => PathBuf::from(dir).join("sorakey.sock"),
-        Err(_) => PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".sorakey.sock"),
+        Err(_) => PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+            .join(".sorakey.sock"),
     }
 }
 
@@ -36,7 +37,8 @@ pub fn serve(engine: AudioEngineHandle) -> Option<PathBuf> {
                     let _ = std::thread::Builder::new()
                         .stack_size(64 * 1024)
                         .spawn(move || {
-                            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(100)));
+                            let _ = stream
+                                .set_read_timeout(Some(std::time::Duration::from_millis(100)));
                             handle_conn(stream, &eng)
                         });
                 }
@@ -63,13 +65,27 @@ fn handle_conn(mut stream: UnixStream, engine: &AudioEngineHandle) {
                 }
                 buf.extend_from_slice(&chunk[..n]);
             }
-            Err(_) => return,
+            Err(_) => {
+                // Timeout or disconnect mid-request. A bare connect-close
+                // probe (empty buf) stays silent; a partial request gets an
+                // error line instead of a silent drop.
+                if buf.iter().any(|b| !b.is_ascii_whitespace()) {
+                    let _ = stream.write_all(fail("incomplete request").as_bytes());
+                    let _ = stream.write_all(b"\n");
+                }
+                return;
+            }
         }
         if buf.contains(&b'\n') {
             break;
         }
     }
     let Some(newline) = buf.iter().position(|b| *b == b'\n') else {
+        // EOF/timeout with a partial line: answer instead of dropping silently.
+        if buf.iter().any(|b| !b.is_ascii_whitespace()) {
+            let _ = stream.write_all(fail("incomplete request").as_bytes());
+            let _ = stream.write_all(b"\n");
+        }
         return;
     };
     let line = String::from_utf8_lossy(&buf[..newline]).into_owned();
@@ -100,18 +116,14 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
             ok(serde_json::json!({ "muted": muted }))
         }
         "volume" => {
-            let v = match clamp_percent(req.get("value")) { Some(v) => v, None => return fail("value must be 0-100") };
+            let v = match clamp_percent(req.get("value")) {
+                Some(v) => v,
+                None => return fail("value must be 0-100"),
+            };
             let f = v / 100.0;
-            let cur = crate::state::config_writer::current();
-            if !cur.keyboard_soundpack.is_empty() {
-                let id = cur.keyboard_soundpack.clone();
-                if too_many_per_pack_entries(&id) {
-                    return fail("too many per-pack entries");
-                }
-                crate::state::config_writer::apply(|c| { c.per_pack_volume.insert(id, f); });
-            } else {
-                crate::state::config_writer::apply(|c| c.volume = f);
-            }
+            // Master slider always moves the global default; per-pack
+            // overrides are only touched via the per_pack_volume cmd.
+            crate::state::config_writer::apply(|c| c.volume = f);
             let eff = crate::state::config_writer::current().effective_volume();
             engine.send(AudioCommand::SetVolume(eff));
             ok(serde_json::json!({ "volume": v }))
@@ -142,7 +154,11 @@ fn clamp_percent(v: Option<&serde_json::Value>) -> Option<f32> {
 fn status() -> String {
     let c = crate::state::config_writer::current();
     let eff = c.effective_volume();
-    let per = c.per_pack_volume.get(&c.keyboard_soundpack).copied().unwrap_or(eff);
+    let per = c
+        .per_pack_volume
+        .get(&c.keyboard_soundpack)
+        .copied()
+        .unwrap_or(eff);
     let mut v = serde_json::json!({
         "running": true,
         "muted": !c.enable_sound,
@@ -153,7 +169,11 @@ fn status() -> String {
     });
     // Health explains "running but silent" (input capture, pack load, audio).
     if let Some(obj) = v.as_object_mut() {
-        for (k, val) in crate::state::health::snapshot().as_object().cloned().unwrap_or_default() {
+        for (k, val) in crate::state::health::snapshot()
+            .as_object()
+            .cloned()
+            .unwrap_or_default()
+        {
             obj.insert(k, val);
         }
     }
@@ -173,12 +193,18 @@ fn key_event(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
         return fail("unknown code");
     }
     let down = req.get("down").and_then(|v| v.as_bool()).unwrap_or(true);
-    engine.send(AudioCommand::Key { code: code.to_string(), down });
+    engine.send(AudioCommand::Key {
+        code: code.to_string(),
+        down,
+    });
     ok(serde_json::json!({ "code": code, "down": down }))
 }
 
 fn is_known_key_code(code: &str) -> bool {
-    if crate::utils::keymap::KEY_MAP.iter().any(|&(_, n)| n == code) {
+    if crate::utils::keymap::KEY_MAP
+        .iter()
+        .any(|&(_, n)| n == code)
+    {
         return true;
     }
     matches!(
@@ -197,6 +223,69 @@ fn is_known_key_code(code: &str) -> bool {
             | "End"
             | "PageUp"
             | "PageDown"
+            | "PrintScreen"
+            | "Pause"
+            | "ScrollLock"
+            | "NumLock"
+            | "CapsLock"
+            | "ContextMenu"
+            | "Power"
+            | "Sleep"
+            | "WakeUp"
+            | "Fn"
+            | "Clear"
+            | "Help"
+            | "Props"
+            | "Front"
+            | "Stop"
+            | "Again"
+            | "Undo"
+            | "Cut"
+            | "Copy"
+            | "Paste"
+            | "Find"
+            | "F13"
+            | "F14"
+            | "F15"
+            | "F16"
+            | "F17"
+            | "F18"
+            | "F19"
+            | "F20"
+            | "F21"
+            | "F22"
+            | "F23"
+            | "F24"
+            | "NumpadEnter"
+            | "NumpadDivide"
+            | "NumpadEquals"
+            | "NumpadComma"
+            | "Convert"
+            | "Lang1"
+            | "Lang2"
+            | "KanaMode"
+            | "HiraganaKatakana"
+            | "IntlYen"
+            | "IntlBackslash"
+            | "MediaTrackPrevious"
+            | "MediaTrackNext"
+            | "MediaPlayPause"
+            | "MediaStop"
+            | "MediaSelect"
+            | "AudioVolumeMute"
+            | "AudioVolumeDown"
+            | "AudioVolumeUp"
+            | "BrowserHome"
+            | "BrowserSearch"
+            | "BrowserFavorites"
+            | "BrowserRefresh"
+            | "BrowserStop"
+            | "BrowserForward"
+            | "BrowserBack"
+            | "LaunchApp1"
+            | "LaunchApp2"
+            | "LaunchApp3"
+            | "LaunchMail"
     )
 }
 
@@ -215,7 +304,10 @@ fn recommended_volume_for(id: &str) -> Option<f32> {
     let path = paths::soundpacks::config_json(id);
     let content = std::fs::read_to_string(&path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&content).ok()?;
-    v.get("options")?.get("recommended_volume")?.as_f64().map(|n| n as f32)
+    v.get("options")?
+        .get("recommended_volume")?
+        .as_f64()
+        .map(|n| n as f32)
 }
 
 fn load_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
@@ -227,11 +319,23 @@ fn load_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
         return fail("invalid id");
     }
     let id = qualify_soundpack_id(&raw, "keyboard/");
+    // Verify the pack exists (directory + readable config) before claiming ok.
+    {
+        let dir_s = paths::soundpacks::soundpack_dir(&id);
+        let cfg_s = paths::soundpacks::config_json(&id);
+        let dir = Path::new(&dir_s);
+        let cfg = Path::new(&cfg_s);
+        if !dir.is_dir() || std::fs::read_to_string(cfg).is_err() {
+            return fail("pack not found");
+        }
+    }
     let rec = recommended_volume_for(&id);
     let will_insert = rec.is_some_and(|v| {
         let v = v.clamp(0.1, 1.0);
         (v - 1.0).abs() > 0.001
-    }) && !crate::state::config_writer::current().per_pack_volume.contains_key(&id);
+    }) && !crate::state::config_writer::current()
+        .per_pack_volume
+        .contains_key(&id);
     if will_insert && too_many_per_pack_entries(&id) {
         return fail("too many per-pack entries");
     }
@@ -248,7 +352,10 @@ fn load_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
         }
     });
     let eff = crate::state::config_writer::current().effective_volume();
-    engine.send(AudioCommand::LoadKeyboardPack { soundpack_id: id.clone(), update_cache_on_error: true });
+    engine.send(AudioCommand::LoadKeyboardPack {
+        soundpack_id: id.clone(),
+        update_cache_on_error: true,
+    });
     engine.send(AudioCommand::SetVolume(eff));
     ok(serde_json::json!({ "id": id }))
 }
@@ -275,7 +382,7 @@ fn reset_volume(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     if cur.keyboard_soundpack == id {
         engine.send(AudioCommand::SetVolume(cur.effective_volume()));
     }
-    let per = cur.per_pack_volume.get(&id).copied().unwrap_or(1.0) * 100.0;
+    let per = cur.per_pack_volume.get(&id).copied().unwrap_or(cur.volume) * 100.0;
     ok(serde_json::json!({ "id": id, "per_pack_volume": per.round() }))
 }
 
@@ -291,7 +398,10 @@ fn per_pack_volume(req: &serde_json::Value, engine: &AudioEngineHandle) -> Strin
     if too_many_per_pack_entries(&id) {
         return fail("too many per-pack entries");
     }
-    let v = match clamp_percent(req.get("value")) { Some(v) => v, None => return fail("value must be 0-100") };
+    let v = match clamp_percent(req.get("value")) {
+        Some(v) => v,
+        None => return fail("value must be 0-100"),
+    };
     let f = (v / 100.0).clamp(0.0, 1.0);
     crate::state::config_writer::apply(|c| {
         c.per_pack_volume.insert(id.clone(), f);
@@ -309,7 +419,10 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
         Some(id) => id.to_string(),
         None => return fail("missing id"),
     };
-    if raw.contains('\0') || raw.contains("..") || raw.contains('/') && raw.matches('/').count() > 1 {
+    if raw.contains('\0')
+        || raw.contains("..")
+        || (raw.contains('/') && raw.matches('/').count() > 1)
+    {
         return fail("invalid id");
     }
     let id = qualify_soundpack_id(&raw, "keyboard/");
@@ -322,18 +435,30 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
     if !target.join("config.json").exists() {
         return fail("pack not found");
     }
-    let canon_base = base.canonicalize().unwrap_or(base.clone());
-    let canon_target = target.canonicalize().unwrap_or(target.clone());
+    // Symlink containment: either side failing to canonicalize denies the
+    // delete (fail closed) rather than falling back to the un-resolved path,
+    // which would bypass the starts_with check below.
+    let canon_base = match base.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return fail("invalid path"),
+    };
+    let canon_target = match target.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return fail("invalid path"),
+    };
     if !canon_target.starts_with(&canon_base) {
         return fail("invalid path");
     }
     if let Err(e) = std::fs::remove_dir_all(&target) {
         return fail(&format!("delete failed: {}", e));
     }
-    let mut cache = crate::state::soundpack::SoundpackCache::load();
+    // Hold the cache lock across load → mutate → save so a concurrent
+    // engine-worker cache write cannot slip between our load and save.
+    let _cache_guard = crate::state::soundpack::cache_lock();
+    let mut cache = crate::state::soundpack::SoundpackCache::load_locked();
     cache.soundpacks.remove(&id);
     cache.update_count();
-    cache.save();
+    cache.save_locked();
 
     let was_active = crate::state::config_writer::current().keyboard_soundpack == id;
     crate::state::config_writer::apply(|c| {
@@ -351,7 +476,11 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
                 .as_nanos() as usize;
             ids[n % ids.len()].clone()
         };
-        let rec = if !next.is_empty() { recommended_volume_for(&next) } else { None };
+        let rec = if !next.is_empty() {
+            recommended_volume_for(&next)
+        } else {
+            None
+        };
         crate::state::config_writer::apply(|c| {
             c.keyboard_soundpack = next.clone();
             if !next.is_empty() && !c.per_pack_volume.contains_key(&next) {
@@ -365,10 +494,21 @@ fn delete_pack(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
         });
         let eff = crate::state::config_writer::current().effective_volume();
         if !next.is_empty() {
-            engine.send(AudioCommand::LoadKeyboardPack { soundpack_id: next.clone(), update_cache_on_error: true });
+            engine.send(AudioCommand::LoadKeyboardPack {
+                soundpack_id: next.clone(),
+                update_cache_on_error: true,
+            });
             engine.send(AudioCommand::SetVolume(eff));
         } else {
-            engine.send(AudioCommand::SetVolume(crate::state::config_writer::current().volume));
+            // Last pack deleted: unload so deleted audio stops immediately.
+            // Config keyboard_pack stays "" (no sound) for consistency.
+            engine.send(AudioCommand::LoadKeyboardPack {
+                soundpack_id: String::new(),
+                update_cache_on_error: false,
+            });
+            engine.send(AudioCommand::SetVolume(
+                crate::state::config_writer::current().volume,
+            ));
         }
         ok(serde_json::json!({ "deleted": id, "fallback": next }))
     } else {
@@ -405,7 +545,9 @@ fn audio_devices() -> String {
         Err(e) => return fail(&e),
     };
     let selected = crate::state::config_writer::current().selected_audio_device;
-    ok(serde_json::json!({ "devices": devices.iter().map(|d| serde_json::json!({"id": d.id, "name": d.name, "is_default": d.is_default})).collect::<Vec<_>>(), "selected": selected }))
+    ok(
+        serde_json::json!({ "devices": devices.iter().map(|d| serde_json::json!({"id": d.id, "name": d.name, "is_default": d.is_default})).collect::<Vec<_>>(), "selected": selected }),
+    )
 }
 
 fn select_device(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
@@ -421,9 +563,19 @@ fn select_device(req: &serde_json::Value, engine: &AudioEngineHandle) -> String 
         if s.contains('\0') || s.len() > 256 {
             return fail("invalid id");
         }
+        // Validate against the current enumeration (""/null = system default).
+        let known = match crate::libs::device_manager::DeviceManager::new().get_output_devices() {
+            Ok(devs) => devs.iter().any(|d| &d.id == s) || s == "output_default",
+            Err(e) => return fail(&format!("cannot list devices: {e}")),
+        };
+        if !known {
+            return fail("unknown device");
+        }
     }
     crate::state::config_writer::apply(|c| c.selected_audio_device = id.clone());
-    engine.send(AudioCommand::SwitchDevice(id.clone()));
+    if !engine.send(AudioCommand::SwitchDevice(id.clone())) {
+        return fail("engine unavailable");
+    }
     ok(serde_json::json!({ "selected": id }))
 }
 
@@ -441,9 +593,16 @@ fn too_many_per_pack_entries(id: &str) -> bool {
 }
 
 fn proc_kb(key: &str) -> Option<u64> {
-    std::fs::read_to_string("/proc/self/status").ok()?.lines().find_map(|l| {
-        if l.starts_with(key) { l.split_whitespace().nth(1)?.parse().ok() } else { None }
-    })
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|l| {
+            if l.starts_with(key) {
+                l.split_whitespace().nth(1)?.parse().ok()
+            } else {
+                None
+            }
+        })
 }
 
 fn diag() -> String {
@@ -459,7 +618,11 @@ fn diag() -> String {
         "keyboard_pack": c.keyboard_soundpack,
     });
     if let Some(obj) = v.as_object_mut() {
-        for (k, val) in crate::state::health::snapshot().as_object().cloned().unwrap_or_default() {
+        for (k, val) in crate::state::health::snapshot()
+            .as_object()
+            .cloned()
+            .unwrap_or_default()
+        {
             obj.insert(k, val);
         }
     }
@@ -488,8 +651,12 @@ fn get_bar_section() -> String {
 }
 
 fn set_bar_section(req: &serde_json::Value) -> String {
-    let Some(section) = req.get("section").and_then(|s| s.as_str()) else { return fail("missing section") };
-    if !matches!(section, "left" | "center" | "right") { return fail("invalid section") };
+    let Some(section) = req.get("section").and_then(|s| s.as_str()) else {
+        return fail("missing section");
+    };
+    if !matches!(section, "left" | "center" | "right") {
+        return fail("invalid section");
+    };
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     let dir = std::path::PathBuf::from(home).join(".local/share/sorakey");
     if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -529,8 +696,16 @@ pub fn ctl_client(request: &str) -> i32 {
             return 1;
         }
     }
+    if out.trim().is_empty() {
+        print!("{}", fail("empty reply"));
+        return 1;
+    }
     print!("{out}");
-    0
+    match serde_json::from_str::<serde_json::Value>(&out) {
+        Ok(v) if v.get("ok") == Some(&serde_json::Value::Bool(true)) => 0,
+        Ok(_) => 1,
+        Err(_) => 1,
+    }
 }
 
 /// `sorakey key <Code> [up]` client — fire-and-forget: write one line and
@@ -563,9 +738,7 @@ mod tests {
 
         let filler: String = "a".repeat(70 * 1024);
         let request = format!("{{\"cmd\":\"status\",\"pad\":\"{filler}\"}}\n");
-        client
-            .write_all(request.as_bytes())
-            .expect("client write");
+        client.write_all(request.as_bytes()).expect("client write");
 
         let (cmd_tx, _cmd_rx) = crossbeam_channel::unbounded::<AudioCommand>();
         let engine = AudioEngineHandle { tx: cmd_tx };

@@ -5,4 +5,3 @@ pub mod device_manager;
 
 #[cfg(target_os = "linux")]
 pub mod evdev_input_listener;
-

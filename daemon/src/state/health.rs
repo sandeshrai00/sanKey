@@ -2,13 +2,13 @@
 //! Explains "daemon running but silent": input permission, pack load, audio.
 //! All atomics/locks — safe to call from any thread, never blocks the hot path.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 static KEYBOARDS: AtomicUsize = AtomicUsize::new(0);
 static LAST_KEY_UNIX: AtomicU64 = AtomicU64::new(0);
 static PACK_STATE: AtomicU8 = AtomicU8::new(0); // 0=unknown, 1=loaded, 2=failed
-static AUDIO_OK: AtomicBool = AtomicBool::new(true);
+static AUDIO_OK: AtomicBool = AtomicBool::new(false);
 
 fn input_error_slot() -> &'static Mutex<Option<String>> {
     static SLOT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
@@ -77,7 +77,7 @@ pub fn snapshot() -> serde_json::Value {
     serde_json::json!({
         "input_keyboards": KEYBOARDS.load(Ordering::Relaxed),
         "input_error": get_opt(input_error_slot()),
-        "last_key_age_s": if last == 0 { serde_json::Value::Null } else { serde_json::json!((now.saturating_sub(last)) as u64) },
+        "last_key_age_s": if last == 0 { serde_json::Value::Null } else { serde_json::json!(now.saturating_sub(last)) },
         "pack_loaded": match PACK_STATE.load(Ordering::Relaxed) {
             1 => serde_json::json!(true),
             2 => serde_json::json!(false),

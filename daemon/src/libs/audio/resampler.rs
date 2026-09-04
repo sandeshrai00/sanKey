@@ -1,4 +1,6 @@
-use rubato::{ Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction };
+use rubato::{
+    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
 
 /// Resamples interleaved PCM samples from `from_rate` to `to_rate` using a
 /// sinc resampler (rubato). Returns the input unchanged if the rates match.
@@ -10,7 +12,7 @@ pub fn resample_interleaved(
     samples: &[f32],
     channels: u16,
     from_rate: u32,
-    to_rate: u32
+    to_rate: u32,
 ) -> Vec<f32> {
     if from_rate == to_rate || samples.is_empty() {
         return samples.to_vec();
@@ -28,15 +30,17 @@ pub fn resample_interleaved(
     };
 
     let chunk_size = 1024;
-    let mut resampler = match
-        SincFixedIn::<f32>::new(
-            (to_rate as f64) / (from_rate as f64),
-            2.0,
-            params,
-            chunk_size,
-            channels
-        )
-    {
+    // Max rate ratio the resampler accepts: 5.0 covers every standard
+    // up-conversion (11025→48000 is 4.35x, 22050→48000 is 2.17x). The old
+    // 2.0 cap made those fail into the silent wrong-rate fallback below
+    // (input returned unconverted but tagged with the new rate).
+    let mut resampler = match SincFixedIn::<f32>::new(
+        (to_rate as f64) / (from_rate as f64),
+        5.0,
+        params,
+        chunk_size,
+        channels,
+    ) {
         Ok(r) => r,
         Err(e) => {
             crate::always_eprint!("❌ Failed to create resampler: {}", e);
@@ -54,9 +58,8 @@ pub fn resample_interleaved(
     // frames (rubato requires fixed-size input), so its output must be
     // truncated to the real (non-padded) length - otherwise the padded tail
     // leaks a sinc-smeared artifact into the resampled audio.
-    let expected_frame_count = (
-        ((frame_count as f64) * (to_rate as f64)) / (from_rate as f64)
-    ).round() as usize;
+    let expected_frame_count =
+        (((frame_count as f64) * (to_rate as f64)) / (from_rate as f64)).round() as usize;
     let mut out = Vec::with_capacity(expected_frame_count * channels + chunk_size * channels);
     // Reused input scratch: deinterleaved straight from `samples`, no full copy.
     let mut scratch: Vec<Vec<f32>> = vec![vec![0.0; chunk_size]; channels];
@@ -124,7 +127,8 @@ mod tests {
         // by the rate ratio, exactly (within rounding) - not just "close to
         // it within a chunk's worth of slack", which would let a padded,
         // untruncated tail slip through undetected.
-        let expected_len = ((frame_count as f64) * (to_rate as f64) / (from_rate as f64)).round() as usize;
+        let expected_len =
+            ((frame_count as f64) * (to_rate as f64) / (from_rate as f64)).round() as usize;
         let diff = (resampled.len() as i64 - expected_len as i64).unsigned_abs() as usize;
         assert!(
             diff <= 2,
@@ -153,7 +157,8 @@ mod tests {
 
         let resampled = resample_interleaved(&samples, 1, from_rate, to_rate);
 
-        let expected_len = ((frame_count as f64) * (to_rate as f64) / (from_rate as f64)).round() as usize;
+        let expected_len =
+            ((frame_count as f64) * (to_rate as f64) / (from_rate as f64)).round() as usize;
         let diff = (resampled.len() as i64 - expected_len as i64).unsigned_abs() as usize;
         assert!(
             diff <= 2,

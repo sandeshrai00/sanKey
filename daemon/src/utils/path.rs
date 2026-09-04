@@ -12,13 +12,8 @@ pub fn get_soundpacks_dir_absolute() -> String {
 /// Create directory recursively if it doesn't exist
 pub fn ensure_directory_exists(path: impl AsRef<std::path::Path>) -> Result<(), String> {
     let path_ref = path.as_ref();
-    fs::create_dir_all(path_ref).map_err(|e| {
-        format!(
-            "Failed to create directory '{}': {}",
-            path_ref.display(),
-            e
-        )
-    })
+    fs::create_dir_all(path_ref)
+        .map_err(|e| format!("Failed to create directory '{}': {}", path_ref.display(), e))
 }
 
 /// Read file contents as string

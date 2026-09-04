@@ -42,6 +42,9 @@ fn main() {
 
     if let Some(path) = control::serve(engine) {
         always_print!("🔌 sorakey control socket: {}", path.display());
+    } else {
+        eprintln!("sorakey: control socket bind failed — exiting so systemd restarts the daemon");
+        std::process::exit(1);
     }
 
     libs::bootstrap::start_input_capture(keyboard_tx, hotkey_tx);
@@ -55,10 +58,8 @@ fn acquire_lock() -> Option<std::fs::File> {
     let path = std::env::var("XDG_RUNTIME_DIR")
         .map(|dir| std::path::PathBuf::from(dir).join("sorakey.lock"))
         .unwrap_or_else(|_| {
-            std::path::PathBuf::from(
-                std::env::var("HOME").unwrap_or_else(|_| ".".into()),
-            )
-            .join(".sorakey.lock")
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+                .join(".sorakey.lock")
         });
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -68,9 +69,5 @@ fn acquire_lock() -> Option<std::fs::File> {
         .ok()?;
     let fd = std::os::unix::io::AsRawFd::as_raw_fd(&file);
     let acquired = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) == 0 };
-    if acquired {
-        Some(file)
-    } else {
-        None
-    }
+    if acquired { Some(file) } else { None }
 }

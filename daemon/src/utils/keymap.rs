@@ -91,6 +91,10 @@ pub static KEY_MAP: &[(u16, &str)] = &[
     (81, "Numpad3"),
     (82, "Numpad0"),
     (83, "NumpadDecimal"),
+    // 84 is reserved in linux/input-event-codes.h (no KEY_* defined between
+    // KEY_KPDOT 83 and KEY_ZENKAKUHANKAKU 85) — deliberately unmapped.
+    (85, "ZenkakuHankaku"),
+    (86, "IntlBackslash"),
     (87, "F11"),
     (88, "F12"),
 ];

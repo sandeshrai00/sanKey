@@ -6,12 +6,14 @@ fn manifest_and_cargo_versions_match() {
     let manifest_raw =
         std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../manifest.json"))
             .expect("read manifest.json");
-    let manifest: serde_json::Value = serde_json::from_str(&manifest_raw).expect("parse manifest.json");
-    let manifest_version = manifest["version"].as_str().expect("manifest version is a string");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest_raw).expect("parse manifest.json");
+    let manifest_version = manifest["version"]
+        .as_str()
+        .expect("manifest version is a string");
 
-    let cargo_toml =
-        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
-            .expect("read Cargo.toml");
+    let cargo_toml = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+        .expect("read Cargo.toml");
     let cargo_version = cargo_toml
         .lines()
         .find_map(|line| line.strip_prefix("version = "))

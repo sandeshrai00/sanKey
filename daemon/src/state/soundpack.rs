@@ -1,8 +1,25 @@
 use crate::state::paths;
-use crate::utils::{ data, path, soundpack };
-use serde::{ Deserialize, Serialize };
+use crate::utils::{data, path, soundpack};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
+
+/// Serializes compound cache updates (load → mutate → save) across threads
+/// (control socket, engine load worker). The file write itself is atomic
+/// (temp + rename), but without this two threads can load the same snapshot
+/// and the second save silently drops the first thread's mutation.
+static CACHE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Hold the returned guard across a whole load → mutate → save sequence.
+/// The lock is non-reentrant: while it is held, use `load_locked` /
+/// `save_locked` (the public `load` / `save` would deadlock on it).
+pub(crate) fn cache_lock() -> std::sync::MutexGuard<'static, ()> {
+    match CACHE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
 
 fn default_config_version() -> u32 {
     2
@@ -102,31 +119,37 @@ pub struct SoundpackCache {
 
 impl SoundpackCache {
     fn cache_file() -> String {
-        paths::data::soundpack_cache_json().to_string_lossy().to_string()
+        paths::data::soundpack_cache_json()
+            .to_string_lossy()
+            .to_string()
     }
 
     pub fn load() -> Self {
+        let _guard = cache_lock();
+        Self::load_locked()
+    }
+
+    pub(crate) fn load_locked() -> Self {
         let cache_file = Self::cache_file();
-        let mut cache = match
-            data::load_json_from_file::<SoundpackCache>(std::path::Path::new(&cache_file))
-        {
-            Ok(cache) => {
-                crate::always_print!(
-                    "📦 Loaded soundpack metadata cache with {} entries",
-                    cache.soundpacks.len()
-                );
-                cache
-            }
-            Err(e) => {
-                crate::always_eprint!("⚠️  Failed to load cache file: {}", e);
-                Self::new()
-            }
-        };
+        let mut cache =
+            match data::load_json_from_file::<SoundpackCache>(std::path::Path::new(&cache_file)) {
+                Ok(cache) => {
+                    crate::always_print!(
+                        "📦 Loaded soundpack metadata cache with {} entries",
+                        cache.soundpacks.len()
+                    );
+                    cache
+                }
+                Err(e) => {
+                    crate::always_eprint!("⚠️  Failed to load cache file: {}", e);
+                    Self::new()
+                }
+            };
 
         if cache.soundpacks.is_empty() {
             crate::always_print!("🔄 Cache is empty, refreshing from soundpack directories...");
             cache.refresh_from_directory();
-            cache.save();
+            cache.save_locked();
         }
 
         cache
@@ -140,7 +163,7 @@ impl SoundpackCache {
         }
     }
 
-    pub fn save(&self) {
+    pub(crate) fn save_locked(&self) {
         let cache_file = Self::cache_file();
 
         if let Some(parent) = Path::new(&cache_file).parent() {
@@ -151,18 +174,18 @@ impl SoundpackCache {
         }
 
         match data::save_json_to_file_atomically(self, std::path::Path::new(&cache_file)) {
-            Ok(_) =>
-                crate::always_print!(
-                    "💾 Saved soundpack metadata cache with {} entries",
-                    self.soundpacks.len()
-                ),
+            Ok(_) => crate::always_print!(
+                "💾 Saved soundpack metadata cache with {} entries",
+                self.soundpacks.len()
+            ),
             Err(e) => crate::always_eprint!("⚠️  Failed to save metadata cache: {}", e),
         }
     }
 
     pub fn add_soundpack(&mut self, metadata: SoundpackMetadata) {
         self.soundpacks.insert(metadata.id.clone(), metadata);
-    }     pub fn refresh_from_directory(&mut self) {
+    }
+    pub fn refresh_from_directory(&mut self) {
         crate::always_print!("📂 Scanning soundpacks directories...");
 
         self.soundpacks.clear();
@@ -175,8 +198,7 @@ impl SoundpackCache {
 
         self.update_count();
 
-        self.last_scan = std::time::SystemTime
-            ::now()
+        self.last_scan = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
@@ -206,11 +228,17 @@ impl SoundpackCache {
                 for entry in entries.filter_map(|e| e.ok()) {
                     if let Some(soundpack_name) = entry.file_name().to_str() {
                         let full_soundpack_id = format!("{}/{}", soundpack_type, soundpack_name);
-                        crate::always_print!("🔍 [CACHE DEBUG] Processing soundpack: {}", full_soundpack_id);
+                        crate::always_print!(
+                            "🔍 [CACHE DEBUG] Processing soundpack: {}",
+                            full_soundpack_id
+                        );
 
                         match soundpack::load_soundpack_metadata(&full_soundpack_id) {
                             Ok(metadata) => {
-                                crate::always_print!("✅ [CACHE DEBUG] Successfully loaded metadata for: {}", full_soundpack_id);
+                                crate::always_print!(
+                                    "✅ [CACHE DEBUG] Successfully loaded metadata for: {}",
+                                    full_soundpack_id
+                                );
                                 self.soundpacks.insert(full_soundpack_id, metadata);
                             }
                             Err(e) => {
@@ -220,20 +248,22 @@ impl SoundpackCache {
                                     soundpack_name,
                                     e
                                 );
-                                self.insert_error_metadata(
-                                    &full_soundpack_id,
-                                    soundpack_name,
-                                    e
-                                );
+                                self.insert_error_metadata(&full_soundpack_id, soundpack_name, e);
                             }
                         }
                     }
                 }
             } else {
-                crate::always_print!("❌ [CACHE DEBUG] Failed to read directory: {}", type_dir.display());
+                crate::always_print!(
+                    "❌ [CACHE DEBUG] Failed to read directory: {}",
+                    type_dir.display()
+                );
             }
         } else {
-            crate::always_print!("⚠️ [CACHE DEBUG] Directory does not exist: {}", type_dir.display());
+            crate::always_print!(
+                "⚠️ [CACHE DEBUG] Directory does not exist: {}",
+                type_dir.display()
+            );
             crate::always_print!("   Expected at: {}", type_dir.display());
             if let Some(parent) = type_dir.parent() {
                 crate::always_print!("   Parent directory: {}", parent.display());
@@ -246,7 +276,7 @@ impl SoundpackCache {
         &mut self,
         full_soundpack_id: &str,
         soundpack_name: &str,
-        error: String
+        error: String,
     ) {
         let error_metadata = SoundpackMetadata {
             id: full_soundpack_id.to_string(),
@@ -263,6 +293,7 @@ impl SoundpackCache {
             validation_status: "error".to_string(),
             last_error: Some(error),
         };
-        self.soundpacks.insert(full_soundpack_id.to_string(), error_metadata);
+        self.soundpacks
+            .insert(full_soundpack_id.to_string(), error_metadata);
     }
 }

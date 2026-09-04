@@ -112,3 +112,49 @@ Lifecycle: socket-bind failure ignored → headless daemon reporting
 D–E touch `daemon/` → bump to `v0.1.2` per the release rule
 (`relse.md`: any `daemon/` change must ship a new tag or users build
 from source).
+
+---
+
+## 2026-09-05 — D/E/F implemented, tested locally (NO push, NO tag)
+
+All three phases implemented (subagents, reviewed) + Phase F CI gate by
+hand. Local gate green: `cargo test` 82 passed, `cargo clippy -- -D
+warnings` clean, `cargo fmt --check` clean (ran `cargo fmt` once to
+converge; ~1900-line mechanical reformat).
+
+- **D (daemon truth):** sink-failure → `audio_error`; fallback records the
+  real device id; `AUDIO_OK` starts false; `select_device` validates
+  (unknown → `ok:false`); delete-last-pack unloads the engine pack;
+  `volume` always updates global, never per-pack; `reset_volume` returns
+  the effective volume; key allowlist extended (F13+, media, numpad…);
+  `load_pack` verifies before `ok`; `ctl` exits nonzero on `ok:false`;
+  startup fallback syncs volumes; `key_pressed` capped at 512.
+- **E (hardening):** 64KB socket cap + `incomplete request` error JSON;
+  symphonia pre-alloc clamped (~86M samples) + decode errors counted;
+  ALSA filter narrowed to `dmix:/dsnoop:`; legacy `output_N` → system
+  default with warning; `switch_device` rate cached from opened stream;
+  `delete_pack` denies on canonicalize error; `CACHE_LOCK` across
+  mutate+save; resampler `max_ratio` 2.0 → 5.0; loader caps (100MB/file,
+  empty → Err, no-rate → Err, numbered backups); converter NaN/Inf-safe,
+  press+release kept, atomic writes; validator lists missing fields,
+  rejects empty/{bad timings}; missing-audio → `last_error`; evdev
+  codes 85/86 mapped; keyboard detect no longer needs KEY_A; autorepeat
+  replays; cross-keyboard hotkey via shared modifiers; red-pbt migration
+  fixed; 1.0→0.6 migration removed; per-entry config salvage; bind-fail
+  exits 1; `auto_start` probe has timeout and never forces true→false;
+  export redacts key-press lines. (E9 skipped: the `Current user` log
+  doesn't exist. Pause `58437` mapping kept for compat.)
+- **F (CI):** `release.yml` runs `cargo test` + `clippy -D warnings` +
+  `fmt --check`, gates `Cargo.toml` == manifest version, all actions
+  SHA-pinned. `build-sorakey.sh`: manifest/Cargo version-match guard,
+  `-print0`/`sort -z` hash (fixed an `xargs` exit-123 self-kill this
+  introduced), `mktemp` trap.
+- **Live verified** (fresh source build installed, service restarted):
+  bogus device/pack/cmd → `ok:false` exit 1; volume/reset semantics;
+  export redacts key identities; `key KeyA` plays; panel reload clean.
+  NOTE: first sweep ran against the STALE binary (build script was
+  silently dying) — re-ran everything after the fix. Lesson: always
+  check `ls -la ~/.local/bin/sorakey` after building.
+- **Left for the user:** physical tests (unplug → honest `audio_error`;
+  hold-key → repeats; two keyboards → hotkey), then `v0.1.2` tag+push
+  when ready (local tree is release-ready).

@@ -1,7 +1,7 @@
 use crate::state::paths;
-use crate::utils::{ data, path };
-use chrono::{ DateTime, Utc };
-use serde::{ Deserialize, Serialize };
+use crate::utils::{data, path};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Each field defaults on its own — one bad entry doesn't wipe the file.
@@ -25,11 +25,42 @@ pub struct AppConfig {
     pub auto_start: bool,
 }
 
+/// Keep the usable entries of a `per_pack_volume` table, dropping the bad
+/// ones. Returns None when the value is not an object at all (nothing to
+/// salvage) or when no entry survives the probe.
+fn salvage_per_pack_volume(entry: &serde_json::Value) -> Option<serde_json::Value> {
+    let object = entry.as_object()?;
+    let mut cleaned = serde_json::Map::new();
+    for (pack_id, volume) in object {
+        let ok = volume.as_f64().is_some_and(|v| {
+            let f = v as f32;
+            f.is_finite()
+        }) && serde_json::from_value::<f32>(volume.clone()).is_ok();
+        if ok {
+            cleaned.insert(pack_id.clone(), volume.clone());
+        } else {
+            crate::always_eprint!(
+                "⚠️  Ignoring unusable per-pack volume for '{}', keeping the rest",
+                pack_id
+            );
+        }
+    }
+    let mut probe = serde_json::Map::new();
+    probe.insert(
+        "per_pack_volume".to_string(),
+        serde_json::Value::Object(cleaned.clone()),
+    );
+    if serde_json::from_value::<AppConfig>(serde_json::Value::Object(probe)).is_ok() {
+        Some(serde_json::Value::Object(cleaned))
+    } else {
+        None
+    }
+}
+
 /// Parse config leniently — drop bad fields, keep the rest.
 pub fn parse_lenient(contents: &str) -> Result<AppConfig, String> {
-    let value: serde_json::Value = serde_json
-        ::from_str(contents)
-        .map_err(|e| format!("not valid JSON: {}", e))?;
+    let value: serde_json::Value =
+        serde_json::from_str(contents).map_err(|e| format!("not valid JSON: {}", e))?;
 
     let Some(object) = value.as_object() else {
         return Err("config is not a JSON object".to_string());
@@ -39,10 +70,7 @@ pub fn parse_lenient(contents: &str) -> Result<AppConfig, String> {
     let mut accepted = serde_json::Map::new();
     for (key, entry) in object {
         // null soundpack means "no sound", not an error
-        let entry = if
-            entry.is_null() &&
-            key.as_str() == "keyboard_soundpack"
-        {
+        let entry = if entry.is_null() && key.as_str() == "keyboard_soundpack" {
             serde_json::Value::String(String::new())
         } else {
             entry.clone()
@@ -53,13 +81,26 @@ pub fn parse_lenient(contents: &str) -> Result<AppConfig, String> {
 
         if serde_json::from_value::<AppConfig>(serde_json::Value::Object(probe)).is_ok() {
             accepted.insert(key.clone(), entry);
+        } else if key.as_str() == "per_pack_volume" {
+            // One bad per-pack entry must not drop the whole table:
+            // keep the entries that parse as f32, skip the rest.
+            if let Some(cleaned) = salvage_per_pack_volume(&entry) {
+                accepted.insert(key.clone(), cleaned);
+            } else {
+                crate::always_eprint!(
+                    "⚠️  Ignoring unusable config entry '{}', using its default",
+                    key
+                );
+            }
         } else {
-            crate::always_eprint!("⚠️  Ignoring unusable config entry '{}', using its default", key);
+            crate::always_eprint!(
+                "⚠️  Ignoring unusable config entry '{}', using its default",
+                key
+            );
         }
     }
 
-    serde_json
-        ::from_value(serde_json::Value::Object(accepted))
+    serde_json::from_value(serde_json::Value::Object(accepted))
         .map_err(|e| format!("config could not be rebuilt: {}", e))
 }
 
@@ -97,7 +138,7 @@ fn preserve_corrupt_config(config_path: &std::path::Path) -> Preserved {
         // avoid infinite loop
         if attempt > 100 {
             return Preserved::Failed(
-                "too many saved copies of a damaged config already exist".to_string()
+                "too many saved copies of a damaged config already exist".to_string(),
             );
         }
     }
@@ -140,8 +181,7 @@ impl AppConfig {
         crate::always_print!("📖 Loading config from: {}", config_path.display());
 
         // read then parse — different errors, different handling
-        let parsed = std::fs
-            ::read_to_string(&config_path)
+        let parsed = std::fs::read_to_string(&config_path)
             .map_err(|e| format!("could not read '{}': {}", config_path.display(), e))
             .and_then(|contents| parse_lenient(&contents));
 
@@ -154,16 +194,34 @@ impl AppConfig {
                 let renames = [
                     migrate("oreo", "keyboard/sankey-oreo"),
                     migrate("keyboard/eg-oreo", "keyboard/sankey-oreo"),
-                    migrate("keyboard/eg-crystal-purple", "keyboard/sankey-crystal-purple"),
-                    migrate("keyboard/cherrymx-black-abs", "keyboard/sankey-mx-black-abs"),
-                    migrate("keyboard/cherrymx-black-pbt", "keyboard/sankey-mx-black-pbt"),
+                    migrate(
+                        "keyboard/eg-crystal-purple",
+                        "keyboard/sankey-crystal-purple",
+                    ),
+                    migrate(
+                        "keyboard/cherrymx-black-abs",
+                        "keyboard/sankey-mx-black-abs",
+                    ),
+                    migrate(
+                        "keyboard/cherrymx-black-pbt",
+                        "keyboard/sankey-mx-black-pbt",
+                    ),
                     migrate("keyboard/cherrymx-blue-abs", "keyboard/sankey-mx-blue-abs"),
                     migrate("keyboard/cherrymx-blue-pbt", "keyboard/sankey-mx-blue-pbt"),
-                    migrate("keyboard/cherrymx-brown-abs", "keyboard/sankey-mx-brown-abs"),
-                    migrate("keyboard/cherrymx-brown-pbt", "keyboard/sankey-mx-brown-pbt"),
+                    migrate(
+                        "keyboard/cherrymx-brown-abs",
+                        "keyboard/sankey-mx-brown-abs",
+                    ),
+                    migrate(
+                        "keyboard/cherrymx-brown-pbt",
+                        "keyboard/sankey-mx-brown-pbt",
+                    ),
                     migrate("keyboard/cherrymx-red-abs", "keyboard/sankey-mx-red-abs"),
-                    migrate("keyboard/cherrymx-red-pbt", "keyboard/sankey-mx-red-abs"),
-                    migrate("keyboard/topre-purple-hybrid-pbt", "keyboard/sankey-topre-purple"),
+                    migrate("keyboard/cherrymx-red-pbt", "keyboard/sankey-mx-red-pbt"),
+                    migrate(
+                        "keyboard/topre-purple-hybrid-pbt",
+                        "keyboard/sankey-topre-purple",
+                    ),
                 ];
                 for (old, new) in renames {
                     if config.keyboard_soundpack == old {
@@ -187,23 +245,31 @@ impl AppConfig {
                     }
                 }
 
-                // migrate default volume 1.0 -> 0.6
-                if config.volume == 1.0 {
-                    crate::always_print!("🔄 Migrating default volume: 1.0 → 0.6");
-                    config.volume = 0.6;
-                    config_updated = true;
-                }
+                // NOTE: no volume 1.0 -> 0.6 migration. 1.0 is a valid user
+                // value; rewriting it on every downgrade clobbers an
+                // explicit max, so the least-destructive option is to keep
+                // whatever the user has.
 
-                // sync auto_start with system
-                let actual_auto_start = crate::utils::auto_startup::get_auto_startup_state();
-                if config.auto_start != actual_auto_start {
-                    crate::always_print!(
-                        "🔄 Syncing auto_start config with registry: {} -> {}",
-                        config.auto_start,
-                        actual_auto_start
-                    );
-                    config.auto_start = actual_auto_start;
-                    config_updated = true;
+                // sync auto_start with system, but never let a failed
+                // detection overwrite the user's value (non-systemd boxes
+                // would otherwise force true -> false on every start).
+                match crate::utils::auto_startup::get_auto_startup_state() {
+                    Some(actual_auto_start) if config.auto_start != actual_auto_start => {
+                        crate::always_print!(
+                            "🔄 Syncing auto_start config with registry: {} -> {}",
+                            config.auto_start,
+                            actual_auto_start
+                        );
+                        config.auto_start = actual_auto_start;
+                        config_updated = true;
+                    }
+                    None => {
+                        crate::always_print!(
+                            "🔄 Skipping auto_start sync: system state unknown, keeping {}",
+                            config.auto_start
+                        );
+                    }
+                    _ => {}
                 }
 
                 // save if migrated
@@ -306,12 +372,18 @@ mod tests {
     /// Reload before mutate to keep concurrent changes.
     #[test]
     fn reloading_before_mutating_preserves_a_concurrent_change() {
-        let on_disk = AppConfig { enable_sound: false, ..Default::default() };
+        let on_disk = AppConfig {
+            enable_sound: false,
+            ..Default::default()
+        };
 
         let mut fresh = on_disk.clone();
         fresh.volume = 0.5;
 
-        assert!(!fresh.enable_sound, "mute must survive an unrelated config write");
+        assert!(
+            !fresh.enable_sound,
+            "mute must survive an unrelated config write"
+        );
         assert_eq!(fresh.volume, 0.5, "the volume change must still apply");
     }
 
@@ -328,13 +400,11 @@ mod tests {
     /// Null string field should only affect that field.
     #[test]
     fn a_null_soundpack_costs_only_that_field() {
-        let document = config_json_with(
-            &[
-                ("keyboard_soundpack", serde_json::Value::Null),
-                ("volume", serde_json::json!(0.42)),
-                ("auto_start", serde_json::json!(true)),
-            ]
-        );
+        let document = config_json_with(&[
+            ("keyboard_soundpack", serde_json::Value::Null),
+            ("volume", serde_json::json!(0.42)),
+            ("auto_start", serde_json::json!(true)),
+        ]);
 
         assert!(
             serde_json::from_str::<AppConfig>(&document).is_err(),
@@ -344,32 +414,38 @@ mod tests {
 
         let restored = parse_lenient(&document).expect("a null field must not fail the document");
 
-        assert_eq!(restored.keyboard_soundpack, "", "null must read as the no-pack state");
-        assert_eq!(restored.volume, 0.42, "every other setting must survive intact");
+        assert_eq!(
+            restored.keyboard_soundpack, "",
+            "null must read as the no-pack state"
+        );
+        assert_eq!(
+            restored.volume, 0.42,
+            "every other setting must survive intact"
+        );
         assert!(restored.auto_start, "and so must the rest");
     }
 
     /// Wrong types and unknown keys only affect their field.
     #[test]
     fn wrong_typed_and_unknown_fields_do_not_fail_the_document() {
-        let document = config_json_with(
-            &[
-                ("volume", serde_json::json!("loud")),
-                ("auto_start", serde_json::json!(true)),
-                ("a_key_from_a_future_build", serde_json::json!({ "x": 1 })),
-            ]
-        );
+        let document = config_json_with(&[
+            ("volume", serde_json::json!("loud")),
+            ("auto_start", serde_json::json!(true)),
+            ("a_key_from_a_future_build", serde_json::json!({ "x": 1 })),
+        ]);
 
-        let restored = parse_lenient(&document).expect(
-            "wrong-typed fields must not fail the document"
-        );
+        let restored =
+            parse_lenient(&document).expect("wrong-typed fields must not fail the document");
 
         assert_eq!(
             restored.volume,
             AppConfig::default().volume,
             "a damaged volume must fall back to the audible config default, not 0.0"
         );
-        assert!(restored.auto_start, "a valid neighbouring setting must survive");
+        assert!(
+            restored.auto_start,
+            "a valid neighbouring setting must survive"
+        );
     }
 
     /// Missing field defaults without losing the rest.
@@ -380,14 +456,12 @@ mod tests {
         object.remove("auto_start");
         object.insert("volume".to_string(), serde_json::json!(0.8));
 
-        let restored = parse_lenient(&value.to_string()).expect(
-            "a missing field must default rather than fail"
-        );
+        let restored = parse_lenient(&value.to_string())
+            .expect("a missing field must default rather than fail");
 
         assert!(!restored.auto_start, "the absent field takes its default");
         assert_eq!(
-            restored.volume,
-            0.8,
+            restored.volume, 0.8,
             "the user's other settings must be untouched"
         );
     }
@@ -396,8 +470,14 @@ mod tests {
     #[test]
     fn a_non_object_document_is_a_parse_failure() {
         assert!(parse_lenient("[]").is_err(), "a bare array is not a config");
-        assert!(parse_lenient("\"hello\"").is_err(), "a bare string is not a config");
-        assert!(parse_lenient("{\"volume\": 0.5").is_err(), "a truncated document must fail");
+        assert!(
+            parse_lenient("\"hello\"").is_err(),
+            "a bare string is not a config"
+        );
+        assert!(
+            parse_lenient("{\"volume\": 0.5").is_err(),
+            "a truncated document must fail"
+        );
     }
 
     /// Truncated config is preserved, not overwritten.
@@ -426,7 +506,10 @@ mod tests {
             original,
             "the user's original bytes must survive verbatim"
         );
-        assert!(!config_path.exists(), "the damaged file is moved, not copied");
+        assert!(
+            !config_path.exists(),
+            "the damaged file is moved, not copied"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -434,9 +517,8 @@ mod tests {
     /// Second failure doesn't clobber first rescue.
     #[test]
     fn a_second_failure_does_not_clobber_the_first_rescue() {
-        let dir = std::env::temp_dir().join(
-            format!("sorakey-corrupt-twice-{}", std::process::id())
-        );
+        let dir =
+            std::env::temp_dir().join(format!("sorakey-corrupt-twice-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let config_path = dir.join("config.json");
 
@@ -484,10 +566,16 @@ mod tests {
         let mut same = config.clone();
         same.volume = config.volume;
 
-        assert!(same.data_equals(&config), "no-op write must not be treated as a change");
+        assert!(
+            same.data_equals(&config),
+            "no-op write must not be treated as a change"
+        );
 
         same.volume = config.volume + 0.25;
-        assert!(!same.data_equals(&config), "a real change must still be detected");
+        assert!(
+            !same.data_equals(&config),
+            "a real change must still be detected"
+        );
     }
 
     /// Index-based device ID is legacy.

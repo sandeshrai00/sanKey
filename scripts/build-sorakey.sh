@@ -12,6 +12,12 @@ REPO="sandeshrai00/soraKey"
 mkdir -p "$CACHE_DIR" "$LIB_DIR" "$(dirname "$BIN")"
 
 version="$(python3 -c "import json;print(json.load(open('$MANIFEST'))['version'])" 2>/dev/null || echo "0.0.0")"
+cargo_version="$(grep -m1 '^version' "$DAEMON_DIR/Cargo.toml" 2>/dev/null | sed 's/.*"\(.*\)"/\1/' || echo "")"
+# manifest and daemon versions must agree: the release gate proves
+# tag == manifest, so a manifest/daemon mismatch means no release can
+# vouch for this source — build locally instead of trusting a prebuilt.
+versions_match=0
+[[ -n "$cargo_version" && "$cargo_version" == "$version" ]] && versions_match=1
 arch="$(uname -m)"
 case "$arch" in x86_64|aarch64) ;; *) arch="x86_64";; esac
 asset="sorakey-${arch}"
@@ -19,8 +25,8 @@ asset="sorakey-${arch}"
 # source hash for staleness
 source_id=""
 if command -v sha256sum >/dev/null 2>&1; then
-  source_id=$( { find "$DAEMON_DIR" -path "$DAEMON_DIR/target" -prune -o \( -name "Cargo.toml" -o -name "Cargo.lock" -o -name "*.rs" \) -print;
-                 echo "$PLUGIN_DIR/rust-toolchain.toml"; } | sort | xargs cat 2>/dev/null | sha256sum | cut -d' ' -f1)
+  source_id=$( { find "$DAEMON_DIR" -path "$DAEMON_DIR/target" -prune -o \( -name "Cargo.toml" -o -name "Cargo.lock" -o -name "*.rs" \) -print0;
+                 printf '%s\0' "$PLUGIN_DIR/rust-toolchain.toml"; } | sort -z | xargs -0 cat 2>/dev/null | sha256sum | cut -d' ' -f1)
   if [[ -f "$LIB_DIR/source.sha256" ]] && [[ "$(cat "$LIB_DIR/source.sha256" 2>/dev/null)" == "$source_id" ]] && [[ -x "$BIN" ]]; then
     echo "sorakey up to date (source $source_id)"
     exit 0
@@ -46,12 +52,17 @@ gh_can_verify() {
 
 try_download_prebuilt() {
   release_matches_source || return 1
+  if [[ "$versions_match" != 1 ]]; then
+    echo "manifest ($version) != daemon Cargo.toml ($cargo_version) — building from source" >&2
+    return 1
+  fi
   command -v curl >/dev/null 2>&1 || return 1
   command -v sha256sum >/dev/null 2>&1 || return 1
   local url="https://github.com/$REPO/releases/download/v${version}/${asset}"
   local sums="https://github.com/$REPO/releases/download/v${version}/SHA256SUMS"
   local tmp
   tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' RETURN
   echo "Trying verified prebuilt $url ..."
   if curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 -o "$tmp/$asset" "$url" 2>/dev/null \
     && curl --proto '=https' --tlsv1.2 -fsSL --max-time 30 -o "$tmp/SHA256SUMS" "$sums" 2>/dev/null; then

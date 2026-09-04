@@ -5,13 +5,13 @@ use std::path::Path;
 /// Decode `path` via Symphonia into interleaved `f32` PCM.
 /// Returns `(samples, channels, sample_rate)`.
 pub fn decode_interleaved(path: &str) -> Result<(Vec<f32>, u16, u32), String> {
+    use std::fs::File;
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::CODEC_TYPE_NULL;
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
-    use std::fs::File;
 
     let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -20,7 +20,12 @@ pub fn decode_interleaved(path: &str) -> Result<(Vec<f32>, u16, u32), String> {
         hint.with_extension(ext);
     }
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .map_err(|e| format!("Failed to probe format for '{}': {}", path, e))?;
 
     let mut format = probed.format;
@@ -37,13 +42,30 @@ pub fn decode_interleaved(path: &str) -> Result<(Vec<f32>, u16, u32), String> {
     let sample_rate = track.codec_params.sample_rate.unwrap_or(44_100);
     let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2) as u16;
 
+    // Hard cap on buffered PCM: ~15 min of stereo 48kHz (~86M f32 samples,
+    // ~345MB). The header's `n_frames` is attacker-controlled metadata — a
+    // malicious huge value must not drive a matching `reserve` (instant OOM).
+    const MAX_SAMPLES: usize = 15 * 60 * 48_000 * 2;
     let mut samples = Vec::new();
     // Pre-size from the track header when known: avoids repeated
     // realloc-doubling (up to 2× transient) while packets stream in.
+    // Clamped to the cap: slightly-off headers still decode fine (the buffer
+    // just grows past the hint), absurd ones only pre-allocate the cap.
     if let Some(frames) = track.codec_params.n_frames {
-        samples.reserve(frames as usize * channels as usize);
+        let claimed = (frames as usize).saturating_mul(channels as usize);
+        if claimed > MAX_SAMPLES {
+            crate::always_eprint!(
+                "⚠️  symphonia: '{}' claims {} samples, clamping pre-alloc to {}",
+                path,
+                claimed,
+                MAX_SAMPLES
+            );
+        }
+        samples.reserve(claimed.min(MAX_SAMPLES));
     }
     let mut buf: Option<SampleBuffer<f32>> = None;
+    let mut read_errors: u32 = 0;
+    let mut decode_errors: u32 = 0;
 
     loop {
         let packet = match format.next_packet() {
@@ -52,7 +74,10 @@ pub fn decode_interleaved(path: &str) -> Result<(Vec<f32>, u16, u32), String> {
                 // Truncated/corrupt packets used to be eaten silently, leaving
                 // audio shorter than its own timing says (see engine
                 // "start sample past end" spam).
-                crate::always_eprint!("⚠️  symphonia: read error in '{}': {}", path, e);
+                read_errors += 1;
+                if read_errors <= 3 {
+                    crate::always_eprint!("⚠️  symphonia: read error in '{}': {}", path, e);
+                }
                 break;
             }
         };
@@ -62,7 +87,10 @@ pub fn decode_interleaved(path: &str) -> Result<(Vec<f32>, u16, u32), String> {
         let decoded = match decoder.decode(&packet) {
             Ok(d) => d,
             Err(e) => {
-                crate::always_eprint!("⚠️  symphonia: decode error in '{}': {}", path, e);
+                decode_errors += 1;
+                if decode_errors <= 3 {
+                    crate::always_eprint!("⚠️  symphonia: decode error in '{}': {}", path, e);
+                }
                 continue;
             }
         };
@@ -80,16 +108,28 @@ pub fn decode_interleaved(path: &str) -> Result<(Vec<f32>, u16, u32), String> {
     if samples.is_empty() {
         return Err("No audio data decoded".to_string());
     }
+    // Keep playing what decoded (slightly-off files stay usable), but make
+    // the damage visible: per-packet logs above are capped, the totals here
+    // are not.
+    if read_errors > 0 || decode_errors > 0 {
+        crate::always_eprint!(
+            "⚠️  symphonia: '{}' decoded {} samples with {} read errors + {} decode errors",
+            path,
+            samples.len(),
+            read_errors,
+            decode_errors
+        );
+    }
     Ok((samples, channels, sample_rate))
 }
 
 /// Duration via Symphonia metadata (fast, no decode).
 pub fn duration_ms(path: &str) -> Result<f64, Box<dyn std::error::Error>> {
+    use std::fs::File;
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
-    use std::fs::File;
 
     let file = File::open(path)?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -97,9 +137,18 @@ pub fn duration_ms(path: &str) -> Result<f64, Box<dyn std::error::Error>> {
     if let Some(ext) = Path::new(path).extension().and_then(|s| s.to_str()) {
         hint.with_extension(ext);
     }
-    let probed = symphonia::default::get_probe().format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())?;
+    let probed = symphonia::default::get_probe().format(
+        &hint,
+        mss,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    )?;
     let format = probed.format;
-    let track = format.tracks().iter().find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL).ok_or("No track")?;
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL)
+        .ok_or("No track")?;
     if let Some(tb) = &track.codec_params.time_base {
         if let Some(nf) = track.codec_params.n_frames {
             return Ok(((nf as f64) * (tb.numer as f64) / (tb.denom as f64)) * 1000.0);

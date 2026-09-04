@@ -1,7 +1,7 @@
 use super::path;
-use serde_json::{ Map, Value };
+use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::path::{ Path, PathBuf };
+use std::path::{Path, PathBuf};
 
 /// Get audio duration in ms.
 fn get_audio_duration_ms(file_path: &str) -> Result<f64, Box<dyn std::error::Error>> {
@@ -9,9 +9,9 @@ fn get_audio_duration_ms(file_path: &str) -> Result<f64, Box<dyn std::error::Err
         return Err("File does not exist".into());
     } // Use symphonia for audio duration detection
     match get_duration_with_symphonia(file_path) {
-        Ok(duration) if duration > 0.0 => { Ok(duration) }
-        Ok(_) => { Ok(100.0) }
-        Err(_) => { Ok(100.0) }
+        Ok(duration) if duration > 0.0 => Ok(duration),
+        Ok(_) => Ok(100.0),
+        Err(_) => Ok(100.0),
     }
 }
 
@@ -20,22 +20,30 @@ fn get_duration_with_symphonia(file_path: &str) -> Result<f64, Box<dyn std::erro
     Ok(crate::utils::symphonia::duration_ms(file_path).unwrap_or(100.0))
 }
 
+/// JSON number for a computed `f64`. `Number::from_f64` returns `None` for
+/// NaN/Inf (corrupt V1 timings can produce those); unwrapping would panic
+/// the converter, so fall back to 0.0 instead.
+fn json_num(value: f64) -> Value {
+    Value::Number(
+        serde_json::Number::from_f64(value)
+            .unwrap_or_else(|| serde_json::Number::from_f64(0.0).expect("0.0 is finite")),
+    )
+}
+
 /// Convert V1 config to V2.
 pub fn convert_v1_to_v2(
     v1_config_path: &str,
     output_path: &str,
-    soundpack_dir: Option<&str>
+    soundpack_dir: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let soundpack_dir = soundpack_dir
-        .unwrap_or(
-            Path::new(v1_config_path)
-                .parent()
-                .and_then(|p| p.to_str())
-                .ok_or("Could not determine soundpack directory")?,
-        );
+    let soundpack_dir = soundpack_dir.unwrap_or(
+        Path::new(v1_config_path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .ok_or("Could not determine soundpack directory")?,
+    );
 
-    let content = path
-        ::read_file_contents(v1_config_path)
+    let content = path::read_file_contents(v1_config_path)
         .map_err(|e| format!("Failed to read V1 config: {}", e))?;
     let config: Value = serde_json::from_str(&content)?;
 
@@ -81,7 +89,7 @@ pub fn convert_v1_to_v2(
 
     converted_config.insert(
         "definition_method".to_string(),
-        Value::String(definition_method.to_string())
+        Value::String(definition_method.to_string()),
     ); // Handle audio_file for "single" method
     let (audio_file_name, audio_file_info) = if v1_define_type == "multi" {
         let mut audio_files_ordered = Vec::new();
@@ -101,10 +109,9 @@ pub fn convert_v1_to_v2(
             for key in sorted_keys {
                 if let Some(value) = defines.get(key) {
                     if let Some(filename) = value.as_str() {
-                        if
-                            !filename.is_empty() &&
-                            filename != "null" &&
-                            !seen_files.contains(filename)
+                        if !filename.is_empty()
+                            && filename != "null"
+                            && !seen_files.contains(filename)
                         {
                             audio_files_ordered.push(filename.to_string());
                             seen_files.insert(filename.to_string());
@@ -114,18 +121,19 @@ pub fn convert_v1_to_v2(
             }
         }
 
-        crate::always_print!("🔧 Found {} unique audio files in V1 multi method", audio_files_ordered.len());
+        crate::always_print!(
+            "🔧 Found {} unique audio files in V1 multi method",
+            audio_files_ordered.len()
+        );
 
         let concat_filename = "concatenated_audio.wav";
         crate::always_print!("🎵 Creating concatenated audio file: {}", concat_filename);
 
-        let audio_file_info = match
-                concatenate_audio_files_with_timing(
-                    &audio_files_ordered,
-                    soundpack_dir,
-                    concat_filename
-                )
-        {
+        let audio_file_info = match concatenate_audio_files_with_timing(
+            &audio_files_ordered,
+            soundpack_dir,
+            concat_filename,
+        ) {
             Ok(timing_info) => timing_info,
             Err(e) => {
                 crate::always_print!("❌ Failed to create concatenated audio file: {}", e);
@@ -137,7 +145,10 @@ pub fn convert_v1_to_v2(
     } else {
         let main_file = if let Some(sound) = config.get("sound") {
             if let Some(sound_str) = sound.as_str() {
-                crate::always_print!("🎵 Using main audio file from V1 single method: {}", sound_str);
+                crate::always_print!(
+                    "🎵 Using main audio file from V1 single method: {}",
+                    sound_str
+                );
                 sound_str.to_string()
             } else {
                 return Err("Invalid sound field in V1 config".into());
@@ -174,19 +185,22 @@ pub fn convert_v1_to_v2(
         (main_file, std::collections::HashMap::new())
     };
 
-    converted_config.insert("audio_file".to_string(), Value::String(audio_file_name.clone()));
+    converted_config.insert(
+        "audio_file".to_string(),
+        Value::String(audio_file_name.clone()),
+    );
 
     let mut options = Map::new();
-    options.insert(
-        "recommended_volume".to_string(),
-        Value::Number(serde_json::Number::from_f64(1.0).unwrap())
-    );
+    options.insert("recommended_volume".to_string(), json_num(1.0));
     options.insert("random_pitch".to_string(), Value::Bool(false));
     converted_config.insert("options".to_string(), Value::Object(options)); // Convert "defines" to "definitions" with new format
     let mut definitions = Map::new();
     if let Some(defines) = config.get("defines").and_then(|d| d.as_object()) {
         let key_mappings = create_iohook_to_web_key_mapping();
-        crate::always_print!("🔧 Converting {} key definitions to new format (single method)", defines.len());
+        crate::always_print!(
+            "🔧 Converting {} key definitions to new format (single method)",
+            defines.len()
+        );
         if v1_define_type == "multi" {
             crate::always_print!("🔧 Processing V1 multi method defines");
 
@@ -203,28 +217,43 @@ pub fn convert_v1_to_v2(
                             if !audio_filename.is_empty() && audio_filename != "null" {
                                 let mut key_def = Map::new();
 
-                                if
-                                    let Some(&(offset, duration)) =
-                                        audio_file_info.get(audio_filename)
+                                if let Some(&(offset, duration)) =
+                                    audio_file_info.get(audio_filename)
                                 {
                                     let end_time = offset + duration;
 
                                     if key_name == "Enter" {
                                         crate::always_print!("🔍 [ENTER DEBUG] Key: {}", key_name);
-                                        crate::always_print!("🔍 [ENTER DEBUG] IOHook code: {}", iohook_num);
-                                        crate::always_print!("🔍 [ENTER DEBUG] Audio file: {}", audio_filename);
-                                        crate::always_print!("🔍 [ENTER DEBUG] Offset: {}ms", offset);
-                                        crate::always_print!("🔍 [ENTER DEBUG] Duration: {}ms", duration);
-                                        crate::always_print!("🔍 [ENTER DEBUG] End time: {}ms", end_time);
+                                        crate::always_print!(
+                                            "🔍 [ENTER DEBUG] IOHook code: {}",
+                                            iohook_num
+                                        );
+                                        crate::always_print!(
+                                            "🔍 [ENTER DEBUG] Audio file: {}",
+                                            audio_filename
+                                        );
+                                        crate::always_print!(
+                                            "🔍 [ENTER DEBUG] Offset: {}ms",
+                                            offset
+                                        );
+                                        crate::always_print!(
+                                            "🔍 [ENTER DEBUG] Duration: {}ms",
+                                            duration
+                                        );
+                                        crate::always_print!(
+                                            "🔍 [ENTER DEBUG] End time: {}ms",
+                                            end_time
+                                        );
 
                                         let concat_path =
                                             format!("{}/concatenated_audio.wav", soundpack_dir);
-                                        if
-                                            let Ok(concat_duration) = get_audio_duration_ms(
-                                                &concat_path
-                                            )
+                                        if let Ok(concat_duration) =
+                                            get_audio_duration_ms(&concat_path)
                                         {
-                                            crate::always_print!("🔍 [ENTER DEBUG] Concatenated audio duration: {}ms", concat_duration);
+                                            crate::always_print!(
+                                                "🔍 [ENTER DEBUG] Concatenated audio duration: {}ms",
+                                                concat_duration
+                                            );
                                             if end_time > concat_duration {
                                                 crate::always_print!(
                                                     "❌ [ENTER DEBUG] ERROR: End time ({}) > Concat duration ({})",
@@ -235,35 +264,24 @@ pub fn convert_v1_to_v2(
                                         }
                                     }
 
-                                    let timing = vec![
-                                        Value::Array(
-                                            vec![
-                                                Value::Number(
-                                                    serde_json::Number::from_f64(offset).unwrap()
-                                                ),
-                                                Value::Number(
-                                                    serde_json::Number::from_f64(end_time).unwrap()
-                                                )
-                                            ]
-                                        )
-                                    ];
-                                    key_def.insert("timing".to_string(), Value::Array(timing.clone()));
+                                    let timing = vec![Value::Array(vec![
+                                        json_num(offset),
+                                        json_num(end_time),
+                                    ])];
+                                    key_def
+                                        .insert("timing".to_string(), Value::Array(timing.clone()));
 
                                     match definitions.get_mut(key_name.as_str()) {
                                         Some(Value::Object(existing)) => {
-                                            if
-                                                let Some(Value::Array(segments)) = existing.get_mut(
-                                                    "timing"
-                                                )
+                                            if let Some(Value::Array(segments)) =
+                                                existing.get_mut("timing")
                                             {
                                                 segments.extend(timing);
                                             }
                                         }
                                         _ => {
-                                            definitions.insert(
-                                                key_name.clone(),
-                                                Value::Object(key_def)
-                                            );
+                                            definitions
+                                                .insert(key_name.clone(), Value::Object(key_def));
                                         }
                                     }
                                     crate::always_print!(
@@ -274,50 +292,81 @@ pub fn convert_v1_to_v2(
                                         end_time
                                     );
                                 } else {
-                                    crate::always_print!("   ⚠️ No offset found for audio file: {}", audio_filename);
+                                    crate::always_print!(
+                                        "   ⚠️ No offset found for audio file: {}",
+                                        audio_filename
+                                    );
                                 }
                             } else {
-                                crate::always_print!("   ⚠️ Key IOHook {} has empty/null audio file", iohook_code);
+                                crate::always_print!(
+                                    "   ⚠️ Key IOHook {} has empty/null audio file",
+                                    iohook_code
+                                );
                             }
                         }
                     } else {
-                        crate::always_print!("   ⚠️ No key mapping found for IOHook code: {}", iohook_code);
+                        crate::always_print!(
+                            "   ⚠️ No key mapping found for IOHook code: {}",
+                            iohook_code
+                        );
                     }
                 }
             }
         } else {
             crate::always_print!("🔧 Processing V1 single method defines");
 
-            for (iohook_code, value) in defines {
+            // Press before release, then numeric order (same as the multi
+            // path): defines "30" (press) and "030" (release) share one key
+            // name, and the engine plays timing[0] as press / timing[1] as
+            // release. A plain `definitions.insert` here used to let the
+            // second one silently overwrite the first (HashMap order decided
+            // which segment survived), so existing entries are extended.
+            let mut ordered: Vec<(&String, &Value)> = defines.iter().collect();
+            ordered.sort_by_key(|(code, _)| {
+                let (num, is_press) = iohook_code_and_press(code).unwrap_or((u32::MAX, true));
+                (!is_press, num)
+            });
+
+            for (iohook_code, value) in ordered {
                 if let Some((iohook_num, _)) = iohook_code_and_press(iohook_code) {
                     if let Some(key_name) = key_mappings.get(&iohook_num) {
-                        let mut key_def = Map::new();
-
                         if let Some(timing_array) = value.as_array() {
                             if timing_array.len() >= 2 {
                                 let start = timing_array[0].as_f64().unwrap_or(0.0) as f32;
                                 let duration = timing_array[1].as_f64().unwrap_or(100.0) as f32;
                                 let end = start + duration;
 
-                                let timing = vec![
-                                    Value::Array(
-                                        vec![
-                                            Value::Number(
-                                                serde_json::Number::from_f64(start as f64).unwrap()
-                                            ),
-                                            Value::Number(
-                                                serde_json::Number::from_f64(end as f64).unwrap()
-                                            )
-                                        ]
-                                    )
-                                ];
-                                key_def.insert("timing".to_string(), Value::Array(timing));
-
-                                definitions.insert(key_name.clone(), Value::Object(key_def));
-                                crate::always_print!("   ✅ Key '{}' -> timing [{}, {}]", key_name, start, end);
+                                let timing = vec![Value::Array(vec![
+                                    json_num(start as f64),
+                                    json_num(end as f64),
+                                ])];
+                                match definitions.get_mut(key_name.as_str()) {
+                                    Some(Value::Object(existing)) => {
+                                        if let Some(Value::Array(segments)) =
+                                            existing.get_mut("timing")
+                                        {
+                                            segments.extend(timing);
+                                        }
+                                    }
+                                    _ => {
+                                        let mut key_def = Map::new();
+                                        key_def.insert("timing".to_string(), Value::Array(timing));
+                                        definitions
+                                            .insert(key_name.clone(), Value::Object(key_def));
+                                    }
+                                }
+                                crate::always_print!(
+                                    "   ✅ Key '{}' -> timing [{}, {}]",
+                                    key_name,
+                                    start,
+                                    end
+                                );
                             }
                         } else {
-                            crate::always_print!("   ⚠️ Key '{}' has invalid timing format", key_name);
+                            crate::always_print!(
+                                "   ⚠️ Key '{}' has invalid timing format",
+                                key_name
+                            );
                         }
                     }
                 }
@@ -328,11 +377,24 @@ pub fn convert_v1_to_v2(
     converted_config.insert("definitions".to_string(), Value::Object(definitions));
 
     let output_json = serde_json::to_string_pretty(&converted_config)?;
-    std::fs::write(output_path, output_json)?;
+    write_atomic_string(output_path, &output_json)?;
 
     crate::always_print!("✅ Successfully converted V1 to V2 config");
     crate::always_print!("📁 Output written to: {}", output_path);
 
+    Ok(())
+}
+
+/// Write `contents` to `path` atomically (temp file in the same directory +
+/// rename) so a crash mid-conversion never leaves a truncated config behind.
+/// Same-directory temp keeps the rename on one filesystem (truly atomic).
+fn write_atomic_string(path: &str, contents: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = format!("{}.tmp.{}", path, std::process::id());
+    std::fs::write(&tmp, contents)?;
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
 }
 
@@ -357,15 +419,27 @@ pub fn back_up_existing_file(path: &Path) -> Result<Option<PathBuf>, String> {
         attempt += 1;
 
         if attempt > 100 {
-            return Err(format!("too many backups already exist next to {}", path.display()));
+            return Err(format!(
+                "too many backups already exist next to {}",
+                path.display()
+            ));
         }
     }
 
-    std::fs
-        ::copy(path, &target)
-        .map_err(|e| format!("failed to back up {} to {}: {}", path.display(), target.display(), e))?;
+    std::fs::copy(path, &target).map_err(|e| {
+        format!(
+            "failed to back up {} to {}: {}",
+            path.display(),
+            target.display(),
+            e
+        )
+    })?;
 
-    crate::always_print!("🗄️  Backed up existing {} to {}", path.display(), target.display());
+    crate::always_print!(
+        "🗄️  Backed up existing {} to {}",
+        path.display(),
+        target.display()
+    );
     Ok(Some(target))
 }
 
@@ -373,9 +447,12 @@ pub fn back_up_existing_file(path: &Path) -> Result<Option<PathBuf>, String> {
 fn concatenate_audio_files_with_timing(
     audio_files: &[String], // just filenames
     soundpack_dir: &str,
-    output_filename: &str
+    output_filename: &str,
 ) -> Result<std::collections::HashMap<String, (f64, f64)>, Box<dyn std::error::Error>> {
-    crate::always_print!("🔧 Concatenating {} audio files with timing...", audio_files.len());
+    crate::always_print!(
+        "🔧 Concatenating {} audio files with timing...",
+        audio_files.len()
+    );
 
     let mut all_samples = Vec::new();
     let mut sample_rate = 44100u32; // Default sample rate
@@ -384,7 +461,12 @@ fn concatenate_audio_files_with_timing(
 
     for (i, filename) in audio_files.iter().enumerate() {
         let file_path = format!("{}/{}", soundpack_dir, filename);
-        crate::always_print!("   📁 Loading audio file {}/{}: {}", i + 1, audio_files.len(), filename);
+        crate::always_print!(
+            "   📁 Loading audio file {}/{}: {}",
+            i + 1,
+            audio_files.len(),
+            filename
+        );
 
         if !Path::new(&file_path).exists() {
             crate::always_print!("   ⚠️ Audio file not found, skipping: {}", file_path);
@@ -399,47 +481,57 @@ fn concatenate_audio_files_with_timing(
                 if i == 0 {
                     sample_rate = file_sample_rate;
                     channels = file_channels;
-                    crate::always_print!("   🎵 Using format: {}Hz, {} channels", sample_rate, channels);
-                }
-
-                let converted_samples = if
-                    file_sample_rate != sample_rate ||
-                    file_channels != channels
-                {
                     crate::always_print!(
-                        "   🔄 Converting from {}Hz {} channels to {}Hz {} channels",
-                        file_sample_rate,
-                        file_channels,
+                        "   🎵 Using format: {}Hz, {} channels",
                         sample_rate,
                         channels
                     );
-                    convert_audio_format(
-                        &samples,
-                        file_channels,
-                        file_sample_rate,
-                        channels,
-                        sample_rate
-                    )
-                } else {
-                    samples
-                };
+                }
 
-                let actual_duration_ms =
-                    ((converted_samples.len() as f64) /
-                        ((sample_rate as f64) * (channels as f64))) *
-                    1000.0;
+                let converted_samples =
+                    if file_sample_rate != sample_rate || file_channels != channels {
+                        crate::always_print!(
+                            "   🔄 Converting from {}Hz {} channels to {}Hz {} channels",
+                            file_sample_rate,
+                            file_channels,
+                            sample_rate,
+                            channels
+                        );
+                        convert_audio_format(
+                            &samples,
+                            file_channels,
+                            file_sample_rate,
+                            channels,
+                            sample_rate,
+                        )
+                    } else {
+                        samples
+                    };
+
+                let actual_duration_ms = ((converted_samples.len() as f64)
+                    / ((sample_rate as f64) * (channels as f64)))
+                    * 1000.0;
 
                 timing_info.insert(filename.clone(), (current_offset_ms, actual_duration_ms));
 
                 if filename == "SPMEnter.wav" {
                     crate::always_print!("🔍 [ENTER TIMING DEBUG] File: {}", filename);
-                    crate::always_print!("🔍 [ENTER TIMING DEBUG] Offset: {:.2}ms", current_offset_ms);
-                    crate::always_print!("🔍 [ENTER TIMING DEBUG] Duration: {:.2}ms", actual_duration_ms);
+                    crate::always_print!(
+                        "🔍 [ENTER TIMING DEBUG] Offset: {:.2}ms",
+                        current_offset_ms
+                    );
+                    crate::always_print!(
+                        "🔍 [ENTER TIMING DEBUG] Duration: {:.2}ms",
+                        actual_duration_ms
+                    );
                     crate::always_print!(
                         "🔍 [ENTER TIMING DEBUG] End time: {:.2}ms",
                         current_offset_ms + actual_duration_ms
                     );
-                    crate::always_print!("🔍 [ENTER TIMING DEBUG] Samples: {}", converted_samples.len());
+                    crate::always_print!(
+                        "🔍 [ENTER TIMING DEBUG] Samples: {}",
+                        converted_samples.len()
+                    );
                 }
 
                 all_samples.extend(&converted_samples);
@@ -469,7 +561,11 @@ fn concatenate_audio_files_with_timing(
         ((all_samples.len() as f64) / ((sample_rate as f64) * (channels as f64))) * 1000.0;
 
     crate::always_print!("✅ Successfully concatenated audio to: {}", output_path);
-    crate::always_print!("🎵 Total samples: {}, Final duration: {:.2}ms", all_samples.len(), final_duration_ms);
+    crate::always_print!(
+        "🎵 Total samples: {}, Final duration: {:.2}ms",
+        all_samples.len(),
+        final_duration_ms
+    );
 
     if let Some((offset, duration)) = timing_info.get("SPMEnter.wav") {
         crate::always_print!(
@@ -478,7 +574,10 @@ fn concatenate_audio_files_with_timing(
             duration,
             offset + duration
         );
-        crate::always_print!("🔍 [FINAL TIMING DEBUG] Concatenated total: {:.2}ms", final_duration_ms);
+        crate::always_print!(
+            "🔍 [FINAL TIMING DEBUG] Concatenated total: {:.2}ms",
+            final_duration_ms
+        );
         if offset + duration > final_duration_ms {
             crate::always_print!("❌ [FINAL TIMING DEBUG] ERROR: End time exceeds total duration!");
         } else {
@@ -491,7 +590,7 @@ fn concatenate_audio_files_with_timing(
 
 /// Load audio file samples via shared decoder.
 fn load_audio_file_samples(
-    file_path: &str
+    file_path: &str,
 ) -> Result<(Vec<f32>, u16, u32), Box<dyn std::error::Error>> {
     crate::utils::symphonia::decode_interleaved(file_path).map_err(|e| e.into())
 }
@@ -502,7 +601,7 @@ fn convert_audio_format(
     from_channels: u16,
     from_sample_rate: u32,
     to_channels: u16,
-    to_sample_rate: u32
+    to_sample_rate: u32,
 ) -> Vec<f32> {
     if from_channels == to_channels && from_sample_rate == to_sample_rate {
         return samples.to_vec();
@@ -518,7 +617,7 @@ fn convert_audio_format(
         &channel_converted,
         to_channels.max(1),
         from_sample_rate,
-        to_sample_rate
+        to_sample_rate,
     )
 }
 
@@ -542,7 +641,11 @@ fn convert_channels(samples: &[f32], from_channels: u16, to_channels: u16) -> Ve
         return samples
             .chunks(2)
             .map(|chunk| {
-                if chunk.len() == 2 { (chunk[0] + chunk[1]) / 2.0 } else { chunk[0] }
+                if chunk.len() == 2 {
+                    (chunk[0] + chunk[1]) / 2.0
+                } else {
+                    chunk[0]
+                }
             })
             .collect();
     }
@@ -557,12 +660,14 @@ fn convert_channels(samples: &[f32], from_channels: u16, to_channels: u16) -> Ve
     out
 }
 
-/// Save samples as WAV.
+/// Save samples as WAV, atomically: encode to a sibling temp file and rename
+/// over the target, so a crash can never leave a truncated WAV behind (the
+/// old `WavWriter::create` straight at the target truncated it first).
 fn save_audio_file(
     samples: &[f32],
     channels: u16,
     sample_rate: u32,
-    output_path: &str
+    output_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use hound;
 
@@ -573,14 +678,21 @@ fn save_audio_file(
         sample_format: hound::SampleFormat::Int,
     };
 
-    let mut writer = hound::WavWriter::create(output_path, spec)?;
+    let tmp_path = format!("{}.tmp.{}", output_path, std::process::id());
+    {
+        let mut writer = hound::WavWriter::create(&tmp_path, spec)?;
 
-    for &sample in samples {
-        let sample_i16 = (sample * (i16::MAX as f32)) as i16;
-        writer.write_sample(sample_i16)?;
+        for &sample in samples {
+            let sample_i16 = (sample * (i16::MAX as f32)) as i16;
+            writer.write_sample(sample_i16)?;
+        }
+
+        writer.finalize()?;
     }
-
-    writer.finalize()?;
+    if let Err(e) = std::fs::rename(&tmp_path, output_path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
     Ok(())
 }
 
@@ -757,7 +869,11 @@ mod tests {
         let Ok(output) = output else {
             return; // no python3 on this box — the per-code test above still pins the conflicts
         };
-        assert!(output.status.success(), "python3 check failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "python3 check failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let py: std::collections::HashMap<u32, String> =
             serde_json::from_str(String::from_utf8_lossy(&output.stdout).trim())
                 .expect("python table must be JSON");
@@ -778,8 +894,11 @@ mod tests {
         // The Rust table is built by repeated HashMap::insert, so a duplicate
         // key fails silently (last wins) — the bug that corrupted
         // 3597/3612/3640. Scan the source for re-inserted codes.
-        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/utils/config_converter.rs"))
-            .expect("read own source");
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/utils/config_converter.rs"
+        ))
+        .expect("read own source");
         let start = src.find("fn create_iohook_to_web_key_mapping").unwrap();
         // Bound the scan to the function body (up to its `mapping` return) so
         // test strings that mention `mapping.insert(` are not counted.
@@ -792,17 +911,17 @@ mod tests {
         let mut rest = body;
         while let Some(i) = rest.find("mapping.insert(") {
             let after = &rest[i + "mapping.insert(".len()..];
-            let len = after
-                .chars()
-                .take_while(|c| c.is_ascii_digit())
-                .count();
+            let len = after.chars().take_while(|c| c.is_ascii_digit()).count();
             let code = &after[..len];
             codes.entry(code).or_insert(0);
             *codes.get_mut(code).unwrap() += 1;
             rest = &after[code.len()..];
         }
         let dupes: Vec<_> = codes.into_iter().filter(|(_, n)| *n > 1).collect();
-        assert!(dupes.is_empty(), "duplicate mapping.insert codes: {dupes:?}");
+        assert!(
+            dupes.is_empty(),
+            "duplicate mapping.insert codes: {dupes:?}"
+        );
     }
 
     /// Zero-padded code is a release.
@@ -827,55 +946,55 @@ mod tests {
             write_tone_wav(&dir.join(name), 44100, 2, 100);
         }
 
-        std::fs
-            ::write(
-                &config_path,
-                r#"{
+        std::fs::write(
+            &config_path,
+            r#"{
   "id": "custom-sound-pack-77777732",
   "name": "Test Pack",
   "key_define_type": "multi",
   "includes_numpad": false,
   "sound": "sound.wav",
   "defines": { "30": "1.wav", "48": "2.wav", "030": "1.wav", "048": "2.wav" }
-}"#
-            )
-            .expect("write v1 config");
+}"#,
+        )
+        .expect("write v1 config");
 
         super::convert_v1_to_v2(
             config_path.to_str().unwrap(),
             config_path.to_str().unwrap(),
-            Some(dir.to_str().unwrap())
-        ).expect("conversion must succeed");
+            Some(dir.to_str().unwrap()),
+        )
+        .expect("conversion must succeed");
 
-        let converted: serde_json::Value = serde_json
-            ::from_str(&std::fs::read_to_string(&config_path).expect("read converted"))
-            .expect("converted config must be valid JSON");
+        let converted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read converted"))
+                .expect("converted config must be valid JSON");
         let definitions = converted["definitions"].as_object().expect("definitions");
 
         for key in ["KeyA", "KeyB"] {
             if definitions.contains_key(key) {
                 let timing = definitions[key]["timing"].as_array().expect("timing array");
-                assert_eq!(timing.len(), 2, "{} must carry press and release: {:?}", key, timing);
+                assert_eq!(
+                    timing.len(),
+                    2,
+                    "{} must carry press and release: {:?}",
+                    key,
+                    timing
+                );
             }
         }
     }
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env
-            ::temp_dir()
-            .join(format!("sorakey-converter-{}-{}", tag, std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("sorakey-converter-{}-{}", tag, std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         dir
     }
 
     /// Write a synthetic sine-tone WAV so the mixed-rate tests need no binary
     /// fixtures checked into the repo.
-    fn write_tone_wav(
-        path: &std::path::Path,
-        sample_rate: u32,
-        channels: u16,
-        duration_ms: u32
-    ) {
+    fn write_tone_wav(path: &std::path::Path, sample_rate: u32, channels: u16, duration_ms: u32) {
         let spec = hound::WavSpec {
             channels,
             sample_rate,
@@ -946,7 +1065,11 @@ mod tests {
             frames,
             converted.len()
         );
-        assert_eq!(converted.len() % 2, 0, "a stereo buffer must hold whole frames");
+        assert_eq!(
+            converted.len() % 2,
+            0,
+            "a stereo buffer must hold whole frames"
+        );
     }
 
     /// End to end through the concatenation path: the second file is sourced
@@ -962,8 +1085,9 @@ mod tests {
         let timing = concatenate_audio_files_with_timing(
             &["letters.wav".to_string(), "delete.wav".to_string()],
             dir.to_str().expect("utf8 dir"),
-            "concatenated_audio.wav"
-        ).expect("concatenation must succeed");
+            "concatenated_audio.wav",
+        )
+        .expect("concatenation must succeed");
 
         let (offset, duration) = *timing.get("delete.wav").expect("delete.wav timing");
         assert!(
@@ -1004,11 +1128,16 @@ mod tests {
         let timing = concatenate_audio_files_with_timing(
             &["letters.wav".to_string(), "delete.wav".to_string()],
             dir.to_str().expect("utf8 dir"),
-            "concatenated_audio.wav"
-        ).expect("concatenation must succeed");
+            "concatenated_audio.wav",
+        )
+        .expect("concatenation must succeed");
 
         let (offset, duration) = *timing.get("delete.wav").expect("delete.wav timing");
-        assert!((offset - 100.0).abs() < 1.0, "unexpected offset {:.2}ms", offset);
+        assert!(
+            (offset - 100.0).abs() < 1.0,
+            "unexpected offset {:.2}ms",
+            offset
+        );
         assert!(
             (duration - 100.0).abs() < 1.0,
             "a mono 22050Hz clip in a stereo 44100Hz pack should still report 100ms, got {:.2}ms",
@@ -1020,7 +1149,12 @@ mod tests {
         assert_eq!(channels, 2, "the reference layout sets the output layout");
         let expected_frames = 4410 * 2;
         let diff = (frames as i64 - expected_frames).unsigned_abs() as usize;
-        assert!(diff <= 4, "expected ~{} stereo frames, got {}", expected_frames, frames);
+        assert!(
+            diff <= 4,
+            "expected ~{} stereo frames, got {}",
+            expected_frames,
+            frames
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1043,7 +1177,10 @@ mod tests {
             b"the pack author's own audio",
             "the original bytes must survive verbatim"
         );
-        assert!(audio.exists(), "the original stays in place as conversion input");
+        assert!(
+            audio.exists(),
+            "the original stays in place as conversion input"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1057,10 +1194,14 @@ mod tests {
         let audio = dir.join("concatenated_audio.wav");
 
         std::fs::write(&audio, b"pristine original").expect("write");
-        let first = back_up_existing_file(&audio).expect("first backup").expect("first backup");
+        let first = back_up_existing_file(&audio)
+            .expect("first backup")
+            .expect("first backup");
 
         std::fs::write(&audio, b"generated output").expect("write");
-        let second = back_up_existing_file(&audio).expect("second backup").expect("second backup");
+        let second = back_up_existing_file(&audio)
+            .expect("second backup")
+            .expect("second backup");
 
         assert_ne!(first, second, "the second backup must take a distinct path");
         assert_eq!(
@@ -1078,9 +1219,8 @@ mod tests {
     fn a_missing_file_needs_no_backup() {
         let dir = temp_dir("backup-absent");
 
-        let result = back_up_existing_file(&dir.join("concatenated_audio.wav")).expect(
-            "an absent file is not an error"
-        );
+        let result = back_up_existing_file(&dir.join("concatenated_audio.wav"))
+            .expect("an absent file is not an error");
         assert!(result.is_none(), "nothing to back up means no backup path");
 
         std::fs::remove_dir_all(&dir).ok();

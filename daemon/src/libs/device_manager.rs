@@ -1,5 +1,5 @@
-use cpal::traits::{ DeviceTrait, HostTrait };
-use cpal::{ Device, Host };
+use cpal::traits::{DeviceTrait, HostTrait};
+use cpal::{Device, Host};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceInfo {
@@ -62,27 +62,27 @@ impl DeviceManager {
                     if let Ok(name) = device.name() {
                         #[cfg(target_os = "linux")]
                         {
-                            if name.starts_with("hw:")
-                                || name.starts_with("plughw:")
-                                || name.starts_with("dmix:")
-                                || name.starts_with("dsnoop:")
-                                || name.starts_with("front:")
-                                || name.starts_with("surround")
-                                || name.starts_with("iec958:")
-                            {
-                                crate::always_print!("🔍 [DeviceManager] Skipping low-level ALSA alias: {}", name);
+                            // Only virtual mixing nodes are filtered: a USB
+                            // headset can expose *only* hw:/plughw:/front:/
+                            // surround:/iec958: names, and skipping those hid
+                            // the whole device from the picker. dmix:/dsnoop:
+                            // are never directly playable via cpal, so they
+                            // stay hidden. Every skip is logged so the choice
+                            // stays visible in exported logs.
+                            if name.starts_with("dmix:") || name.starts_with("dsnoop:") {
+                                crate::always_print!(
+                                    "🔍 [DeviceManager] Skipping virtual ALSA node: {}",
+                                    name
+                                );
                                 continue;
                             }
                         }
 
-                        let is_default =
-                            Some(&name) ==
-                            default_device
-                                .as_ref()
-                                .and_then(|d| d.name().ok())
-                                .as_ref();
+                        let is_default = Some(&name)
+                            == default_device.as_ref().and_then(|d| d.name().ok()).as_ref();
 
-                        crate::always_print!("🔍 [DeviceManager] Found device #{}: {} {}",
+                        crate::always_print!(
+                            "🔍 [DeviceManager] Found device #{}: {} {}",
                             index,
                             name,
                             if is_default { "(default)" } else { "" }
@@ -95,7 +95,10 @@ impl DeviceManager {
                         });
                     }
                 }
-                crate::always_print!("✅ [DeviceManager] Enumeration complete. Found {} devices", devices.len());
+                crate::always_print!(
+                    "✅ [DeviceManager] Enumeration complete. Found {} devices",
+                    devices.len()
+                );
             }
             Err(e) => {
                 crate::always_print!("❌ [DeviceManager] Failed to enumerate: {}", e);
@@ -112,7 +115,10 @@ impl DeviceManager {
             });
         }
 
-        crate::always_print!("🔍 [DeviceManager] Returning {} total devices", devices.len());
+        crate::always_print!(
+            "🔍 [DeviceManager] Returning {} total devices",
+            devices.len()
+        );
         Ok(devices)
     }
 
@@ -121,17 +127,21 @@ impl DeviceManager {
             return Ok(self.host.default_output_device());
         }
 
+        // Legacy `output_N` ids carry no name, so there is nothing stable to
+        // match them against: the Nth device after a replug is usually a
+        // different device. Route to the system default (logged) instead of
+        // the enumeration index, which played the wrong device.
+        if is_legacy_index_device_id(device_id) {
+            crate::always_eprint!(
+                "⚠️  [DeviceManager] Legacy device id '{}' is index-based and unstable; using system default",
+                device_id
+            );
+            return Ok(self.host.default_output_device());
+        }
+
         match self.host.output_devices() {
             Ok(device_iter) => {
-                // Legacy IDs resolve by position for migration.
-                let legacy_index = device_id
-                    .strip_prefix("output_")
-                    .and_then(|rest| rest.parse::<usize>().ok());
-
-                for (index, device) in device_iter.enumerate() {
-                    if legacy_index == Some(index) {
-                        return Ok(Some(device));
-                    }
+                for device in device_iter {
                     if let Ok(name) = device.name() {
                         if device_id_from_name("output", &name) == device_id {
                             return Ok(Some(device));
@@ -147,19 +157,15 @@ impl DeviceManager {
         Ok(None)
     }
 
-    pub fn get_current_output_sample_rate(&self) -> Option<u32> {
-        let config = crate::state::config_writer::current();
-
-        let device = match &config.selected_audio_device {
-            Some(device_id) =>
-                match self.get_output_device_by_id(device_id) {
-                    Ok(Some(device)) => Some(device),
-                    _ => self.host.default_output_device(),
-                }
-            None => self.host.default_output_device(),
-        };
-
-        device.and_then(|d| d.default_output_config().ok()).map(|c| c.sample_rate().0)
+    /// Sample rate of the system default output without a full enumeration
+    /// (enumerating activates every ALSA device: 100s of ms on the audio
+    /// thread). The per-device rate comes from the already-opened `Device`
+    /// at the call site instead — see `open_stream` in the audio engine.
+    pub fn default_output_sample_rate(&self) -> Option<u32> {
+        self.host
+            .default_output_device()
+            .and_then(|d| d.default_output_config().ok())
+            .map(|c| c.sample_rate().0)
     }
 }
 
@@ -179,7 +185,10 @@ mod tests {
             device_id_from_name("output", "Speakers (Realtek High Definition Audio)"),
             device_id_from_name("output", "Speakers (Realtek High Definition Audio)")
         );
-        assert_eq!(device_id_from_name("output", "Headphones"), "output_name:0b3a976597860826");
+        assert_eq!(
+            device_id_from_name("output", "Headphones"),
+            "output_name:0b3a976597860826"
+        );
     }
 
     #[test]
@@ -199,7 +208,10 @@ mod tests {
         assert!(is_legacy_index_device_id("output_0"));
         assert!(is_legacy_index_device_id("input_12"));
 
-        assert!(!is_legacy_index_device_id(&device_id_from_name("output", "Headphones")));
+        assert!(!is_legacy_index_device_id(&device_id_from_name(
+            "output",
+            "Headphones"
+        )));
         assert!(!is_legacy_index_device_id("default"));
         assert!(!is_legacy_index_device_id("output_default"));
     }

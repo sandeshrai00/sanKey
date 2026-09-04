@@ -41,7 +41,6 @@ pub struct SoundpackValidationResult {
 
 /// Validate soundpack config at path.
 pub fn validate_soundpack_config(config_path: &str) -> SoundpackValidationResult {
-
     let content = match crate::utils::path::read_file_contents(config_path) {
         Ok(content) => content,
         Err(e) => {
@@ -86,7 +85,8 @@ pub fn validate_soundpack_config(config_path: &str) -> SoundpackValidationResult
 
     let has_defs = key_definitions(&config).is_some();
     let _has_source_field = config.get("source").is_some();
-    let has_author = config.get("author").is_some();
+    // `m_author` is the accepted author alias (see validate_v2_structure).
+    let has_author = config.get("author").is_some() || config.get("m_author").is_some();
 
     if let Some(version) = config_version.filter(|v| *v > 2) {
         // newer than we understand — ask to update
@@ -130,6 +130,13 @@ pub fn validate_soundpack_config(config_path: &str) -> SoundpackValidationResult
         if config.get("name").is_none() {
             missing_fields.push("name".to_string());
         }
+
+        // Without this a {name + definitions} pack with no author fell
+        // through with an empty missing list and a "Missing required
+        // fields: " message naming nothing.
+        if !has_author {
+            missing_fields.push("author".to_string());
+        }
         SoundpackValidationResult {
             status: SoundpackValidationStatus::MissingRequiredFields(missing_fields.clone()),
             config_version,
@@ -165,9 +172,27 @@ fn validate_v2_structure(
         missing_fields.push("definitions".to_string());
     }
 
+    // Single-method packs play one shared file: without it there is no audio
+    // to decode (the loader errors). Only the explicit "single" method is
+    // checked — unversioned/legacy shapes without a method stay exempt so
+    // previously-valid packs keep validating.
+    let has_per_key_audio = definitions
+        .and_then(|d| d.as_object())
+        .map(|o| o.values().any(|v| v.get("audio_file").is_some()))
+        .unwrap_or(false);
+    if config.get("definition_method").and_then(|m| m.as_str()) == Some("single")
+        && !has_per_key_audio
+        && config.get("audio_file").is_none()
+    {
+        issues.push("single-method soundpack is missing the audio_file field".to_string());
+    }
+
     // validate definitions
     if let Some(defs) = definitions {
         if let Some(defs_obj) = defs.as_object() {
+            if defs_obj.is_empty() {
+                issues.push("definitions must not be empty".to_string());
+            }
             for (key, value) in defs_obj {
                 // supports both `{ timing: [...] }` and bare `[[...]]`
                 let timings = match value.get("timing") {
@@ -193,6 +218,29 @@ fn validate_v2_structure(
                                 "Invalid timing array for '{}[{}]': expected [start, end]",
                                 key, i
                             ));
+                        } else {
+                            // Timings must be finite numbers with start < end:
+                            // strings/bools/null, 1e999-style infinities, and
+                            // reversed ranges all decode to silence or panics
+                            // downstream, so reject them here.
+                            match (timing_arr[0].as_f64(), timing_arr[1].as_f64()) {
+                                (Some(start), Some(end))
+                                    if start.is_finite() && end.is_finite() =>
+                                {
+                                    if start >= end {
+                                        issues.push(format!(
+                                            "Invalid timing for '{}[{}]': start ({}) must be before end ({})",
+                                            key, i, start, end
+                                        ));
+                                    }
+                                }
+                                _ => {
+                                    issues.push(format!(
+                                        "Invalid timing for '{}[{}]': expected [start, end] as finite numbers",
+                                        key, i
+                                    ));
+                                }
+                            }
                         }
                     } else {
                         issues.push(format!(
@@ -243,8 +291,7 @@ mod tests {
     use super::*;
 
     /// Bundled packs store config_version as a string.
-    const REAL_PACK_CONFIG: &str =
-        r#"{
+    const REAL_PACK_CONFIG: &str = r#"{
             "audio_file": "sound.ogg",
             "config_version": "2",
             "created_at": "2025-06-17T12:23:39.537516300+00:00",
@@ -295,8 +342,16 @@ mod tests {
     fn an_unreadable_config_version_is_treated_as_absent() {
         assert_eq!(version_of(r#"{}"#), None, "absent");
         assert_eq!(version_of(r#"{"config_version": null}"#), None, "null");
-        assert_eq!(version_of(r#"{"config_version": "banana"}"#), None, "garbage text");
-        assert_eq!(version_of(r#"{"config_version": ""}"#), None, "empty string");
+        assert_eq!(
+            version_of(r#"{"config_version": "banana"}"#),
+            None,
+            "garbage text"
+        );
+        assert_eq!(
+            version_of(r#"{"config_version": ""}"#),
+            None,
+            "empty string"
+        );
         assert_eq!(version_of(r#"{"config_version": -1}"#), None, "negative");
         assert_eq!(version_of(r#"{"config_version": 2.5}"#), None, "fractional");
     }
@@ -312,9 +367,16 @@ mod tests {
             "a shipped pack must validate; got: {}",
             result.message
         );
-        assert_eq!(result.config_version, Some(2), "the string \"2\" must be understood as version 2");
+        assert_eq!(
+            result.config_version,
+            Some(2),
+            "the string \"2\" must be understood as version 2"
+        );
         assert!(result.is_valid_v2);
-        assert!(!result.can_be_converted, "a valid V2 pack needs no conversion");
+        assert!(
+            !result.can_be_converted,
+            "a valid V2 pack needs no conversion"
+        );
     }
 
     /// Every bundled pack must validate.
@@ -345,13 +407,21 @@ mod tests {
                         path.display(),
                         result.message
                     );
-                    assert!(result.is_valid_v2, "bundled pack {} must be valid V2", path.display());
+                    assert!(
+                        result.is_valid_v2,
+                        "bundled pack {} must be valid V2",
+                        path.display()
+                    );
                     checked += 1;
                 }
             }
         }
 
-        assert!(checked > 0, "expected to find bundled soundpack configs under {}", root.display());
+        assert!(
+            checked > 0,
+            "expected to find bundled soundpack configs under {}",
+            root.display()
+        );
     }
 
     /// `defs` alias is accepted.
@@ -363,28 +433,43 @@ mod tests {
                 "name": "alias pack",
                 "author": "someone",
                 "defs": { "Escape": [[0.0, 100.0]] }
-            }"#
+            }"#,
         );
 
-        assert_eq!(result.status, SoundpackValidationStatus::Valid, "got: {}", result.message);
+        assert_eq!(
+            result.status,
+            SoundpackValidationStatus::Valid,
+            "got: {}",
+            result.message
+        );
     }
 
     /// Future version asks to update.
     #[test]
     fn a_newer_config_version_asks_the_user_to_update() {
         for raw in ["3", "\"3\"", "99"] {
-            let result = validate_json(
-                &format!(r#"{{"config_version": {}, "name": "future", "author": "a"}}"#, raw)
-            );
+            let result = validate_json(&format!(
+                r#"{{"config_version": {}, "name": "future", "author": "a"}}"#,
+                raw
+            ));
 
             assert!(
-                matches!(result.status, SoundpackValidationStatus::RequiresNewerAppVersion(_)),
+                matches!(
+                    result.status,
+                    SoundpackValidationStatus::RequiresNewerAppVersion(_)
+                ),
                 "config_version {} must report a newer app version, got {:?}",
                 raw,
                 result.status
             );
-            assert_eq!(result.message, "This soundpack requires a newer version of Sorakey");
-            assert!(!result.can_be_converted, "a future format cannot be converted by this build");
+            assert_eq!(
+                result.message,
+                "This soundpack requires a newer version of Sorakey"
+            );
+            assert!(
+                !result.can_be_converted,
+                "a future format cannot be converted by this build"
+            );
             assert!(!result.is_valid_v2);
         }
     }
@@ -398,15 +483,21 @@ mod tests {
                 "name": "future",
                 "defines": { "1": [0, 100] },
                 "sound": "sound.ogg"
-            }"#
+            }"#,
         );
 
         assert!(
-            matches!(result.status, SoundpackValidationStatus::RequiresNewerAppVersion(_)),
+            matches!(
+                result.status,
+                SoundpackValidationStatus::RequiresNewerAppVersion(_)
+            ),
             "got {:?}",
             result.status
         );
-        assert!(!result.can_be_converted, "converting a format we cannot read would corrupt it");
+        assert!(
+            !result.can_be_converted,
+            "converting a format we cannot read would corrupt it"
+        );
     }
 
     /// V1 packs need conversion.
@@ -418,10 +509,13 @@ mod tests {
                 "name": "old pack",
                 "defines": { "1": [0, 100] },
                 "sound": "sound.ogg"
-            }"#
+            }"#,
         );
 
-        assert_eq!(result.status, SoundpackValidationStatus::VersionOneNeedsConversion);
+        assert_eq!(
+            result.status,
+            SoundpackValidationStatus::VersionOneNeedsConversion
+        );
         assert!(result.can_be_converted);
     }
 
@@ -429,10 +523,13 @@ mod tests {
     #[test]
     fn an_unversioned_v1_pack_is_detected_by_structure() {
         let result = validate_json(
-            r#"{ "name": "old", "defines": { "1": [0, 100] }, "sound": "sound.ogg" }"#
+            r#"{ "name": "old", "defines": { "1": [0, 100] }, "sound": "sound.ogg" }"#,
         );
 
-        assert_eq!(result.status, SoundpackValidationStatus::VersionOneNeedsConversion);
+        assert_eq!(
+            result.status,
+            SoundpackValidationStatus::VersionOneNeedsConversion
+        );
         assert!(result.can_be_converted);
     }
 

@@ -2,8 +2,8 @@
 //! Memory only, fixed size. Never stores key identities.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{ AtomicU64, Ordering };
-use std::sync::{ Mutex, OnceLock };
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 pub const CAPACITY: usize = 2000;
 #[cfg(test)]
@@ -42,7 +42,11 @@ pub fn push(line: &str) {
         if buffer.len() >= CAPACITY {
             buffer.pop_front();
         }
-        buffer.push_back(format!("{} {}", timestamp_now(), part.trim_end_matches('\r')));
+        buffer.push_back(format!(
+            "{} {}",
+            timestamp_now(),
+            part.trim_end_matches('\r')
+        ));
     }
 
     drop(buffer);
@@ -112,8 +116,7 @@ fn mask_name_in_paths(line: &str, user: &str) -> String {
         };
         let after = at + needle.len();
         let after_ok =
-            after == rest.len() ||
-            matches!(rest[after..].chars().next(), Some('/') | Some('\\'));
+            after == rest.len() || matches!(rest[after..].chars().next(), Some('/') | Some('\\'));
 
         out.push_str(&rest[..at]);
         if before_ok && after_ok {
@@ -148,10 +151,25 @@ pub fn export_header() -> String {
     )
 }
 
+/// Key identities must never leave the machine in an export: the evdev
+/// listener logs `Sending key press: {code}` for the first keys, which
+/// reveals typing content. Redact those lines during export only — the
+/// live ring buffer keeps them for local debugging.
+fn redact_key_identities(line: &str) -> String {
+    if line.contains("Sending key press:") {
+        match line.find("Sending key press:") {
+            Some(at) => format!("{}Sending key press: [redacted]", &line[..at]),
+            None => "[redacted key press line]".to_string(),
+        }
+    } else {
+        line.to_string()
+    }
+}
+
 pub fn export_contents() -> String {
     let mut out = mask_user_paths(&export_header());
     for line in snapshot() {
-        out.push_str(&mask_user_paths(&line));
+        out.push_str(&mask_user_paths(&redact_key_identities(&line)));
         out.push('\n');
     }
     out
@@ -165,12 +183,12 @@ fn export_file_name(at: chrono::DateTime<chrono::Local>) -> String {
 #[cfg(test)]
 pub fn export_to_file() -> Result<std::path::PathBuf, String> {
     let dir = std::env::temp_dir().join("sorakey-logs");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {}", dir.display(), e))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Could not create {}: {}", dir.display(), e))?;
 
     let path = dir.join(export_file_name(chrono::Local::now()));
-    std::fs::write(&path, export_contents()).map_err(|e|
-        format!("Could not write {}: {}", path.display(), e)
-    )?;
+    std::fs::write(&path, export_contents())
+        .map_err(|e| format!("Could not write {}: {}", path.display(), e))?;
 
     Ok(path)
 }
@@ -210,7 +228,11 @@ mod tests {
             .into_iter()
             .find(|l| l.contains("ordertest 0"))
             .expect("pushed line must be present");
-        assert!(first.chars().take(2).all(|c| c.is_ascii_digit()), "{}", first);
+        assert!(
+            first.chars().take(2).all(|c| c.is_ascii_digit()),
+            "{}",
+            first
+        );
     }
 
     #[test]
@@ -243,7 +265,11 @@ mod tests {
             .iter()
             .filter_map(|line| line.split("tailtest ").nth(1)?.trim().parse().ok())
             .collect();
-        assert!(ours.len() >= 3, "tail must contain our newest lines: {:?}", tail);
+        assert!(
+            ours.len() >= 3,
+            "tail must contain our newest lines: {:?}",
+            tail
+        );
         assert!(ours.windows(2).all(|w| w[0] < w[1]));
         assert_eq!(*ours.last().unwrap(), 9);
     }
@@ -266,7 +292,10 @@ mod tests {
         push("multiline-alpha\nmultiline-beta");
 
         let lines = snapshot();
-        let ours: Vec<&String> = lines.iter().filter(|line| line.contains("multiline-")).collect();
+        let ours: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.contains("multiline-"))
+            .collect();
 
         assert_eq!(ours.len(), 2, "{:?}", lines);
         assert!(ours[0].ends_with("multiline-alpha"), "{}", ours[0]);
@@ -280,7 +309,9 @@ mod tests {
         let at = chrono::Local.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
         assert_eq!(format_timestamp(at), "03:04:05.000");
 
-        let at = chrono::Local.with_ymd_and_hms(2026, 1, 2, 13, 45, 59).unwrap();
+        let at = chrono::Local
+            .with_ymd_and_hms(2026, 1, 2, 13, 45, 59)
+            .unwrap();
         assert_eq!(format_timestamp(at), "13:45:59.000");
     }
 
@@ -307,15 +338,32 @@ mod tests {
         let contents = export_contents();
 
         assert!(contents.contains("Sorakey log export"), "{}", contents);
-        assert!(contents.contains(&format!("App version: {}", crate::utils::constants::APP_VERSION)), "{}", contents);
+        assert!(
+            contents.contains(&format!(
+                "App version: {}",
+                crate::utils::constants::APP_VERSION
+            )),
+            "{}",
+            contents
+        );
         assert!(contents.contains(std::env::consts::OS), "{}", contents);
         assert!(contents.contains("Verbose logging: off"), "{}", contents);
 
-        let reported = contents.lines().find_map(|line| line.strip_prefix("Lines captured: ")).and_then(|rest| rest.split_whitespace().next()).and_then(|count| count.parse::<usize>().ok()).unwrap_or_else(|| panic!("{}", contents));
+        let reported = contents
+            .lines()
+            .find_map(|line| line.strip_prefix("Lines captured: "))
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or_else(|| panic!("{}", contents));
         assert!(reported >= 5);
 
         for i in 0..5 {
-            assert!(contents.contains(&format!("{} {}", marker, i)), "missing {} {}", marker, i);
+            assert!(
+                contents.contains(&format!("{} {}", marker, i)),
+                "missing {} {}",
+                marker,
+                i
+            );
         }
     }
 
@@ -328,15 +376,25 @@ mod tests {
             return;
         };
 
-        push(&format!(r"soundpack_dir: C:\Users\{}\AppData\Local\Sorakey", user));
-        push(&format!("config: /home/{}/.config/sorakey/config.json", user));
+        push(&format!(
+            r"soundpack_dir: C:\Users\{}\AppData\Local\Sorakey",
+            user
+        ));
+        push(&format!(
+            "config: /home/{}/.config/sorakey/config.json",
+            user
+        ));
 
         let contents = export_contents();
 
         assert!(!contents.contains(&user), "{}", contents);
         assert!(contents.contains("[username]"), "{}", contents);
         assert!(contents.contains(r"\AppData\Local\Sorakey"), "{}", contents);
-        assert!(contents.contains("/.config/sorakey/config.json"), "{}", contents);
+        assert!(
+            contents.contains("/.config/sorakey/config.json"),
+            "{}",
+            contents
+        );
     }
 
     #[test]
@@ -350,7 +408,8 @@ mod tests {
 
     #[test]
     fn masking_ignores_case_and_covers_both_path_separators() {
-        let masked = super::mask_name_in_paths(r"C:\Users\AroCodes\x and /home/arocodes/y", "arocodes");
+        let masked =
+            super::mask_name_in_paths(r"C:\Users\AroCodes\x and /home/arocodes/y", "arocodes");
 
         assert!(!masked.to_lowercase().contains("arocodes"), "{}", masked);
         assert_eq!(masked, r"C:\Users\[username]\x and /home/[username]/y");
@@ -377,7 +436,17 @@ mod tests {
         let contents = export_contents();
         assert!(contents.contains("event 0"));
         assert!(contents.contains(&format!("event {}", total - 1)));
-        let captured: usize = contents.lines().find_map(|l| l.split("Lines captured: ").nth(1)?.split(' ').next()?.parse().ok()).expect("header must report count");
+        let captured: usize = contents
+            .lines()
+            .find_map(|l| {
+                l.split("Lines captured: ")
+                    .nth(1)?
+                    .split(' ')
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .expect("header must report count");
         assert!(captured >= total, "header said {}", captured);
     }
 
@@ -385,10 +454,14 @@ mod tests {
     fn export_file_names_are_timestamped_and_do_not_collide() {
         use chrono::TimeZone;
 
-        let at = chrono::Local.with_ymd_and_hms(2026, 8, 4, 15, 30, 45).unwrap();
+        let at = chrono::Local
+            .with_ymd_and_hms(2026, 8, 4, 15, 30, 45)
+            .unwrap();
         assert_eq!(export_file_name(at), "sorakey-log-20260804-153045.txt");
 
-        let later = chrono::Local.with_ymd_and_hms(2026, 8, 4, 15, 30, 46).unwrap();
+        let later = chrono::Local
+            .with_ymd_and_hms(2026, 8, 4, 15, 30, 46)
+            .unwrap();
         assert_ne!(export_file_name(at), export_file_name(later));
     }
 

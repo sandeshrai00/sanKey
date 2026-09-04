@@ -1,5 +1,6 @@
-use crossbeam_channel::{ unbounded, Receiver, Sender };
-use rodio::{ OutputStream, OutputStreamHandle, Sink };
+use cpal::traits::DeviceTrait;
+use crossbeam_channel::{Receiver, Sender, unbounded};
+use rodio::{OutputStream, OutputStreamHandle, Sink};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -29,14 +30,20 @@ pub(super) type KeySegments = (Option<Segment>, Option<Segment>);
 pub enum AudioCommand {
     SetVolume(f32),
     SetSoundEnabled(bool),
-    Key { code: String, down: bool },
+    Key {
+        code: String,
+        down: bool,
+    },
     LoadKeyboardPack {
         soundpack_id: String,
         update_cache_on_error: bool,
     },
     /// Internal: the off-engine-thread pack-load worker finished; `seq` is the
     /// request sequence it was spawned for (stale results are dropped).
-    PackLoaded(u64, Box<Result<super::soundpack_loader::LoadedPack, String>>),
+    PackLoaded(
+        u64,
+        Box<Result<super::soundpack_loader::LoadedPack, String>>,
+    ),
     SwitchDevice(Option<String>), // None = system default
 }
 
@@ -48,11 +55,12 @@ pub struct AudioEngineHandle {
 }
 
 impl AudioEngineHandle {
-    pub fn send(&self, command: AudioCommand) {
+    pub fn send(&self, command: AudioCommand) -> bool {
         // The engine thread never exits while the app is running, so a send
         // failure here would mean the engine panicked - nothing UI-side can
         // recover from that, so just drop the command.
-        let _ = self.tx.send(command);
+        // Returns false when the engine is gone so control can report ok:false.
+        self.tx.send(command).is_ok()
     }
 }
 
@@ -67,7 +75,7 @@ impl AudioEngineHandle {
 /// instead of the UI polling and forwarding them.
 pub fn spawn_engine(
     keyboard_rx: Receiver<String>,
-    hotkey_rx: Receiver<String>
+    hotkey_rx: Receiver<String>,
 ) -> AudioEngineHandle {
     let (cmd_tx, cmd_rx) = unbounded::<AudioCommand>();
     let engine_tx = cmd_tx.clone();
@@ -120,27 +128,41 @@ pub(super) struct EngineState {
 /// back silently - callers decide what to do on `Err` (see `switch_device`,
 /// which keeps the previous device on failure, vs `EngineState::new`, which
 /// falls back to default since there's no previous device to keep).
+///
+/// Also returns the opened device's sample rate, read off the `Device` used
+/// for the open: re-resolving the rate afterwards would re-enumerate every
+/// output device (100s of ms on this thread), so callers cache this value in
+/// `EngineState::device_rate` instead.
 fn open_stream(
     device_manager: &DeviceManager,
-    device_id: Option<&str>
-) -> Result<(OutputStream, OutputStreamHandle, Option<String>), String> {
+    device_id: Option<&str>,
+) -> Result<
+    (
+        OutputStream,
+        OutputStreamHandle,
+        Option<String>,
+        Option<u32>,
+    ),
+    String,
+> {
     match device_id {
-        Some(id) => {
-            match device_manager.get_output_device_by_id(id) {
-                Ok(Some(device)) => {
-                    rodio::OutputStream
-                        ::try_from_device(&device)
-                        .map(|(stream, handle)| (stream, handle, Some(id.to_string())))
-                        .map_err(|e| format!("Failed to open stream for device {}: {}", id, e))
-                }
-                Ok(None) => Err(format!("Device {} not found", id)),
-                Err(e) => Err(format!("Error accessing device {}: {}", id, e)),
+        Some(id) => match device_manager.get_output_device_by_id(id) {
+            Ok(Some(device)) => {
+                let rate = device
+                    .default_output_config()
+                    .ok()
+                    .map(|c| c.sample_rate().0);
+                rodio::OutputStream::try_from_device(&device)
+                    .map(|(stream, handle)| (stream, handle, Some(id.to_string()), rate))
+                    .map_err(|e| format!("Failed to open stream for device {}: {}", id, e))
             }
-        }
+            Ok(None) => Err(format!("Device {} not found", id)),
+            Err(e) => Err(format!("Error accessing device {}: {}", id, e)),
+        },
         None => {
-            rodio::OutputStream
-                ::try_default()
-                .map(|(stream, handle)| (stream, handle, None))
+            let rate = device_manager.default_output_sample_rate();
+            rodio::OutputStream::try_default()
+                .map(|(stream, handle)| (stream, handle, None, rate))
                 .map_err(|e| format!("Failed to open default audio output stream: {}", e))
         }
     }
@@ -151,18 +173,20 @@ impl EngineState {
         let device_manager = DeviceManager::new();
         let config = crate::state::config_writer::current();
 
-        let (stream, stream_handle, opened_device_id) = open_stream(
-            &device_manager,
-            config.selected_audio_device.as_deref()
-        ).unwrap_or_else(|e| {
-            crate::always_eprint!("❌ [AudioEngine] {} - falling back to default", e);
-            open_stream(&device_manager, None).unwrap_or_else(|e2| {
-                crate::always_eprint!("❌ [AudioEngine] no audio device available: {} - check configuration, exiting", e2);
+        let (stream, stream_handle, opened_device_id, device_rate) =
+            open_stream(&device_manager, config.selected_audio_device.as_deref()).unwrap_or_else(
+                |e| {
+                    crate::always_eprint!("❌ [AudioEngine] {} - falling back to default", e);
+                    open_stream(&device_manager, None).unwrap_or_else(|e2| {
+                crate::always_eprint!(
+                    "❌ [AudioEngine] no audio device available: {} - check configuration, exiting",
+                    e2
+                );
                 std::process::exit(1)
             })
-        });
-        let current_device_id = opened_device_id.or(config.selected_audio_device.clone());
-        let device_rate = device_manager.get_current_output_sample_rate();
+                },
+            );
+        let current_device_id = opened_device_id;
         crate::state::health::set_audio_result(true, None);
 
         Self {
@@ -194,11 +218,18 @@ impl EngineState {
             return;
         }
         let Some(pack) = &self.pack else { return };
-        let Some(segments) = pack.segments.get(code) else { return };
+        let Some(segments) = pack.segments.get(code) else {
+            return;
+        };
         let Some(segment) = (if down { &segments.0 } else { &segments.1 }) else {
             return;
         };
-        play_segment(&self.stream_handle, segment, self.volume, &mut self.key_sinks);
+        play_segment(
+            &self.stream_handle,
+            segment,
+            self.volume,
+            &mut self.key_sinks,
+        );
     }
 
     /// Rebuilds precomputed segments at the device's current rate. Prepared
@@ -206,11 +237,16 @@ impl EngineState {
     /// memory), so this re-decodes from disk — rare enough to pay for.
     /// Same-rate packs are kept as-is with no work at all.
     fn prepare_pack(&mut self) {
-        let Some(device_rate) = self.device_rate else { return };
+        let Some(device_rate) = self.device_rate else {
+            return;
+        };
         let Some(pack) = self.pack.take() else { return };
         let at_rate = pack.segments.values().any(|(press, release)| {
             press.as_ref().map(|s| s.2 == device_rate).unwrap_or(false)
-                || release.as_ref().map(|s| s.2 == device_rate).unwrap_or(false)
+                || release
+                    .as_ref()
+                    .map(|s| s.2 == device_rate)
+                    .unwrap_or(false)
         });
         if at_rate {
             self.pack = Some(pack);
@@ -234,12 +270,11 @@ impl EngineState {
         // On Err, `self` is left untouched entirely - the previous device
         // keeps playing, matching the "keep current sound, report error"
         // requirement (Phase 3 success criteria).
-        let (new_stream, new_handle, opened_device_id) = open_stream(
-            &self.device_manager,
-            device_id.as_deref()
-        )?;
+        let (new_stream, new_handle, opened_device_id, new_rate) =
+            open_stream(&self.device_manager, device_id.as_deref())?;
 
-        let new_rate = self.device_manager.get_current_output_sample_rate();
+        // Rate comes from the just-opened stream (see `open_stream`): no
+        // re-enumeration, so a device switch no longer stalls this thread.
 
         // Drop old voices/stream only after the new one is confirmed open,
         // so a failed switch leaves the previous device still playing.
@@ -250,16 +285,24 @@ impl EngineState {
         self.current_device_id = opened_device_id.clone().or(device_id);
         self.prepare_pack();
 
-        let label = self.current_device_id.clone().unwrap_or_else(|| "System Default".to_string());
+        let label = self
+            .current_device_id
+            .clone()
+            .unwrap_or_else(|| "System Default".to_string());
         Ok(label)
     }
 }
 
 /// Marks `code` pressed/released, returning `false` if this event should be
 /// ignored (duplicate keydown, or keyup with no matching keydown).
+/// Bounded: new codes beyond `MAX_KEY_ENTRIES` are ignored so unbounded
+/// unique IPC strings can't grow memory forever.
 fn debounce_press(pressed: &mut HashMap<String, bool>, code: &str, down: bool) -> bool {
     let was_down = *pressed.get(code).unwrap_or(&false);
     if down == was_down {
+        return false;
+    }
+    if !pressed.contains_key(code) && pressed.len() >= 512 {
         return false;
     }
     pressed.insert(code.to_string(), down);
@@ -301,7 +344,9 @@ impl rodio::Source for ArcSamples {
 
     fn total_duration(&self) -> Option<std::time::Duration> {
         let frames = self.samples.len() / self.channels.max(1) as usize;
-        Some(std::time::Duration::from_secs_f64(frames as f64 / self.sample_rate as f64))
+        Some(std::time::Duration::from_secs_f64(
+            frames as f64 / self.sample_rate as f64,
+        ))
     }
 }
 
@@ -309,7 +354,7 @@ fn play_segment(
     stream_handle: &OutputStreamHandle,
     segment: &Segment,
     volume: f32,
-    sinks: &mut Vec<Sink>
+    sinks: &mut Vec<Sink>,
 ) {
     let (samples_arc, channels, sample_rate) = segment;
 
@@ -322,12 +367,17 @@ fn play_segment(
         sample_rate: *sample_rate,
     };
 
-    if let Ok(sink) = Sink::try_new(stream_handle) {
-        sink.set_volume(volume);
-        sink.append(source);
+    match Sink::try_new(stream_handle) {
+        Ok(sink) => {
+            sink.set_volume(volume);
+            sink.append(source);
 
-        manage_active_sinks(sinks, MAX_VOICES);
-        sinks.push(sink);
+            manage_active_sinks(sinks, MAX_VOICES);
+            sinks.push(sink);
+        }
+        Err(e) => {
+            crate::state::health::set_audio_result(false, Some(format!("playback failed: {e}")));
+        }
     }
 }
 
@@ -431,7 +481,7 @@ fn spawn_load_worker(
     seq: u64,
     soundpack_id: String,
     rate: Option<u32>,
-    update_cache_on_error: bool
+    update_cache_on_error: bool,
 ) {
     let tx = cmd_tx.clone();
     std::thread::spawn(move || {
@@ -449,11 +499,7 @@ fn spawn_load_worker(
     });
 }
 
-fn handle_command(
-    cmd_tx: &Sender<AudioCommand>,
-    state: &mut EngineState,
-    command: AudioCommand
-) {
+fn handle_command(cmd_tx: &Sender<AudioCommand>, state: &mut EngineState, command: AudioCommand) {
     match command {
         AudioCommand::SetVolume(v) => {
             state.volume = v;
@@ -467,7 +513,25 @@ fn handle_command(
         AudioCommand::Key { code, down } => {
             state.handle_key_event(&code, down);
         }
-        AudioCommand::LoadKeyboardPack { soundpack_id, update_cache_on_error } => {
+        AudioCommand::LoadKeyboardPack {
+            soundpack_id,
+            update_cache_on_error,
+        } => {
+            // Empty id = unload: stop deleted audio immediately instead of
+            // keeping the old pack playing (delete-last-pack path).
+            if soundpack_id.is_empty() {
+                state.load_seq += 1;
+                state.pending_pack_seq = None;
+                state.loading_pack = false;
+                state.queued_load = None;
+                state.pack = None;
+                state.key_sinks.clear();
+                crate::state::health::set_pack_result(
+                    false,
+                    Some("no soundpack selected".to_string()),
+                );
+                return;
+            }
             // At most one decode runs at a time: a request arriving mid-load
             // only records itself. When the worker lands, the queued (newest)
             // request runs instead of every intermediate one — cycling packs
@@ -480,7 +544,13 @@ fn handle_command(
                 return;
             }
             state.loading_pack = true;
-            spawn_load_worker(cmd_tx, seq, soundpack_id, state.device_rate, update_cache_on_error);
+            spawn_load_worker(
+                cmd_tx,
+                seq,
+                soundpack_id,
+                state.device_rate,
+                update_cache_on_error,
+            );
         }
         AudioCommand::PackLoaded(seq, result) => {
             // A device switch cancels pending swaps: the old pack is
@@ -501,7 +571,9 @@ fn handle_command(
                         state.key_sinks.clear();
                         // The old pack's buffers just freed on this thread;
                         // return the pages instead of pinning them as RSS.
-                        unsafe { libc::malloc_trim(0); }
+                        unsafe {
+                            libc::malloc_trim(0);
+                        }
                     }
                     // else: keep the old pack playing.
                 }
@@ -512,11 +584,28 @@ fn handle_command(
             // Drain one queued request, if any — the newest wins, the rest
             // were already collapsed into it.
             if let Some((queued_id, queued_ucoe)) = state.queued_load.take() {
-                state.load_seq += 1;
-                let queued_seq = state.load_seq;
-                state.pending_pack_seq = Some(queued_seq);
-                state.loading_pack = true;
-                spawn_load_worker(cmd_tx, queued_seq, queued_id, state.device_rate, queued_ucoe);
+                if queued_id.is_empty() {
+                    state.pending_pack_seq = None;
+                    state.loading_pack = false;
+                    state.pack = None;
+                    state.key_sinks.clear();
+                    crate::state::health::set_pack_result(
+                        false,
+                        Some("no soundpack selected".to_string()),
+                    );
+                } else {
+                    state.load_seq += 1;
+                    let queued_seq = state.load_seq;
+                    state.pending_pack_seq = Some(queued_seq);
+                    state.loading_pack = true;
+                    spawn_load_worker(
+                        cmd_tx,
+                        queued_seq,
+                        queued_id,
+                        state.device_rate,
+                        queued_ucoe,
+                    );
+                }
             }
         }
         AudioCommand::SwitchDevice(device_id) => {
@@ -529,10 +618,24 @@ fn handle_command(
             state.queued_load = None;
             match state.switch_device(device_id) {
                 Ok(_) => crate::state::health::set_audio_result(true, None),
-                Err(e) => crate::always_eprint!("❌ [Engine] Device switch failed: {}", e),
+                Err(e) => {
+                    crate::state::health::set_audio_result(false, Some(e.clone()));
+                    crate::always_eprint!("❌ [Engine] Device switch failed: {}", e);
+                }
             }
         }
     }
+}
+
+/// Recommended volume for a pack id, if its config declares a non-default one.
+fn recommended_volume_for_pack(id: &str) -> Option<f32> {
+    let path = crate::state::paths::soundpacks::config_json(id);
+    let content = std::fs::read_to_string(&path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    v.get("options")?
+        .get("recommended_volume")?
+        .as_f64()
+        .map(|n| n as f32)
 }
 
 /// First `keyboard/<name>` with a `config.json` on disk, sorted for stability.
@@ -553,7 +656,7 @@ fn run_engine(
     cmd_tx: Sender<AudioCommand>,
     cmd_rx: Receiver<AudioCommand>,
     keyboard_rx: Receiver<String>,
-    hotkey_rx: Receiver<String>
+    hotkey_rx: Receiver<String>,
 ) {
     let mut state = EngineState::new();
 
@@ -561,27 +664,53 @@ fn run_engine(
     // precompute in one pass, on this thread - nothing else is running yet).
     let config = crate::state::config_writer::current();
     if !config.keyboard_soundpack.is_empty() {
-        match super::soundpack_loader::load_pack_prepared(&config.keyboard_soundpack, state.device_rate)
-        {
+        match super::soundpack_loader::load_pack_prepared(
+            &config.keyboard_soundpack,
+            state.device_rate,
+        ) {
             Ok(pack) => {
                 state.pack = Some(pack);
                 crate::state::health::set_pack_result(true, None);
             }
             Err(e) => {
-                crate::always_eprint!("❌ [Engine] Startup pack load failed ({}): {}", config.keyboard_soundpack, e);
+                crate::always_eprint!(
+                    "❌ [Engine] Startup pack load failed ({}): {}",
+                    config.keyboard_soundpack,
+                    e
+                );
                 match first_available_pack() {
                     Some(fallback) if fallback != config.keyboard_soundpack => {
                         crate::always_print!("🔄 [Engine] Falling back to {}", fallback);
-                        match super::soundpack_loader::load_pack_prepared(&fallback, state.device_rate) {
+                        match super::soundpack_loader::load_pack_prepared(
+                            &fallback,
+                            state.device_rate,
+                        ) {
                             Ok(pack) => {
                                 state.pack = Some(pack);
+                                let rec = recommended_volume_for_pack(&fallback);
                                 crate::state::config_writer::apply(|c| {
                                     c.keyboard_soundpack = fallback.clone();
+                                    if !c.per_pack_volume.contains_key(&fallback) {
+                                        if let Some(v) = rec {
+                                            let v = v.clamp(0.1, 1.0);
+                                            if (v - 1.0).abs() > 0.001 {
+                                                c.per_pack_volume.insert(fallback.clone(), v);
+                                            }
+                                        }
+                                    }
                                 });
+                                state.volume =
+                                    crate::state::config_writer::current().effective_volume();
                                 crate::state::health::set_pack_result(true, None);
                             }
                             Err(e2) => {
-                                crate::state::health::set_pack_result(false, Some(format!("{}; fallback {} also failed: {}", e, fallback, e2)));
+                                crate::state::health::set_pack_result(
+                                    false,
+                                    Some(format!(
+                                        "{}; fallback {} also failed: {}",
+                                        e, fallback, e2
+                                    )),
+                                );
                             }
                         }
                     }
@@ -651,7 +780,10 @@ mod tests {
     /// module names the removed symbols in its own assertions, so searching
     /// the whole file for them would always match.
     fn runtime_source() -> &'static str {
-        ENGINE_SOURCE.split("#[cfg(test)]").next().expect("runtime code precedes the tests")
+        ENGINE_SOURCE
+            .split("#[cfg(test)]")
+            .next()
+            .expect("runtime code precedes the tests")
     }
 
     #[test]
@@ -666,7 +798,11 @@ mod tests {
             .nth(1)
             .expect("run_engine must exist");
 
-        for timed_arm in ["crossbeam_channel::at(", "crossbeam_channel::after(", "default("] {
+        for timed_arm in [
+            "crossbeam_channel::at(",
+            "crossbeam_channel::after(",
+            "default(",
+        ] {
             assert!(
                 !loop_body.contains(timed_arm),
                 "engine loop must have no timed arm ({timed_arm}) - periodic work here \

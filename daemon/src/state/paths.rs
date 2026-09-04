@@ -6,7 +6,8 @@ use std::sync::OnceLock;
 fn data_dir() -> PathBuf {
     match directories::BaseDirs::new() {
         Some(b) => b.data_dir().join("sorakey"),
-        None => PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".local/share/sorakey"),
+        None => PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+            .join(".local/share/sorakey"),
     }
 }
 
@@ -31,7 +32,7 @@ pub mod data {
 
 pub mod soundpacks {
     use super::data_dir;
-    use std::path::{ Path, PathBuf };
+    use std::path::{Path, PathBuf};
     use std::sync::OnceLock;
 
     pub fn get_builtin_soundpacks_dir() -> PathBuf {
@@ -47,15 +48,24 @@ pub mod soundpacks {
     /// Directory for a soundpack id.
     pub fn soundpack_dir(soundpack_id: &str) -> String {
         let sanitized = soundpack_id.replace('\\', "/");
-        let parts: Vec<&str> = sanitized.split('/').filter(|p| !p.is_empty() && *p != ".." && !p.contains('\0')).collect();
+        let parts: Vec<&str> = sanitized
+            .split('/')
+            .filter(|p| !p.is_empty() && *p != ".." && !p.contains('\0'))
+            .collect();
         let join = |base: &Path| -> PathBuf {
-            parts.iter().fold(base.to_path_buf(), |p, part| p.join(part))
+            parts
+                .iter()
+                .fold(base.to_path_buf(), |p, part| p.join(part))
         };
         let base = get_builtin_soundpacks_dir();
         let joined = join(Path::new(&base));
         // stay inside base dir
         if !joined.starts_with(&*base) {
-            return base.join("keyboard").join("invalid").to_string_lossy().to_string();
+            return base
+                .join("keyboard")
+                .join("invalid")
+                .to_string_lossy()
+                .to_string();
         }
         joined.to_string_lossy().to_string()
     }

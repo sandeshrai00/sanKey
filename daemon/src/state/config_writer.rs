@@ -1,8 +1,8 @@
 //! The only place `config.json` is written — use `apply` to mutate.
 
 use crate::state::config::AppConfig;
-use std::sync::atomic::{ AtomicU64, Ordering };
-use std::sync::{ Mutex, OnceLock };
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// Authoritative config — loaded once, then held in memory.
 static AUTHORITY: OnceLock<Mutex<AppConfig>> = OnceLock::new();
@@ -68,7 +68,10 @@ mod tests {
 
     impl Authority {
         fn new() -> Self {
-            Self { config: AppConfig::default(), writes: 0 }
+            Self {
+                config: AppConfig::default(),
+                writes: 0,
+            }
         }
 
         /// Like `apply` but local.
@@ -107,7 +110,10 @@ mod tests {
             authority.config.volume, 0.77,
             "the UI's field must survive the two later writers"
         );
-        assert!(!authority.config.enable_sound, "the engine's field must survive the tokio write");
+        assert!(
+            !authority.config.enable_sound,
+            "the engine's field must survive the tokio write"
+        );
         assert!(
             authority.config.auto_start,
             "and the tokio task's own field must be recorded"
@@ -132,8 +138,14 @@ mod tests {
             config.auto_start = true;
         });
 
-        assert_eq!(authority.config.volume, 0.35, "the volume set during the check must survive");
-        assert!(!authority.config.enable_sound, "and so must the sound toggle");
+        assert_eq!(
+            authority.config.volume, 0.35,
+            "the volume set during the check must survive"
+        );
+        assert!(
+            !authority.config.enable_sound,
+            "and so must the sound toggle"
+        );
         assert!(
             authority.config.auto_start,
             "while the check still records its own result"
@@ -156,11 +168,12 @@ mod tests {
         // periodic ticks
         for tick in 0..10 {
             authority.apply(|config| {
-                config.per_pack_volume.insert(format!("keyboard/tick{}", tick), 0.5);
+                config
+                    .per_pack_volume
+                    .insert(format!("keyboard/tick{}", tick), 0.5);
             });
             assert_eq!(
-                authority.config.volume,
-                0.88,
+                authority.config.volume, 0.88,
                 "tick {tick} must not restore the launch-time volume"
             );
         }
@@ -187,9 +200,18 @@ mod tests {
             config.volume = debounced_volume;
         });
 
-        assert!(!wrote, "re-writing an already-current value must not touch the disk");
-        assert!(!authority.config.enable_sound, "and must not revert the mute");
-        assert_eq!(authority.config.volume, debounced_volume, "while the volume still holds");
+        assert!(
+            !wrote,
+            "re-writing an already-current value must not touch the disk"
+        );
+        assert!(
+            !authority.config.enable_sound,
+            "and must not revert the mute"
+        );
+        assert_eq!(
+            authority.config.volume, debounced_volume,
+            "while the volume still holds"
+        );
     }
 
     /// No-op re-asserts don't write.
@@ -205,7 +227,10 @@ mod tests {
             assert!(!wrote, "a no-op mutation must not be persisted");
         }
 
-        assert_eq!(authority.writes, 0, "twenty navigations must produce zero writes");
+        assert_eq!(
+            authority.writes, 0,
+            "twenty navigations must produce zero writes"
+        );
 
         let wrote = authority.apply(|config| {
             config.volume = current_volume + 0.25;
@@ -227,7 +252,7 @@ mod tests {
     /// Real writers on different threads all survive.
     #[test]
     fn real_writers_on_different_threads_all_survive() {
-        use std::sync::{ Arc, Barrier };
+        use std::sync::{Arc, Barrier};
 
         let _serialised = lock_real_authority();
         let original = current();
@@ -243,13 +268,29 @@ mod tests {
                     barrier.wait();
                     for _ in 0..iterations {
                         match id {
-                            0 => apply(|config| { config.volume = 0.5; }),
-                            1 => apply(|config| { config.volume = 0.25; }),
-                            2 => apply(|config| { config.enable_sound = false; }),
-                            3 => apply(|config| { config.per_pack_volume.insert("keyboard/test".to_string(), 0.5); }),
-                            5 => apply(|config| { config.auto_start = true; }),
-                            6 => apply(|config| { config.keyboard_soundpack = "keyboard/test".to_string(); }),
-                            _ => apply(|config| { config.selected_audio_device = Some("test".to_string()); }),
+                            0 => apply(|config| {
+                                config.volume = 0.5;
+                            }),
+                            1 => apply(|config| {
+                                config.volume = 0.25;
+                            }),
+                            2 => apply(|config| {
+                                config.enable_sound = false;
+                            }),
+                            3 => apply(|config| {
+                                config
+                                    .per_pack_volume
+                                    .insert("keyboard/test".to_string(), 0.5);
+                            }),
+                            5 => apply(|config| {
+                                config.auto_start = true;
+                            }),
+                            6 => apply(|config| {
+                                config.keyboard_soundpack = "keyboard/test".to_string();
+                            }),
+                            _ => apply(|config| {
+                                config.selected_audio_device = Some("test".to_string());
+                            }),
                         };
                     }
                 })
@@ -261,19 +302,27 @@ mod tests {
         }
 
         let final_config = current();
-        apply(|config| { *config = original; });
+        apply(|config| {
+            *config = original;
+        });
         // At least one writer's effect must be present; exact values race but no panic proves compose
         assert!(final_config.volume == 0.5 || final_config.volume == 0.25);
         // These fields each have a single writer, so their final value is deterministic.
-        assert!(!final_config.enable_sound, "mute writer's effect must survive");
-        assert!(final_config.auto_start, "auto_start writer's effect must survive");
+        assert!(
+            !final_config.enable_sound,
+            "mute writer's effect must survive"
+        );
+        assert!(
+            final_config.auto_start,
+            "auto_start writer's effect must survive"
+        );
     }
 
     /// Reader never sees a truncated document.
     #[test]
     fn a_concurrent_reader_never_observes_a_partial_document() {
-        use std::sync::atomic::{ AtomicBool, Ordering as AtomicOrdering };
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
         let _serialised = lock_real_authority();
         let original = current();
@@ -313,10 +362,12 @@ mod tests {
             *config = original;
         });
 
-        assert!(successful_reads > 0, "the reader must actually have observed the file");
+        assert!(
+            successful_reads > 0,
+            "the reader must actually have observed the file"
+        );
         assert_eq!(
-            partial_reads,
-            0,
+            partial_reads, 0,
             "a half-written config was observed {partial_reads} times - \
              the write is not atomic"
         );
@@ -334,8 +385,7 @@ mod tests {
 
         assert!(!wrote, "a metadata-only edit is not a change worth writing");
         assert_eq!(
-            authority.config.last_updated,
-            before.last_updated,
+            authority.config.last_updated, before.last_updated,
             "and must be rolled back rather than left only in memory"
         );
     }

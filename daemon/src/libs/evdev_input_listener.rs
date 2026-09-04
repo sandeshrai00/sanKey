@@ -1,13 +1,67 @@
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 #[cfg(target_os = "linux")]
 use crossbeam_channel::Sender;
 
+/// Modifier counts shared across all device threads so a chord split over
+/// two keyboards (e.g. Ctrl on kb1 + M on kb2) still fires the hotkey.
+/// Counts (not bools) so two devices holding Ctrl at once release cleanly.
 #[cfg(target_os = "linux")]
-pub fn start_evdev_keyboard_listener(
-    keyboard_tx: Sender<String>,
-    hotkey_tx: Sender<String>,
-) {
+#[derive(Default)]
+struct SharedMods {
+    ctrl_held: u32,
+    alt_held: u32,
+}
+
+#[cfg(target_os = "linux")]
+fn is_keyboard_device(device: &evdev::Device) -> bool {
+    use evdev::KeyCode;
+    let Some(keys) = device.supported_keys() else {
+        return false;
+    };
+    // Anchor keys: any full keyboard has at least one of these. Letters,
+    // Enter/Space/Backspace/Tab, digits, F-keys and the numpad block are
+    // all accepted so A-less numpads/macropads stay visible. Power/media
+    // keys (KEY_POWER etc.) are deliberately absent so those devices
+    // stay excluded.
+    const ANCHORS: &[KeyCode] = &[
+        KeyCode::KEY_A,
+        KeyCode::KEY_Q,
+        KeyCode::KEY_Z,
+        KeyCode::KEY_M,
+        KeyCode::KEY_ENTER,
+        KeyCode::KEY_SPACE,
+        KeyCode::KEY_BACKSPACE,
+        KeyCode::KEY_TAB,
+        KeyCode::KEY_ESC,
+        KeyCode::KEY_1,
+        KeyCode::KEY_0,
+        KeyCode::KEY_F1,
+        KeyCode::KEY_F12,
+        KeyCode::KEY_NUMLOCK,
+        KeyCode::KEY_KP0,
+        KeyCode::KEY_KP1,
+        KeyCode::KEY_KP7,
+        KeyCode::KEY_KPENTER,
+        KeyCode::KEY_KPSLASH,
+        KeyCode::KEY_KPDOT,
+    ];
+    if ANCHORS.iter().any(|k| keys.contains(*k)) {
+        return true;
+    }
+    // Fallback for exotic macropads that only send e.g. F13+ or media keys:
+    // EV_KEY capability (supported_keys is Some) plus a keyboard-ish name.
+    let name = device.name().unwrap_or("").to_lowercase();
+    name.contains("keyboard")
+        || name.contains("keypad")
+        || name.contains("numpad")
+        || name.contains("macropad")
+        || name.contains("kbd")
+}
+
+#[cfg(target_os = "linux")]
+pub fn start_evdev_keyboard_listener(keyboard_tx: Sender<String>, hotkey_tx: Sender<String>) {
     crate::always_print!("🔍 [evdev] start_evdev_keyboard_listener() called - spawning thread");
     thread::spawn(move || {
         // One blocking thread per keyboard: fetch_events blocks until the
@@ -19,12 +73,14 @@ pub fn start_evdev_keyboard_listener(
         let spawn_one = |path: std::path::PathBuf,
                          mut device: evdev::Device,
                          keyboard_tx: Sender<String>,
-                         hotkey_tx: Sender<String>| -> std::thread::JoinHandle<()> {
+                         hotkey_tx: Sender<String>,
+                         shared: Arc<Mutex<SharedMods>>|
+         -> std::thread::JoinHandle<()> {
             thread::spawn(move || {
                 use evdev::EventType;
 
-                let mut ctrl_pressed = false;
-                let mut alt_pressed = false;
+                let mut local_ctrl = false;
+                let mut local_alt = false;
                 let mut event_count = 0;
                 let mut first_event_logged = false;
 
@@ -32,7 +88,11 @@ pub fn start_evdev_keyboard_listener(
                     let mut events = match device.fetch_events() {
                         Ok(e) => e,
                         Err(e) => {
-                            crate::always_eprint!("⚠️ [evdev] Error on {}: {} - device thread exiting (supervisor will rescan)", path.display(), e);
+                            crate::always_eprint!(
+                                "⚠️ [evdev] Error on {}: {} - device thread exiting (supervisor will rescan)",
+                                path.display(),
+                                e
+                            );
                             break;
                         }
                     };
@@ -52,15 +112,41 @@ pub fn start_evdev_keyboard_listener(
                             continue;
                         }
 
-                        if key_value == 1 {
+                        if key_value == 1 || key_value == 2 {
+                            let is_repeat = key_value == 2;
                             match key_code {
-                                "ControlLeft" | "ControlRight" => ctrl_pressed = true,
-                                "AltLeft" | "AltRight" => alt_pressed = true,
+                                "ControlLeft" | "ControlRight" => {
+                                    if !is_repeat && !local_ctrl {
+                                        local_ctrl = true;
+                                        if let Ok(mut s) = shared.lock() {
+                                            s.ctrl_held = s.ctrl_held.saturating_add(1);
+                                        }
+                                    }
+                                }
+                                "AltLeft" | "AltRight" => {
+                                    if !is_repeat && !local_alt {
+                                        local_alt = true;
+                                        if let Ok(mut s) = shared.lock() {
+                                            s.alt_held = s.alt_held.saturating_add(1);
+                                        }
+                                    }
+                                }
                                 "KeyM" => {
-                                    if ctrl_pressed && alt_pressed {
-                                        crate::always_print!("🔥 [evdev] Hotkey detected: Ctrl+Alt+M - Toggling global sound");
-                                        let _ = hotkey_tx.send("TOGGLE_SOUND".to_string());
-                                        continue;
+                                    // Hotkey fires on the initial edge only:
+                                    // autorepeat of a held M must not
+                                    // toggle mute repeatedly.
+                                    if !is_repeat {
+                                        let hot = shared
+                                            .lock()
+                                            .map(|s| s.ctrl_held > 0 && s.alt_held > 0)
+                                            .unwrap_or(false);
+                                        if hot {
+                                            crate::always_print!(
+                                                "🔥 [evdev] Hotkey detected: Ctrl+Alt+M - Toggling global sound"
+                                            );
+                                            let _ = hotkey_tx.send("TOGGLE_SOUND".to_string());
+                                            continue;
+                                        }
                                     }
                                 }
                                 _ => {}
@@ -72,8 +158,22 @@ pub fn start_evdev_keyboard_listener(
                             let _ = keyboard_tx.send(key_code.to_string());
                         } else if key_value == 0 {
                             match key_code {
-                                "ControlLeft" | "ControlRight" => ctrl_pressed = false,
-                                "AltLeft" | "AltRight" => alt_pressed = false,
+                                "ControlLeft" | "ControlRight" => {
+                                    if local_ctrl {
+                                        local_ctrl = false;
+                                        if let Ok(mut s) = shared.lock() {
+                                            s.ctrl_held = s.ctrl_held.saturating_sub(1);
+                                        }
+                                    }
+                                }
+                                "AltLeft" | "AltRight" => {
+                                    if local_alt {
+                                        local_alt = false;
+                                        if let Ok(mut s) = shared.lock() {
+                                            s.alt_held = s.alt_held.saturating_sub(1);
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
 
@@ -83,6 +183,8 @@ pub fn start_evdev_keyboard_listener(
                 }
             })
         };
+
+        let shared: Arc<Mutex<SharedMods>> = Arc::new(Mutex::new(SharedMods::default()));
 
         let mut live: std::collections::HashMap<std::path::PathBuf, std::thread::JoinHandle<()>> =
             std::collections::HashMap::new();
@@ -104,7 +206,9 @@ pub fn start_evdev_keyboard_listener(
                     "no_input_devices: cannot open /dev/input/event*".to_string(),
                 ));
                 if attempt == 1 {
-                    crate::always_eprint!("❌ [evdev] No devices found - cannot access /dev/input/event* devices");
+                    crate::always_eprint!(
+                        "❌ [evdev] No devices found - cannot access /dev/input/event* devices"
+                    );
                     crate::always_eprint!("🔁 [evdev] Retrying every 5s until devices appear");
                 }
                 std::thread::sleep(std::time::Duration::from_secs(5));
@@ -114,14 +218,16 @@ pub fn start_evdev_keyboard_listener(
 
             let mut keyboards: Vec<(std::path::PathBuf, evdev::Device)> = Vec::new();
             {
-                use evdev::KeyCode;
                 for (path, device) in devices {
                     if live.contains_key(&path) {
                         continue;
                     }
-                    let is_keyboard = device.supported_keys().is_some_and(|k| k.contains(KeyCode::KEY_A));
-                    if is_keyboard {
-                        crate::always_print!("🔍 [evdev] Found keyboard device: {:?} - {}", path.display(), device.name().unwrap_or("Unknown"));
+                    if is_keyboard_device(&device) {
+                        crate::always_print!(
+                            "🔍 [evdev] Found keyboard device: {:?} - {}",
+                            path.display(),
+                            device.name().unwrap_or("Unknown")
+                        );
                         keyboards.push((path, device));
                     }
                 }
@@ -129,10 +235,13 @@ pub fn start_evdev_keyboard_listener(
 
             if keyboards.is_empty() && live.is_empty() {
                 crate::state::health::set_input_keyboards(0);
-                crate::state::health::set_input_error(Some(
-                    format!("no_keyboards: saw {device_count} input device(s) but none usable"),
-                ));
-                crate::always_eprint!("❌ [evdev] No keyboard devices found among the {} input devices!", device_count);
+                crate::state::health::set_input_error(Some(format!(
+                    "no_keyboards: saw {device_count} input device(s) but none usable"
+                )));
+                crate::always_eprint!(
+                    "❌ [evdev] No keyboard devices found among the {} input devices!",
+                    device_count
+                );
                 crate::always_eprint!("🔁 [evdev] Retrying in 5s");
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 continue;
@@ -142,7 +251,13 @@ pub fn start_evdev_keyboard_listener(
                 let p = path.clone();
                 live.insert(
                     path,
-                    spawn_one(p, device, keyboard_tx.clone(), hotkey_tx.clone()),
+                    spawn_one(
+                        p,
+                        device,
+                        keyboard_tx.clone(),
+                        hotkey_tx.clone(),
+                        Arc::clone(&shared),
+                    ),
                 );
             }
             if !live.is_empty() {
@@ -153,7 +268,10 @@ pub fn start_evdev_keyboard_listener(
             std::thread::sleep(std::time::Duration::from_secs(5));
         }
 
-        crate::always_print!("✅ [evdev] Holding {} keyboard device(s) - supervisor active", live.len());
+        crate::always_print!(
+            "✅ [evdev] Holding {} keyboard device(s) - supervisor active",
+            live.len()
+        );
 
         // Supervisor: prune dead threads, pick up new/replugged keyboards.
         loop {
@@ -168,15 +286,22 @@ pub fn start_evdev_keyboard_listener(
                 if live.contains_key(&path) {
                     continue;
                 }
-                use evdev::KeyCode;
-                let is_keyboard =
-                    device.supported_keys().is_some_and(|k| k.contains(KeyCode::KEY_A));
-                if is_keyboard {
-                    crate::always_print!("🔌 [evdev] New keyboard: {:?} - {}", path.display(), device.name().unwrap_or("Unknown"));
+                if is_keyboard_device(&device) {
+                    crate::always_print!(
+                        "🔌 [evdev] New keyboard: {:?} - {}",
+                        path.display(),
+                        device.name().unwrap_or("Unknown")
+                    );
                     let p = path.clone();
                     live.insert(
                         path,
-                        spawn_one(p, device, keyboard_tx.clone(), hotkey_tx.clone()),
+                        spawn_one(
+                            p,
+                            device,
+                            keyboard_tx.clone(),
+                            hotkey_tx.clone(),
+                            Arc::clone(&shared),
+                        ),
                     );
                 }
             }
