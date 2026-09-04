@@ -6,6 +6,7 @@ echo "== Sorakey uninstall =="
 systemctl --user disable --now sorakey 2>/dev/null || true
 systemctl --user daemon-reload 2>/dev/null || true
 pkill -x sorakey 2>/dev/null || true
+rm -f "${XDG_RUNTIME_DIR:-/run/user/$UID}/sorakey.sock" "${XDG_RUNTIME_DIR:-/run/user/$UID}/sorakey.lock" 2>/dev/null || true
 if [[ $PURGE -eq 1 ]]; then
   rm -rf ~/.local/share/sorakey ~/.local/bin/sorakey ~/.config/systemd/user/sorakey.service ~/.cache/sorakey ~/.local/lib/sorakey
   echo "purged data + binary"
@@ -16,6 +17,7 @@ else
     echo "moved packs to .bak (use --purge to delete)"
   fi
   rm -f ~/.local/bin/sorakey ~/.config/systemd/user/sorakey.service
+  rm -rf ~/.cache/sorakey ~/.local/lib/sorakey
   systemctl --user daemon-reload 2>/dev/null || true
 fi
 # remove plugin with: omarchy plugin remove io.github.sandeshrai00.sorakey --yes

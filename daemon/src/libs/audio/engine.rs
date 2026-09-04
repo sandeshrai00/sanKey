@@ -37,6 +37,9 @@ pub enum AudioCommand {
     /// request sequence it was spawned for (stale results are dropped).
     PackLoaded(u64, Box<Result<super::soundpack_loader::LoadedPack, String>>),
     SwitchDevice(Option<String>), // None = system default
+    /// Production diagnostic: play one press segment of the current pack
+    /// to prove the output path works independent of input capture.
+    TestSound,
 }
 
 /// Cheap, `Clone + Send` handle to the audio engine thread. Control and input
@@ -515,7 +518,30 @@ fn handle_command(
             state.pending_pack_seq = None;
             state.loading_pack = false;
             state.queued_load = None;
-            let _ = state.switch_device(device_id);
+            if let Err(e) = state.switch_device(device_id) {
+                crate::always_eprint!("❌ [AudioEngine] device switch failed: {}", e);
+            }
+        }
+        AudioCommand::TestSound => {
+            if !state.sound_enabled {
+                crate::always_eprint!("⚠️ [AudioEngine] test sound skipped: sound disabled (muted)");
+                return;
+            }
+            let Some(pack) = &state.pack else {
+                crate::always_eprint!("⚠️ [AudioEngine] test sound skipped: no pack loaded");
+                return;
+            };
+            // First available press segment (deterministic order for tests).
+            let mut keys: Vec<&String> = pack.segments.keys().collect();
+            keys.sort();
+            for key in keys {
+                if let Some((Some(segment), _)) = pack.segments.get(key) {
+                    play_segment(&state.stream_handle, segment, state.volume, &mut state.key_sinks);
+                    crate::always_print!("🔔 [AudioEngine] test sound played ({})", key);
+                    return;
+                }
+            }
+            crate::always_eprint!("⚠️ [AudioEngine] test sound skipped: pack has no press segments");
         }
     }
 }
@@ -563,20 +589,28 @@ fn run_engine(
                 }
             }
             recv(keyboard_rx) -> msg => {
-                if let Ok(raw) = msg {
-                    if let Some((code, down)) = parse_input_event(&raw) {
-                        state.handle_key_event(&code, down);
+                match msg {
+                    Ok(raw) => {
+                        if let Some((code, down)) = parse_input_event(&raw) {
+                            state.handle_key_event(&code, down);
+                        }
                     }
+                    // All senders gone = bug (keeper in evdev listener prevents
+                    // this). Sleep instead of spinning at 100% CPU.
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
                 }
             }
             recv(hotkey_rx) -> msg => {
-                if let Ok(command) = msg {
-                    if command == "TOGGLE_SOUND" {
-                        // Adopt the persisted value rather than negating the
-                        // cached one, so the engine can't drift out of sync
-                        // with config if the two ever disagree.
-                        state.sound_enabled = handle_toggle_sound();
+                match msg {
+                    Ok(command) => {
+                        if command == "TOGGLE_SOUND" {
+                            // Adopt the persisted value rather than negating the
+                            // cached one, so the engine can't drift out of sync
+                            // with config if the two ever disagree.
+                            state.sound_enabled = handle_toggle_sound();
+                        }
                     }
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
                 }
             }
         }

@@ -24,6 +24,9 @@ step "Installing soundpacks"
 mkdir -p "$SHARE/soundpacks"
 cp -rn "$DAEMON_DIR/soundpacks/." "$SHARE/soundpacks/" 2>/dev/null || true
 
+# Fresh install should run on next shell start even if user stopped before.
+rm -f "$SHARE/stopped" 2>/dev/null || true
+
 # 3. systemd service
 step "Installing the sorakey user service"
 mkdir -p "$UNIT_DIR"
@@ -42,6 +45,17 @@ WantedBy=default.target
 EOF
 systemctl --user daemon-reload
 systemctl --user enable --now sorakey || die "could not start the sorakey service"
+
+# Smoke test: control socket answers (daemon may need a second).
+for i in 1 2 3 4 5; do
+  if "$BIN" ctl '{"cmd":"status"}' 2>/dev/null | grep -q '"ok":true'; then
+    break
+  fi
+  sleep 1
+  if [[ "$i" -eq 5 ]]; then
+    echo "warning: daemon started but 'sorakey ctl status' is not answering yet — check 'journalctl --user -u sorakey'" >&2
+  fi
+done
 
 # 4. input group (user-only check, no sudo in plugin)
 step "Checking keyboard capture (/dev/input access)"

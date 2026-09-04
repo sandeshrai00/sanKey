@@ -400,6 +400,10 @@ Panel {
     clearErrorToast.restart()
   }
 
+  function testSound() {
+    root.sendCtl({ cmd: "test_sound" })
+  }
+
   property bool automaticSetupAttempted: false
 
   Component.onCompleted: {
@@ -1074,6 +1078,13 @@ Dropdown {
                     selected: true
                     tooltipText: "Restart daemon after relogin"
                     onClicked: root.restartDaemon()
+                  }
+                  Button {
+                    text: "Test sound"
+                    foreground: root.bar.foreground
+                    selected: true
+                    tooltipText: "Play one key sound (proves output works)"
+                    onClicked: root.testSound()
                   }
                 }
               }

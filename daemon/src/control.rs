@@ -123,6 +123,7 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
         "packs" => packs(),
         "audio_devices" => audio_devices(),
         "select_device" => select_device(&req, engine),
+        "test_sound" => test_sound(engine),
         "diag" => diag(),
         "input" => input_health(),
         "input_rescan" => input_rescan(),
@@ -364,10 +365,24 @@ fn select_device(req: &serde_json::Value, engine: &AudioEngineHandle) -> String 
         if s.contains('\0') || s.len() > 256 {
             return fail("invalid id");
         }
+        // Fail fast on unknown ids so the panel toast shows the error
+        // instead of silently keeping the old device (engine still keeps
+        // the old stream as backstop for races between list and switch).
+        let dm = crate::libs::device_manager::DeviceManager::new();
+        match dm.get_output_device_by_id(s) {
+            Ok(Some(_)) => {}
+            Ok(None) => return fail(&format!("device not found: {}", s)),
+            Err(e) => return fail(&e),
+        }
     }
     crate::state::config_writer::apply(|c| c.selected_audio_device = id.clone());
     engine.send(AudioCommand::SwitchDevice(id.clone()));
     ok(serde_json::json!({ "selected": id }))
+}
+
+fn test_sound(engine: &AudioEngineHandle) -> String {
+    engine.send(AudioCommand::TestSound);
+    ok(serde_json::json!({ "played": true }))
 }
 
 fn ok(mut v: serde_json::Value) -> String {

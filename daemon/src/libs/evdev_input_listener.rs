@@ -120,6 +120,17 @@ pub fn start_evdev_keyboard_listener(
     keyboard_tx: Sender<String>,
     hotkey_tx: Sender<String>,
 ) {
+    // Keeper: the engine's `select!` spins at 100% CPU if every sender
+    // disconnects (early return below would drop both). Park clones forever
+    // so the receivers stay connected with zero traffic when blocked.
+    {
+        let kb = keyboard_tx.clone();
+        let hk = hotkey_tx.clone();
+        thread::spawn(move || {
+            let _keep = (kb, hk);
+            std::thread::park();
+        });
+    }
     crate::always_print!("🔍 [evdev] start_evdev_keyboard_listener() called - spawning thread");
     thread::spawn(move || {
         use evdev::KeyCode;

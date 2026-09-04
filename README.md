@@ -136,11 +136,20 @@ contain a `config.json` (V2 format).
 - `delete_pack {"id": "keyboard/..."}` — remove a pack (falls back to another)
 - `audio_devices` — list output devices + current selection
 - `select_device {"id": "..."}` — route output there (`null` = system default)
+- `test_sound` — play one key sound (proves output works without typing)
+- `input` / `input_rescan` — keyboard-capture health (`ok`, `total`, `keyboards`, `hint`); rescan re-probes `/dev/input` without restart
 - `set_bar_section {"section": "left|center|right"}` / `get_bar_section`
 - `diag` — memory (RSS/HWM), per-pack entry + cache sizes, active pack
 - `export_logs` — recent error log as text, with a suggested filename
 
 ## Diagnostics & logs
+
+- **No sound?** Check in order: panel status (`No keyboard access` = input
+  permission — see Install step 2), **Test sound** button (proves output),
+  mute/volume, selected pack, output device. `sorakey ctl '{"cmd":"status"}'`
+  reports `input.ok` alongside audio state.
+- **Privacy**: key capture is local-only via `/dev/input`. Key names never
+  leave the machine; logs mask account names on export.
 
 - **Memory / cache**: `sorakey ctl '{"cmd":"diag"}'` reports resident
   memory, the soundpack cache size, and per-pack volume entries — useful for
