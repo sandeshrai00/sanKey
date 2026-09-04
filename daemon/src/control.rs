@@ -125,6 +125,8 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
         "select_device" => select_device(&req, engine),
         "diag" => diag(),
         "export_logs" => export_logs(),
+        "key" => key_event(&req, engine),
+        "toggle_mute" => toggle_mute(engine),
         other => fail(&format!("unknown cmd: {other}")),
     }
 }
@@ -141,14 +143,72 @@ fn status() -> String {
     let c = crate::state::config_writer::current();
     let eff = c.effective_volume();
     let per = c.per_pack_volume.get(&c.keyboard_soundpack).copied().unwrap_or(eff);
-    ok(serde_json::json!({
+    let mut v = serde_json::json!({
         "running": true,
         "muted": !c.enable_sound,
         "volume": (eff * 100.0).round(),
         "per_pack_volume": (per * 100.0).round(),
         "keyboard_pack": c.keyboard_soundpack,
         "audio_device": c.selected_audio_device,
-    }))
+    });
+    // Health explains "running but silent" (input capture, pack load, audio).
+    if let Some(obj) = v.as_object_mut() {
+        for (k, val) in crate::state::health::snapshot().as_object().cloned().unwrap_or_default() {
+            obj.insert(k, val);
+        }
+    }
+    ok(v)
+}
+
+/// Fast key ingest for notifiers that only hold an engine handle.
+fn key_event(req: &serde_json::Value, engine: &AudioEngineHandle) -> String {
+    let code = match req.get("code").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return fail("missing code"),
+    };
+    if code.len() > 32
+        || !code.bytes().all(|b| b.is_ascii_alphanumeric())
+        || !is_known_key_code(code)
+    {
+        return fail("unknown code");
+    }
+    let down = req.get("down").and_then(|v| v.as_bool()).unwrap_or(true);
+    engine.send(AudioCommand::Key { code: code.to_string(), down });
+    ok(serde_json::json!({ "code": code, "down": down }))
+}
+
+fn is_known_key_code(code: &str) -> bool {
+    if crate::utils::keymap::KEY_MAP.iter().any(|&(_, n)| n == code) {
+        return true;
+    }
+    matches!(
+        code,
+        "ControlRight"
+            | "AltRight"
+            | "MetaLeft"
+            | "MetaRight"
+            | "ArrowUp"
+            | "ArrowDown"
+            | "ArrowLeft"
+            | "ArrowRight"
+            | "Insert"
+            | "Delete"
+            | "Home"
+            | "End"
+            | "PageUp"
+            | "PageDown"
+    )
+}
+
+fn toggle_mute(engine: &AudioEngineHandle) -> String {
+    let mut enabled = false;
+    crate::state::config_writer::apply(|config| {
+        config.enable_sound = !config.enable_sound;
+        enabled = config.enable_sound;
+    });
+    engine.send(AudioCommand::SetSoundEnabled(enabled));
+    crate::always_print!("🔄 [control] Sound toggled: {}", enabled);
+    ok(serde_json::json!({ "muted": !enabled }))
 }
 
 fn recommended_volume_for(id: &str) -> Option<f32> {
@@ -391,13 +451,19 @@ fn diag() -> String {
     let vm_hwm = proc_kb("VmHWM:").unwrap_or(0);
     let c = crate::state::config_writer::current();
     let cache = crate::state::soundpack::SoundpackCache::load();
-    ok(serde_json::json!({
+    let mut v = serde_json::json!({
         "vm_rss_kb": vm_rss,
         "vm_hwm_kb": vm_hwm,
         "per_pack_volume_entries": c.per_pack_volume.len(),
         "soundpack_cache_entries": cache.soundpacks.len(),
         "keyboard_pack": c.keyboard_soundpack,
-    }))
+    });
+    if let Some(obj) = v.as_object_mut() {
+        for (k, val) in crate::state::health::snapshot().as_object().cloned().unwrap_or_default() {
+            obj.insert(k, val);
+        }
+    }
+    ok(v)
 }
 
 fn export_logs() -> String {
@@ -464,6 +530,24 @@ pub fn ctl_client(request: &str) -> i32 {
         }
     }
     print!("{out}");
+    0
+}
+
+/// `sorakey key <Code> [up]` client — fire-and-forget: write one line and
+/// close without waiting for the reply (the server ignores write errors).
+pub fn key_client(code: &str, down: bool) -> i32 {
+    if code.is_empty() || code.len() > 32 || !code.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return 1;
+    }
+    let path = socket_path();
+    let mut stream = match UnixStream::connect(&path) {
+        Ok(s) => s,
+        Err(_) => return 1,
+    };
+    let request = serde_json::json!({ "cmd": "key", "code": code, "down": down }).to_string();
+    if stream.write_all(request.as_bytes()).is_err() || stream.write_all(b"\n").is_err() {
+        return 1;
+    }
     0
 }
 

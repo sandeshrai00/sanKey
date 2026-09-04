@@ -81,6 +81,17 @@ Panel {
   property string keyboardPack: ""
   property var keyboardPacks: []
   property real perPackVolume: 100
+  // daemon health (explains "running but silent")
+  property int inputKeyboards: 0
+  property string inputError: ""
+  property var packLoaded: null
+  property string packError: ""
+  property var lastKeyAgeS: null
+  property bool audioOk: true
+  property string audioError: ""
+  // one-tap keyboard-access enable flow (panel button → script → GUI approval)
+  property bool captureBusy: false
+  property string captureStatus: ""
   property string deleteConfirmId: ""
   property bool deleting: false
   property string errorToast: ""
@@ -91,6 +102,7 @@ Panel {
   onExportStatusChanged: if (root.exportStatus !== "") root.lastResult = String(root.exportStatus).slice(0, 500)
   onErrorToastChanged: if (root.errorToast !== "") root.lastResult = String(root.errorToast).slice(0, 500)
   onUpdateStatusChanged: if (root.updateStatus !== "") root.lastResult = String(root.updateStatus).slice(0, 500)
+  onCaptureStatusChanged: if (root.captureStatus !== "") root.lastResult = String(root.captureStatus).slice(0, 500)
   property string pendingCtlCmd: ""
   property var audioDevices: []
   property string audioDeviceSelected: ""
@@ -100,8 +112,28 @@ Panel {
     if (setupBusy) return "Installing…"
     if (!root.installed) return "Not installed"
     if (!root.running) return "Stopped"
+    if (root.inputError !== "") return "No keyboard access"
+    if (root.packLoaded === false) return "Pack failed"
     if (root.keyboardPack === "" && root.keyboardPacks.length === 0) return "No soundpack"
     return root.muted ? "Muted" : "Playing"
+  }
+
+  // Short human-readable cause for the banner. Never terminal commands —
+  // the fix action is the button below it.
+  readonly property string healthHint: {
+    if (root.captureBusy) return "Enabling keyboard sounds… approve the one-time dialog."
+    if (root.inputError !== "") return "The keyboard is not reachable, so no keys can make sounds."
+    if (root.packLoaded === false && root.packError !== "") return "Soundpack failed: " + root.packError
+    if (root.audioError !== "") return "Audio problem: " + root.audioError
+    return ""
+  }
+
+  function enableCapture() {
+    if (root.captureBusy || captureProc.running) return
+    root.captureBusy = true
+    root.captureStatus = ""
+    captureProc.command = ["/usr/bin/bash", root.pluginDir + "/scripts/sorakey-enable-capture.sh"]
+    captureProc.running = true
   }
 
   property bool setupBusy: false
@@ -341,6 +373,28 @@ Panel {
       if (typeof o.per_pack_volume === "number" && root.perPackVolume !== o.per_pack_volume) root.perPackVolume = o.per_pack_volume
       var pack = String(o.keyboard_pack || "")
       if (root.keyboardPack !== pack) root.keyboardPack = pack
+      // health fields (absent on older daemons → keep previous value)
+      if (typeof o.input_keyboards === "number" && root.inputKeyboards !== o.input_keyboards) root.inputKeyboards = o.input_keyboards
+      if (typeof o.input_error !== "undefined") {
+        var ie = o.input_error ? String(o.input_error) : ""
+        if (root.inputError !== ie) root.inputError = ie
+      }
+      if (typeof o.pack_loaded !== "undefined") {
+        var pl = (o.pack_loaded === true) ? true : ((o.pack_loaded === false) ? false : null)
+        if (root.packLoaded !== pl) root.packLoaded = pl
+      }
+      if (typeof o.pack_error !== "undefined") {
+        var pe = o.pack_error ? String(o.pack_error) : ""
+        if (root.packError !== pe) root.packError = pe
+      }
+      if (typeof o.last_key_age_s !== "undefined") {
+        if (root.lastKeyAgeS !== o.last_key_age_s) root.lastKeyAgeS = o.last_key_age_s
+      }
+      if (typeof o.audio_ok === "boolean" && root.audioOk !== o.audio_ok) root.audioOk = o.audio_ok
+      if (typeof o.audio_error !== "undefined") {
+        var ae = o.audio_error ? String(o.audio_error) : ""
+        if (root.audioError !== ae) root.audioError = ae
+      }
       if (typeof o.audio_device !== "undefined") {
         var dev = o.audio_device ? String(o.audio_device) : ""
         if (root.audioDeviceSelected !== dev) root.audioDeviceSelected = dev
@@ -549,11 +603,49 @@ Panel {
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {
       root.setupBusy = false
+      var out = String(stdout.text || "").trim()
+      var err = String(stderr.text || "").trim()
       if (exitCode === 0) {
         root.installed = true
+        root.errorToast = ""
         root.refreshStatus()
         root.refreshPacks()
+        root.refreshAudioDevices()
+      } else {
+        // Surface the failure instead of silently staying "Not installed".
+        var msg = err !== "" ? err.split("\n").pop() : (out !== "" ? out.split("\n").pop() : "Install failed.")
+        root.errorToast = String(msg).slice(0, 500)
+        clearErrorToast.restart()
+        installCheck.running = true
       }
+    }
+  }
+
+  // one-tap keyboard-access enable (tailscale pkexec pattern): runs the
+  // enable script, whose pkexec call pops the shell's GUI approval dialog.
+  // Exit 0 = verified working, 2 = not approved (stay truthful + Retry),
+  // anything else = hard error shown in the result line.
+  Process {
+    id: captureProc
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      root.captureBusy = false
+      var out = String(stdout.text || "").trim()
+      if (exitCode === 0) {
+        root.captureStatus = "Keyboard sounds enabled."
+        root.errorToast = ""
+      } else if (exitCode === 2) {
+        root.captureStatus = ""
+        root.errorToast = ""
+      } else {
+        var err = String(stderr.text || "").trim()
+        var msg = err !== "" ? err.split("\n").pop() : (out !== "" ? out.split("\n").pop() : "Could not enable — try again.")
+        root.captureStatus = ""
+        root.errorToast = String(msg).slice(0, 500)
+        clearErrorToast.restart()
+      }
+      root.refreshStatus()
     }
   }
 
@@ -958,6 +1050,40 @@ Dropdown {
           visible: root.installed && !root.settingsOpen
           width: parent.width
           spacing: Style.space(14)
+
+          // health banner — the fix action is a button, never a command
+          Column {
+            visible: root.healthHint !== ""
+            width: parent.width
+            spacing: Style.space(6)
+            PanelSectionHeader { text: "NEEDS ATTENTION"; foreground: root.bar.foreground }
+            Text {
+              width: parent.width
+              text: root.healthHint
+              color: "#ff6b6b"
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+              Button {
+                text: root.captureBusy ? "Enabling…" : "Enable keyboard sounds"
+                foreground: root.bar.foreground
+                selected: true
+                visible: root.inputError !== ""
+                enabled: !root.captureBusy
+                onClicked: root.enableCapture()
+              }
+              Button {
+                text: "Restart daemon"
+                foreground: root.bar.foreground
+                onClicked: root.restartDaemon()
+              }
+            }
+            PanelSeparator { foreground: root.bar.foreground }
+          }
 
           PanelSeparator { foreground: root.bar.foreground }
 

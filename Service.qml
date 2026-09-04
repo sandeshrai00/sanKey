@@ -147,9 +147,12 @@ Item {
   }
 
   Component.onCompleted: {
-    // sticky stop: only auto-start if the user hasn't explicitly stopped the daemon
+    // sticky stop: only auto-start if the user hasn't explicitly stopped the daemon.
+    // Guard: on first enable the binary/unit don't exist yet (Panel auto-install
+    // creates them) — enabling a missing unit only spams a failure, so skip it.
     if (!startProc.running && !root.stoppedFlag) {
-      startProc.command = ["systemctl", "--user", "enable", "--now", "sorakey"]
+      startProc.command = ["/usr/bin/bash", "-c",
+        'test -x "$HOME/.local/bin/sorakey" && test -f "$HOME/.config/systemd/user/sorakey.service" && systemctl --user enable --now sorakey || exit 0']
       startProc.running = true
     }
     freshnessCheck.running = true

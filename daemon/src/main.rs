@@ -15,6 +15,12 @@ fn main() {
         let request = args.get(2).map(String::as_str).unwrap_or("{}");
         std::process::exit(control::ctl_client(request));
     }
+    // `sorakey key <Code> [up]` - fire-and-forget keystroke for notifiers.
+    if args.get(1).map(String::as_str) == Some("key") {
+        let code = args.get(2).map(String::as_str).unwrap_or("");
+        let down = args.get(3).map(String::as_str) != Some("up");
+        std::process::exit(control::key_client(code, down));
+    }
 
     // Only one instance — two would double-play every keystroke.
     let _lock = match acquire_lock() {

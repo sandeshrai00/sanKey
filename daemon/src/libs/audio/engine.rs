@@ -29,6 +29,7 @@ pub(super) type KeySegments = (Option<Segment>, Option<Segment>);
 pub enum AudioCommand {
     SetVolume(f32),
     SetSoundEnabled(bool),
+    Key { code: String, down: bool },
     LoadKeyboardPack {
         soundpack_id: String,
         update_cache_on_error: bool,
@@ -162,6 +163,7 @@ impl EngineState {
         });
         let current_device_id = opened_device_id.or(config.selected_audio_device.clone());
         let device_rate = device_manager.get_current_output_sample_rate();
+        crate::state::health::set_audio_result(true, None);
 
         Self {
             stream,
@@ -182,6 +184,9 @@ impl EngineState {
     }
 
     fn handle_key_event(&mut self, code: &str, down: bool) {
+        if down {
+            crate::state::health::note_key();
+        }
         if !self.sound_enabled {
             return;
         }
@@ -459,6 +464,9 @@ fn handle_command(
         AudioCommand::SetSoundEnabled(enabled) => {
             state.sound_enabled = enabled;
         }
+        AudioCommand::Key { code, down } => {
+            state.handle_key_event(&code, down);
+        }
         AudioCommand::LoadKeyboardPack { soundpack_id, update_cache_on_error } => {
             // At most one decode runs at a time: a request arriving mid-load
             // only records itself. When the worker lands, the queued (newest)
@@ -478,6 +486,10 @@ fn handle_command(
             // A device switch cancels pending swaps: the old pack is
             // re-prepared for the new device instead of being replaced.
             state.loading_pack = false;
+            match result.as_ref().as_ref() {
+                Ok(_) => crate::state::health::set_pack_result(true, None),
+                Err(e) => crate::state::health::set_pack_result(false, Some(e.clone())),
+            }
             match state.pending_pack_seq {
                 Some(latest) if seq >= latest => {
                     state.pending_pack_seq = None;
@@ -515,9 +527,26 @@ fn handle_command(
             state.pending_pack_seq = None;
             state.loading_pack = false;
             state.queued_load = None;
-            let _ = state.switch_device(device_id);
+            match state.switch_device(device_id) {
+                Ok(_) => crate::state::health::set_audio_result(true, None),
+                Err(e) => crate::always_eprint!("❌ [Engine] Device switch failed: {}", e),
+            }
         }
     }
+}
+
+/// First `keyboard/<name>` with a `config.json` on disk, sorted for stability.
+/// Used once at startup when the configured pack fails to load.
+fn first_available_pack() -> Option<String> {
+    let base = crate::state::paths::soundpacks::get_builtin_soundpacks_dir().join("keyboard");
+    let entries = std::fs::read_dir(&base).ok()?;
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().join("config.json").exists())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    names.sort();
+    names.into_iter().next().map(|n| format!("keyboard/{n}"))
 }
 
 fn run_engine(
@@ -532,11 +561,38 @@ fn run_engine(
     // precompute in one pass, on this thread - nothing else is running yet).
     let config = crate::state::config_writer::current();
     if !config.keyboard_soundpack.is_empty() {
-        if let Ok(pack) =
-            super::soundpack_loader::load_pack_prepared(&config.keyboard_soundpack, state.device_rate)
+        match super::soundpack_loader::load_pack_prepared(&config.keyboard_soundpack, state.device_rate)
         {
-            state.pack = Some(pack);
+            Ok(pack) => {
+                state.pack = Some(pack);
+                crate::state::health::set_pack_result(true, None);
+            }
+            Err(e) => {
+                crate::always_eprint!("❌ [Engine] Startup pack load failed ({}): {}", config.keyboard_soundpack, e);
+                match first_available_pack() {
+                    Some(fallback) if fallback != config.keyboard_soundpack => {
+                        crate::always_print!("🔄 [Engine] Falling back to {}", fallback);
+                        match super::soundpack_loader::load_pack_prepared(&fallback, state.device_rate) {
+                            Ok(pack) => {
+                                state.pack = Some(pack);
+                                crate::state::config_writer::apply(|c| {
+                                    c.keyboard_soundpack = fallback.clone();
+                                });
+                                crate::state::health::set_pack_result(true, None);
+                            }
+                            Err(e2) => {
+                                crate::state::health::set_pack_result(false, Some(format!("{}; fallback {} also failed: {}", e, fallback, e2)));
+                            }
+                        }
+                    }
+                    _ => {
+                        crate::state::health::set_pack_result(false, Some(e));
+                    }
+                }
+            }
         }
+    } else {
+        crate::state::health::set_pack_result(false, Some("no soundpack selected".to_string()));
     }
 
     // This loop is purely event-driven: every arm below is a channel receive,

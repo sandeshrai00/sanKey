@@ -17,12 +17,18 @@ die()  { printf '\n\033[1;31msorakey-setup: %s\033[0m\n' "$*" >&2; exit 1; }
 # 1. Build daemon
 [[ -d "$DAEMON_DIR" ]] || die "daemon/ not found next to this script"
 step "Building sorakey (verified prebuilt if available, else source)"
-"$PLUGIN_DIR/scripts/build-sorakey.sh" || die "build failed"
+"$PLUGIN_DIR/scripts/build-sorakey.sh" || die "build failed — needs network for the prebuilt, or cargo/rustup for a source build"
+[[ -x "$BIN" ]] || die "build reported success but $BIN is missing/not executable"
 
 # 2. Install soundpacks
 step "Installing soundpacks"
 mkdir -p "$SHARE/soundpacks"
 cp -rn "$DAEMON_DIR/soundpacks/." "$SHARE/soundpacks/" 2>/dev/null || true
+# verify at least one usable pack (empty pack dir = silent daemon)
+if ! find "$SHARE/soundpacks/keyboard" -maxdepth 2 -name config.json -print -quit 2>/dev/null | grep -q .; then
+  die "no soundpacks with config.json under $SHARE/soundpacks/keyboard"
+fi
+echo "soundpacks: $(find "$SHARE/soundpacks/keyboard" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l) keyboard pack(s) installed"
 
 # 3. systemd service
 step "Installing the sorakey user service"
@@ -30,29 +36,34 @@ mkdir -p "$UNIT_DIR"
 cat > "$UNIT" <<'EOF'
 [Unit]
 Description=Sorakey keyboard sound daemon
+After=default.target pipewire-pulse.service
+Wants=pipewire-pulse.service
 
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/sorakey
 Restart=on-failure
 RestartSec=2
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Install]
 WantedBy=default.target
 EOF
 systemctl --user daemon-reload
-systemctl --user enable --now sorakey || die "could not start the sorakey service"
+systemctl --user enable --now sorakey || die "could not start the sorakey service (see: journalctl --user -u sorakey)"
+if ! systemctl --user is-active --quiet sorakey; then
+  die "sorakey service installed but not active (see: journalctl --user -u sorakey)"
+fi
 
-# 4. input group
-step "Checking input group (keyboard capture)"
-if id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
-  echo "input group: OK"
+# 4. keyboard capture is granted from the panel ("Enable keyboard sounds"):
+# one GUI approval, no terminal. Report only — the daemon's own status is
+# the source of truth the panel displays.
+step "Checking keyboard capture"
+if "$BIN" ctl '{"cmd":"status"}' 2>/dev/null | grep -q '"input_error":null'; then
+  echo "keyboard capture: OK"
 else
-  echo
-  echo "You are NOT in the 'input' group, so keyboard sounds need one"
-  echo "privileged step. Run this in your terminal, then log out and back in:"
-  echo
-  echo "    sudo usermod -aG input $USER"
+  echo "keyboard capture: not yet granted — open the Sorakey panel to enable it"
 fi
 
 if command -v omarchy >/dev/null 2>&1; then
