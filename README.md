@@ -29,14 +29,19 @@ omarchy plugin add https://github.com/sandeshrai00/soraKey.git --enable
    login the checksum check alone is accepted. It only builds from source
    (needs Rust, a few minutes) when no release matches the current daemon
    source — e.g. you changed `daemon/` but haven't tagged a new version yet.
-2. For **keyboard** sounds on Wayland your user needs the `input` group. The
-   installer tells you when it is missing:
+2. For **keyboard** sounds on Wayland your user needs the `input` group once.
+   The installer never runs `sudo` itself — it only checks. If blocked,
+   the panel shows **No keyboard access** with Copy/Rescan/Restart
+   instead of silent `Playing`:
 
-   ```
-   sudo usermod -aG input $USER
-   ```
+    ```
+    sudo usermod -aG input $USER
+    ```
 
-   then log out and back in.
+    then log out and back in, then Restart sorakey from the panel.
+    Verify with `groups` (must contain `input`) and
+    `journalctl --user -u sorakey | grep evdev` (must show `Found N`,
+    not `Found 0`).
 
 ## Usage
 

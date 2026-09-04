@@ -2,6 +2,118 @@ use std::thread;
 
 #[cfg(target_os = "linux")]
 use crossbeam_channel::Sender;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(target_os = "linux")]
+use std::sync::{Mutex, OnceLock};
+
+/// Snapshot of keyboard-capture health. Surfaced via `ctl status/diag`
+/// so the panel can show "No keyboard access" instead of "Playing".
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
+pub struct InputHealth {
+    pub total: usize,
+    pub keyboards: usize,
+    pub initialized: usize,
+    pub ok: bool,
+    pub hint: String,
+}
+
+#[cfg(target_os = "linux")]
+static HEALTH: OnceLock<Mutex<InputHealth>> = OnceLock::new();
+#[cfg(target_os = "linux")]
+static INITIALIZED: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(target_os = "linux")]
+fn health_slot() -> &'static Mutex<InputHealth> {
+    HEALTH.get_or_init(|| {
+        Mutex::new(InputHealth {
+            total: 0,
+            keyboards: 0,
+            initialized: 0,
+            ok: false,
+            hint: String::new(),
+        })
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn set_health(total: usize, keyboards: usize, hint: String) {
+    let initialized = INITIALIZED.load(Ordering::Relaxed);
+    let ok = initialized > 0;
+    if let Ok(mut guard) = health_slot().lock() {
+        *guard = InputHealth {
+            total,
+            keyboards,
+            initialized,
+            ok,
+            hint,
+        };
+    }
+}
+
+/// Current snapshot (cheap, no enumeration).
+#[cfg(target_os = "linux")]
+pub fn health() -> InputHealth {
+    health_slot()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or(InputHealth {
+            total: 0,
+            keyboards: 0,
+            initialized: 0,
+            ok: false,
+            hint: "health unavailable".to_string(),
+        })
+}
+
+/// On-demand re-probe (panel Rescan). Enumerates but never spawns
+/// threads: if keyboards appear after a group fix, the daemon still
+/// needs a restart (group applies at login), so hint says so.
+#[cfg(target_os = "linux")]
+pub fn probe_input() -> InputHealth {
+    let devices: Vec<_> = evdev::enumerate().collect();
+    let total = devices.len();
+    let mut keyboards = 0usize;
+    if total > 0 {
+        use evdev::KeyCode;
+        for (_, device) in &devices {
+            if device
+                .supported_keys()
+                .is_some_and(|k| k.contains(KeyCode::KEY_A))
+            {
+                keyboards += 1;
+            }
+        }
+    }
+    let initialized = INITIALIZED.load(Ordering::Relaxed);
+    let hint = if initialized > 0 {
+        String::new()
+    } else if total == 0 {
+        "cannot open /dev/input/event* — join the 'input' group, relogin, restart sorakey".to_string()
+    } else if keyboards == 0 {
+        "no keyboard among input devices — permission or hardware issue".to_string()
+    } else {
+        "keyboards visible — restart sorakey to start capture".to_string()
+    };
+    if let Ok(mut guard) = health_slot().lock() {
+        *guard = InputHealth {
+            total,
+            keyboards,
+            initialized,
+            ok: initialized > 0,
+            hint: hint.clone(),
+        };
+        return guard.clone();
+    }
+    InputHealth {
+        total,
+        keyboards,
+        initialized,
+        ok: initialized > 0,
+        hint,
+    }
+}
 
 #[cfg(target_os = "linux")]
 pub fn start_evdev_keyboard_listener(
@@ -29,6 +141,11 @@ pub fn start_evdev_keyboard_listener(
             crate::always_eprint!("   2. Add yourself to input group: sudo usermod -a -G input $USER");
             crate::always_eprint!("   3. Log out and log back in for group changes to take effect");
             crate::always_eprint!("   4. Check /dev/input permissions: ls -la /dev/input/event*");
+            set_health(
+                device_count,
+                0,
+                "cannot open /dev/input/event* — join the 'input' group, relogin, restart sorakey".to_string(),
+            );
             return;
         }
 
@@ -45,9 +162,16 @@ pub fn start_evdev_keyboard_listener(
         if keyboards.is_empty() {
             crate::always_eprint!("❌ [evdev] No keyboard devices found among the {} input devices!", device_count);
             crate::always_eprint!("💡 [evdev] This might indicate a permission issue or unusual hardware setup");
+            set_health(
+                device_count,
+                0,
+                "no keyboard among input devices — permission or hardware issue".to_string(),
+            );
             return;
         }
 
+        INITIALIZED.store(keyboards.len(), Ordering::Relaxed);
+        set_health(device_count, keyboards.len(), String::new());
         crate::always_print!("✅ [evdev] Successfully initialized {} keyboard device(s)", keyboards.len());
         crate::always_print!("🔍 [evdev] Starting blocking event threads...");
 

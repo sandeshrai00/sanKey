@@ -124,6 +124,8 @@ fn dispatch(request: &str, engine: &AudioEngineHandle) -> String {
         "audio_devices" => audio_devices(),
         "select_device" => select_device(&req, engine),
         "diag" => diag(),
+        "input" => input_health(),
+        "input_rescan" => input_rescan(),
         "export_logs" => export_logs(),
         other => fail(&format!("unknown cmd: {other}")),
     }
@@ -148,6 +150,7 @@ fn status() -> String {
         "per_pack_volume": (per * 100.0).round(),
         "keyboard_pack": c.keyboard_soundpack,
         "audio_device": c.selected_audio_device,
+        "input": input_json(),
     }))
 }
 
@@ -397,7 +400,46 @@ fn diag() -> String {
         "per_pack_volume_entries": c.per_pack_volume.len(),
         "soundpack_cache_entries": cache.soundpacks.len(),
         "keyboard_pack": c.keyboard_soundpack,
+        "input": input_json(),
     }))
+}
+
+#[cfg(target_os = "linux")]
+fn input_json() -> serde_json::Value {
+    let h = crate::libs::evdev_input_listener::health();
+    serde_json::json!({
+        "ok": h.ok,
+        "total": h.total,
+        "keyboards": h.keyboards,
+        "initialized": h.initialized,
+        "hint": h.hint,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn input_json() -> serde_json::Value {
+    serde_json::json!({ "ok": true, "total": 0, "keyboards": 0, "initialized": 0, "hint": "" })
+}
+
+fn input_health() -> String {
+    ok(serde_json::json!({ "input": input_json() }))
+}
+
+#[cfg(target_os = "linux")]
+fn input_rescan() -> String {
+    let h = crate::libs::evdev_input_listener::probe_input();
+    ok(serde_json::json!({ "input": serde_json::json!({
+        "ok": h.ok,
+        "total": h.total,
+        "keyboards": h.keyboards,
+        "initialized": h.initialized,
+        "hint": h.hint,
+    }) }))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn input_rescan() -> String {
+    input_health()
 }
 
 fn export_logs() -> String {
