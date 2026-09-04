@@ -43,6 +43,8 @@ Item {
   // Follows Panel's Rounded-corners toggle; off = theme default.
   property bool roundedCorners: false
   readonly property int friendlyRadius: root.roundedCorners ? Math.max(Style.cornerRadius, 12) : Style.cornerRadius
+  // Tall-button padding shared with Panel (see its buttonYPadding).
+  readonly property int buttonYPadding: Style.space(10)
   function prettyForValue(v) {
     for (var i = 0; i < options.length; i++) if (optionValue(options[i]) === v) return optionLabel(options[i])
     return Model.prettyPackName(String(v))
@@ -417,6 +419,7 @@ spacing: Style.spacing.xs
                 iconSpinning: root.deleting
                 foreground: "#ff6b6b"
                 radius: root.friendlyRadius
+                verticalPadding: root.buttonYPadding
                 enabled: !root.deleting
                 onClicked: root.confirmDelete(root.deleteConfirmId)
               }
@@ -424,6 +427,7 @@ spacing: Style.spacing.xs
                 text: "Cancel"
                 foreground: root.foreground
                 radius: root.friendlyRadius
+                verticalPadding: root.buttonYPadding
                 enabled: !root.deleting
                 onClicked: { root.deleteConfirmId = ""; root.cancelDelete() }
               }

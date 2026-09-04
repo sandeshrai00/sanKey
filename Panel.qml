@@ -131,6 +131,9 @@ Panel {
   // Controls that only make sense once keys can be heard. Pack problems
   // are excluded on purpose: the pack picker is the remedy there.
   readonly property bool captureReady: root.installed && root.inputError === ""
+  // Shared control heights: default button padding is 6 (too tight),
+  // Enable sits at 12 as the primary action; everything else uses 10.
+  readonly property int buttonYPadding: Style.space(10)
   // Rounded-corner floor: Style.cornerRadius mirrors Hyprland rounding,
   // which can be 0 (square desktop). Our controls stay friendly regardless.
   // Flipped from Settings ("Rounded corners"); persisted like heroMatchTheme.
@@ -925,7 +928,7 @@ SoraDropdown {
                 options: [{value:"left",label:"Left"},{value:"center",label:"Center"},{value:"right",label:"Right"}]
                 foreground: Color.foreground
                 popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
-                rowHeight: Style.spacing.controlHeight
+                rowHeight: Style.spacing.controlHeight + 8
                 opacity: root.muted ? 0.5 : 1.0
                 onChanged: function(v){ root.moveToSection(v) }
               }
@@ -999,7 +1002,7 @@ SoraDropdown {
                   options: root.audioDevices
                   foreground: Color.foreground
                   popupBorder: Border.controlColor("normal", Color.foreground, Color.accent)
-                  rowHeight: Style.spacing.controlHeight
+                  rowHeight: Style.spacing.controlHeight + 8
                   opacity: root.muted ? 0.5 : 1.0
                   onChanged: function(v){ root.setAudioDevice(v) }
                 }
@@ -1018,6 +1021,7 @@ SoraDropdown {
                 id: rescanButton
                 text: "Rescan"
                 radius: root.friendlyRadius
+                verticalPadding: root.buttonYPadding
                 foreground: root.bar.foreground
                 selected: true
                 tooltipText: "Rescan audio devices"
@@ -1038,7 +1042,7 @@ SoraDropdown {
                 foreground: root.bar.foreground
                 selected: true
                 width: (parent.width - Style.space(8)) / 2
-                verticalPadding: Style.spacing.controlPaddingY
+                verticalPadding: root.buttonYPadding
                 tooltipText: "Save a report of recent errors to a file"
                 enabled: !root.exporting && root.installed
                 onClicked: root.triggerExport()
@@ -1053,7 +1057,7 @@ SoraDropdown {
                 foreground: root.bar.foreground
                 selected: true
                 width: (parent.width - Style.space(8)) / 2
-                verticalPadding: Style.spacing.controlPaddingY
+                verticalPadding: root.buttonYPadding
                 tooltipText: "Update Sorakey plugin"
                 enabled: !root.updateBusy
                 onClicked: root.doUpdate()
@@ -1089,7 +1093,7 @@ SoraDropdown {
               selected: true
               width: parent.width - Style.space(24)
               anchors.horizontalCenter: parent.horizontalCenter
-              verticalPadding: Style.spacing.controlPaddingY
+              verticalPadding: root.buttonYPadding
               tooltipText: "Remove the plugin and stop the daemon"
               onClicked: {
                 if (!root.uninstallArmed) { root.uninstallArmed = true; disarmUninstall.restart() }
@@ -1109,8 +1113,8 @@ SoraDropdown {
           Button {
             id: installButton
             text: setupBusy ? "Installing…" : "Install Sorakey"
-            iconText: setupBusy ? "󰑐" : "󰎓"
             radius: root.friendlyRadius
+            verticalPadding: root.buttonYPadding
               iconSpinning: setupBusy
             foreground: root.bar.foreground
             anchors.left: parent.left
@@ -1201,6 +1205,7 @@ SoraDropdown {
                 width: parent.width
                 text: "Start"
                 radius: root.friendlyRadius
+                verticalPadding: root.buttonYPadding
                 foreground: root.bar.foreground
                 selected: true
                 onClicked: root.startDaemon()
@@ -1294,6 +1299,7 @@ SoraDropdown {
               visible: root.keyboardPack === "" && root.keyboardPacks.length === 0
               text: root.importing ? "Importing…" : "Import Sound"
               radius: root.friendlyRadius
+              verticalPadding: root.buttonYPadding
               foreground: root.bar.foreground
               selected: true
               enabled: !root.importing
@@ -1336,6 +1342,7 @@ SoraDropdown {
                 width: (parent.width - Style.space(8) * 2 - 1) / 2
                 text: root.importing ? "Importing…" : "Import Sound"
                 radius: root.friendlyRadius
+                verticalPadding: root.buttonYPadding
                 foreground: root.bar.foreground
                 opacity: root.importing ? 0.5 : 1.0
                 enabled: !root.importing
@@ -1353,6 +1360,7 @@ SoraDropdown {
                 width: (parent.width - Style.space(8) * 2 - 1) / 2
                 text: "Open Folder"
                 radius: root.friendlyRadius
+                verticalPadding: root.buttonYPadding
                 foreground: root.bar.foreground
                 opacity: 0.7
                 onClicked: root.openCustomFolder()
@@ -1369,6 +1377,7 @@ SoraDropdown {
                 width: (parent.width - Style.space(16)) / 3
               text: root.running ? "Stop" : "Start"
               radius: root.friendlyRadius
+              verticalPadding: root.buttonYPadding
               foreground: root.bar.foreground
               selected: true
               onClicked: root.running ? root.stopDaemon() : root.startDaemon()
@@ -1378,6 +1387,7 @@ SoraDropdown {
                 width: (parent.width - Style.space(16)) / 3
               text: "Restart"
               radius: root.friendlyRadius
+              verticalPadding: root.buttonYPadding
               foreground: root.bar.foreground
               selected: true
               tooltipText: "Restart sorakey"
@@ -1388,6 +1398,7 @@ SoraDropdown {
                 width: (parent.width - Style.space(16)) / 3
               text: "Random"
               radius: root.friendlyRadius
+              verticalPadding: root.buttonYPadding
               foreground: root.bar.foreground
               selected: true
               enabled: root.running && root.keyboardPacks.length > 1
