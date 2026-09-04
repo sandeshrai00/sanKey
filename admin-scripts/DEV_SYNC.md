@@ -38,7 +38,7 @@ Check result:
 ```bash
 journalctl --user -n 100 | grep -i sorakey
 systemctl --user is-active sorakey
-~/.local/bin/sorakey ctl '{"status":{}}'  # daemon alive
+~/.local/bin/sorakey ctl '{"cmd":"status"}'  # daemon alive
 ```
 
 ## Fresh-install simulation without push

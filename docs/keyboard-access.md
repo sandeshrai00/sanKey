@@ -33,8 +33,8 @@ the same one-time approval). No residue, no silent leftovers.
 ## FAQ
 
 **I tapped Cancel — now what?**
-Nothing breaks. The panel keeps showing the honest state with a Retry
-button. Approve whenever you're ready.
+Nothing breaks. The panel keeps showing the honest state. Tap
+**Enable keyboard sounds** again whenever you're ready.
 
 **Will I be asked again?**
 No. The approval persists across reboots and updates.
@@ -50,10 +50,11 @@ layout-independent.
 ## No approval dialog appeared?
 
 Some customized systems have no approval dialog (no polkit agent). The
-panel then offers **Fix in terminal** instead: it opens your own terminal
-(your system terminal, whatever is installed) and runs the same enable
-step with `sudo`, so you type your password into your own terminal.
-Nothing is typed anywhere else, ever.
+panel then offers **Enable keyboard permission with terminal** underneath
+the main button: it opens your own terminal (your system terminal,
+whatever is installed) and runs the same enable step with `sudo`, so you
+type your password into your own terminal. Nothing is typed anywhere
+else, ever.
 
 Manual equivalent, if you prefer doing it yourself:
 

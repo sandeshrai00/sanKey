@@ -29,20 +29,18 @@ omarchy plugin add https://github.com/sandeshrai00/soraKey.git --enable
    login the checksum check alone is accepted. It only builds from source
    (needs Rust, a few minutes) when no release matches the current daemon
    source — e.g. you changed `daemon/` but haven't tagged a new version yet.
-2. For **keyboard** sounds on Wayland your user needs the `input` group. The
-   installer tells you when it is missing:
-
-   ```
-   sudo usermod -aG input $USER
-   ```
-
-   then log out and back in.
+2. For **keyboard** sounds the panel shows a **keyboard-access step**.
+   Tap **Enable keyboard sounds** and approve the one-time system dialog
+   (password or fingerprint). This installs one rule for **keyboards only**
+   (`/etc/udev/rules.d/70-sorakey-keyboard.rules`) — no logout, no restart,
+   no terminal. Sounds start within seconds. Why this is needed and how
+   removal works: `docs/keyboard-access.md`.
 
 ## Usage
 
 - **Left-click** the keyboard icon → panel: mute switch, per-pack volume
-  slider, soundpack dropdown (search, delete), **Random**, **Import pack…**,
-  **Open folder**, a live **Test typing** box, and Start/Stop/Restart.
+  slider, soundpack dropdown (search, delete), **Random**, **Import Sound**,
+  **Open Folder**, a live **Test typing** box, and Start/Stop/Restart.
 - **Right-click** → toggle mute. **Scroll** on the icon → volume.
 - **Ctrl+Alt+M** → global mute, from anywhere (system-wide hotkey).
 - **Escape** closes the panel, **Tab** / **Shift+Tab** switches panels.
@@ -91,11 +89,6 @@ The QML updates in place. If the daemon source changed, the next shell start
 the tagged source, else a source build — and restarts the daemon with the new
 binary automatically.
 
-Updates the plugin code. The daemon binary follows automatically: on the next
-shell start (or re-enable) the plugin re-checks the installed binary against
-the daemon source and swaps in the matching release prebuilt — or rebuilds if
-the source moved past the last tag — then restarts the daemon if it changed.
-
 ## Remove
 
 ```sh
@@ -111,7 +104,7 @@ final `omarchy restart shell` drops the bar icon.
 
 ## Import a soundpack
 
-Click the keyboard icon on the bar → **Import pack…** → pick a `.zip`.
+Click the keyboard icon on the bar → **Import Sound** → pick a `.zip`.
 The pack is extracted to `~/.local/share/sorakey/soundpacks/keyboard/{id}/`
 and appears in the keyboard dropdown on the next refresh. The ZIP must
 contain a `config.json` (V2 format).
@@ -150,7 +143,7 @@ contain a `config.json` (V2 format).
 | Path | What |
 |---|---|
 | `manifest.json` | Omarchy plugin manifest (bar-widget + service) |
-| `Panel.qml` | Bar icon + popup panel (with **Import pack…** button) |
+| `Panel.qml` | Bar icon + popup panel (with **Import Sound** button) |
 | `Service.qml` | Headless service (daemon lifecycle + import flow) |
 | `Model.js` | Status/pack parsing helpers |
 | `scripts/sorakey-setup` | One-click installer |

@@ -348,6 +348,14 @@ def import_zip(zip_path):
     except Exception as e:
         return None, f"Can't read file: {_short(e, 40)}"
     with zf:
+        # zip bomb guard FIRST: total decompressed size from metadata alone,
+        # before any entry is read into RAM or probed.
+        try:
+            total = sum(zf.getinfo(n).file_size for n in zf.namelist())
+            if total > MAX_PACK_SIZE:
+                return None, f"Pack too big: {total // (1024 * 1024)}MB (max {MAX_PACK_SIZE // (1024 * 1024)}MB)."
+        except Exception:
+            pass
         config_path, config_bytes = find_config_in_zip(zf)
         if not config_path:
             return None, "No config.json — not a soundpack."
@@ -401,17 +409,9 @@ def import_zip(zip_path):
                 return None, f"Missing audio: {names}"
 
         import shutil, pathlib
-        # zip bomb guard
-        try:
-            total = sum(zf.getinfo(n).file_size for n in zf.namelist())
-            if total > MAX_PACK_SIZE:
-                return None, f"Pack too big: {total // (1024 * 1024)}MB (max {MAX_PACK_SIZE // (1024 * 1024)}MB)."
-        except Exception:
-            pass
-        tmp_dir = install_dir + ".tmp." + str(os.getpid())
-        if os.path.exists(tmp_dir):
-            shutil.rmtree(tmp_dir)
-        os.makedirs(tmp_dir, exist_ok=True)
+        # private staging dir: mkdtemp is unique and mode 0700, so a
+        # predictable path can't be pre-planted as a symlink.
+        tmp_dir = tempfile.mkdtemp(prefix=os.path.basename(install_dir) + ".tmp.", dir=os.path.dirname(install_dir))
         try:
             prefix = ""
             if strip_folder:
@@ -427,8 +427,8 @@ def import_zip(zip_path):
                 if rel.startswith("/") or ".." in pathlib.PurePosixPath(rel).parts or "\\" in rel:
                     continue
                 target = os.path.join(tmp_dir, rel)
-                # keep inside tmp_dir
-                if not os.path.abspath(target).startswith(os.path.abspath(tmp_dir)):
+                # keep inside tmp_dir (trailing sep: /tmp/pack must not match /tmp/pack-evil)
+                if not os.path.abspath(target).startswith(os.path.abspath(tmp_dir) + os.sep):
                     continue
                 os.makedirs(os.path.dirname(target), exist_ok=True)
                 import shutil as _sh

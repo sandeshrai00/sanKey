@@ -28,10 +28,12 @@ if command -v rsync >/dev/null 2>&1; then
   rsync -a --delete --delete-excluded \
     --exclude=".git" \
     --exclude="target" \
-    --exclude="plan.md" \
-    --exclude="relse.md" \
-    --exclude="note.md" \
+    --exclude="docs/dev" \
     --exclude="CLEANUP.md" \
+    --exclude="admin-scripts" \
+    --exclude=".github" \
+    --exclude="__pycache__/" \
+    --exclude="*.pyc" \
     "$DEV_DIR"/ "$INSTALLED"/
   # keep git worktree
   if [[ -d "$DEV_DIR/.git" ]]; then
@@ -39,6 +41,10 @@ if command -v rsync >/dev/null 2>&1; then
   fi
 else
   cp -a "$DEV_DIR"/. "$INSTALLED"/
+  # same junk list as the rsync excludes above (cp has no --exclude)
+  rm -rf "$INSTALLED/docs/dev" "$INSTALLED/CLEANUP.md" "$INSTALLED/admin-scripts" "$INSTALLED/.github"
+  find "$INSTALLED" -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+  find "$INSTALLED" -name "*.pyc" -delete 2>/dev/null || true
 fi
 
 echo "synced $DEV_DIR -> $INSTALLED"

@@ -19,16 +19,16 @@ if [[ -f "$UDEV_RULE" ]]; then
   fi
 fi
 if [[ $PURGE -eq 1 ]]; then
-  rm -rf ~/.local/share/sorakey ~/.local/share/sorakey.bak.* ~/.local/bin/sorakey ~/.config/systemd/user/sorakey.service ~/.cache/sorakey ~/.local/lib/sorakey ~/.config/sorakey
-  rm -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/sorakey.sock" "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/sorakey.lock" ~/.sorakey.sock ~/.sorakey.lock
+  rm -rf "$HOME/.local/share/sorakey" "$HOME"/.local/share/sorakey.bak.* "$HOME/.local/bin/sorakey" "$HOME/.config/systemd/user/sorakey.service" "$HOME/.cache/sorakey" "$HOME/.local/lib/sorakey" "$HOME/.config/sorakey"
+  rm -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/sorakey.sock" "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/sorakey.lock" "$HOME/.sorakey.sock" "$HOME/.sorakey.lock"
   echo "purged data + binary + prefs + runtime files"
 else
   # keep packs as .bak
-  if [[ -d ~/.local/share/sorakey ]]; then
-    mv ~/.local/share/sorakey ~/.local/share/sorakey.bak.$(date +%s) 2>/dev/null || true
+  if [[ -d "$HOME/.local/share/sorakey" ]]; then
+    mv "$HOME/.local/share/sorakey" "$HOME/.local/share/sorakey.bak.$(date +%s)" 2>/dev/null || true
     echo "moved packs to .bak (use --purge to delete)"
   fi
-  rm -f ~/.local/bin/sorakey ~/.config/systemd/user/sorakey.service
+  rm -f "$HOME/.local/bin/sorakey" "$HOME/.config/systemd/user/sorakey.service"
   systemctl --user daemon-reload 2>/dev/null || true
 fi
 # remove plugin with: omarchy plugin remove io.github.sandeshrai00.sorakey --yes

@@ -51,13 +51,19 @@ run_privileged() {
   # $1 = shell snippet needing root. pkexec pops the shell's GUI dialog;
   # --use-sudo takes sudo (terminal provides the password prompt).
   # Prints the helper's stderr to $PK_ERR_FILE when set, for exit mapping.
-  local snippet="$1" out=""
+  # Injection-proof: SRC/DST travel as positional parameters ($1/$2), never
+  # embedded in shell text — quotes or spaces in the path can't escape.
+  local root_cmd='install -m 644 "$1" "$2" && udevadm control --reload-rules && udevadm trigger --subsystem-match=input --action=change'
+  local out=""
   if [[ "$USE_SUDO" -eq 0 ]] && command -v pkexec >/dev/null 2>&1; then
-    out=$(pkexec bash -c "$snippet" 2>&1) && return 0
+    out=$(pkexec bash -c "$root_cmd" _ "$SRC" "$DST" 2>&1) && return 0
     printf '%s' "$out" > "${PK_ERR_FILE:-/dev/null}" 2>/dev/null || true
     note "(not approved)"
   elif command -v sudo >/dev/null 2>&1; then
-    if sudo bash -c "$snippet"; then return 0; fi
+    out=$(sudo bash -c "$root_cmd" _ "$SRC" "$DST" 2>&1) && return 0
+    printf '%s' "$out" > "${PK_ERR_FILE:-/dev/null}" 2>/dev/null || true
+    # terminal mode: the user is watching, so show the failure live too
+    if [[ "$USE_SUDO" -eq 1 && -n "$out" ]]; then printf '%s\n' "$out" >&2; fi
   fi
   return 1
 }
@@ -76,7 +82,7 @@ map_priv_error() {
 
 step "Keyboard sounds"
 if user_can_read_keyboard; then
-  note "Ready — type to hear it."
+  note "Ready. Type to hear sounds."
   if [[ -f "$DST" ]] && ! cmp -s "$SRC" "$DST"; then
     note "Installed permission is outdated — it refreshes on next approval."
   fi
@@ -86,7 +92,7 @@ note "Keyboard permission needed for sounds."
 
 step "Approving (one time)"
 PK_ERR_FILE=$(mktemp)
-if ! run_privileged "install -m 644 '$SRC' '$DST' && udevadm control --reload-rules && udevadm trigger --subsystem-match=input --action=change"; then
+if ! run_privileged; then
   err=$(cat "$PK_ERR_FILE" 2>/dev/null)
   rm -f "$PK_ERR_FILE"
   code=2
@@ -110,7 +116,7 @@ rm -f "$PK_ERR_FILE"
 step "Checking"
 for _ in $(seq 1 10); do
   if user_can_read_keyboard; then
-    note "Done — type to hear it."
+    note "Done. Type to hear sounds."
     exit 0
   fi
   sleep 1

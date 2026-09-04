@@ -6,8 +6,10 @@ function prettyPackName(id) {
   var slash = s.lastIndexOf("/")
   if (slash >= 0) s = s.slice(slash + 1)
   s = s.replace(/[-_]+/g, " ")
+  // known glued prefixes read wrong capitalized ("Cherrymx") — split them
+  s = s.replace(/^cherrymx\b/i, "cherry mx").replace(/^gateron\b/i, "gateron ")
   s = s.replace(/\b\w/g, function (c) { return c.toUpperCase() })
-  return s
+  return s.replace(/\s+/g, " ").trim()
 }
 
 // ids -> [{value, label}] for Dropdown

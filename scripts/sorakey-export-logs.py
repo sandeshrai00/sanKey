@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -10,8 +11,15 @@ try:
     import gi
     gi.require_version("Gtk", "4.0")
     from gi.repository import Gtk, Gio, GLib
-except ImportError:
+except Exception:
     Gtk = None
+
+
+def safe_filename(name):
+    """Daemon-controlled name -> basename with no separators or dot-dots."""
+    name = os.path.basename(str(name or "sorakey-log.txt"))
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._") or "sorakey-log.txt"
+    return name
 
 
 def get_log_contents():
@@ -21,9 +29,11 @@ def get_log_contents():
             [bin_path, "ctl", '{"cmd":"export_logs"}'],
             capture_output=True, text=True, timeout=5
         )
+        if result.returncode != 0:
+            return None, (result.stderr.strip().split("\n")[-1] if result.stderr.strip() else "daemon error")
         data = json.loads(result.stdout.strip().split("\n")[-1])
         if data.get("ok"):
-            return data.get("contents", ""), data.get("name", "sorakey-log.txt")
+            return data.get("contents", ""), safe_filename(data.get("name", "sorakey-log.txt"))
         return None, data.get("error", "failed")
     except Exception as e:
         return None, str(e)
@@ -78,8 +88,11 @@ def gui_main():
             fail_and_quit("No file selected")
             return
         path = file.get_path()
+        if not path:
+            fail_and_quit("No file selected")
+            return
         try:
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(contents)
         except Exception as e:
             fail_and_quit(f"Could not write {path}: {e}")
@@ -102,7 +115,7 @@ def cli_main():
     downloads = os.path.expanduser("~/Downloads")
     os.makedirs(downloads, exist_ok=True)
     path = os.path.join(downloads, name_or_err)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(contents)
     print(f"OK:{path}", flush=True)
     sys.exit(0)

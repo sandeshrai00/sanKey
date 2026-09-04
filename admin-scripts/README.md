@@ -8,15 +8,14 @@ Sync dev repo → installed plugin, validate, restart shell. See `DEV_SYNC.md`.
 ./admin-scripts/dev-sync.sh
 ```
 
-## V1 → V2 Converter
+## V1 → V2 conversion
 
-Converts V1 soundpack config files to V2 format.
+V1 packs are converted automatically on import (`scripts/sorakey-import-pack.py`,
+shared table in `scripts/_v1_shared.py`, mirrored by the daemon's
+`daemon/src/utils/config_converter.rs`). There is no standalone converter
+script — the section below is obsolete and kept only for reference.
 
-### Usage
-
-```bash
-python3 v1-to-v2-converter.py /path/to/pack/config.json
-```
+### (Obsolete) standalone converter notes
 
 The script reads the V1 `config.json` and writes `configv2.json` to the **same directory**.
 Audio files are expected in the same directory as `config.json`.

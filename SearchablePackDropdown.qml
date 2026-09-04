@@ -415,7 +415,7 @@ spacing: Style.spacing.xs
               spacing: Style.spacing.sm
               Button {
                 text: root.deleting ? "Deleting…" : "Delete"
-                iconText: root.deleting ? "󰑐" : ""
+                iconText: ""
                 iconSpinning: root.deleting
                 foreground: "#ff6b6b"
                 radius: root.friendlyRadius

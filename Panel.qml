@@ -242,20 +242,22 @@ Panel {
 
   function startDaemon() {
     if (stopFlagProc.running) return
-    stopFlagProc.command = ["/usr/bin/bash", "-c", "rm -f " + root.home + "/.local/share/sorakey/stopped"]
+    // argv, no shell: spaces or quotes in $HOME can't break this
+    stopFlagProc.command = ["rm", "-f", root.home + "/.local/share/sorakey/stopped"]
     stopFlagProc.running = true
     root.runService(["start", "sorakey"])
   }
   function stopDaemon() {
-    // sticky stop — Service must not auto-restart what the user stopped
+    // sticky stop — Service must not auto-restart what the user stopped.
+    // The path travels as $1, never inside shell text.
     if (stopFlagProc.running) return
-    stopFlagProc.command = ["/usr/bin/bash", "-c", "mkdir -p " + root.home + "/.local/share/sorakey && printf stopped > " + root.home + "/.local/share/sorakey/stopped"]
+    stopFlagProc.command = ["/usr/bin/bash", "-c", 'mkdir -p "$1" && printf stopped > "$1/stopped"', "_", root.home + "/.local/share/sorakey"]
     stopFlagProc.running = true
     root.runService(["stop", "sorakey"])
   }
   function restartDaemon() {
     if (stopFlagProc.running) return
-    stopFlagProc.command = ["/usr/bin/bash", "-c", "rm -f " + root.home + "/.local/share/sorakey/stopped"]
+    stopFlagProc.command = ["rm", "-f", root.home + "/.local/share/sorakey/stopped"]
     stopFlagProc.running = true
     root.runService(["restart", "sorakey"])
   }
@@ -631,30 +633,25 @@ Panel {
     command: [root.sorakeyBin, "ctl", "{}"]
     onExited: function() {
       root.refreshStatus()
+      // parse the response once: substring matching ("ok":false / "deleted")
+      // misses spaced JSON and misfires on error text containing the word
+      var resp = null
+      try { resp = JSON.parse(String(stdout.text || "").trim()) } catch(e) {}
       // show ctl failures the daemon reports
-      if (stdout.text.indexOf("\"ok\":false") !== -1) {
-        try {
-          var e = JSON.parse(String(stdout.text || "").trim())
-          if (e && e.ok === false) {
-            root.errorToast = (root.pendingCtlCmd !== "" ? root.pendingCtlCmd + ": " : "") + String(e.error || "command failed")
-            clearErrorToast.restart()
-          }
-        } catch(err) {}
+      if (resp && resp.ok === false) {
+        root.errorToast = (root.pendingCtlCmd !== "" ? root.pendingCtlCmd + ": " : "") + String(resp.error || "command failed")
+        clearErrorToast.restart()
       }
       root.pendingCtlCmd = ""
-      if (root.deleting || (root.deleteConfirmId !== "" && stdout.text.indexOf("deleted") !== -1)) {
-        try {
-          var o = JSON.parse(String(stdout.text || "").trim())
-          if (o && o.deleted) {
-            var delPretty = Model.prettyPackName(String(o.deleted))
-            var fb = o.fallback ? String(o.fallback) : ""
-            if (fb) root.errorToast = "Deleted \"" + delPretty + "\" → \"" + Model.prettyPackName(fb) + "\""
-            else root.errorToast = "Deleted \"" + delPretty + "\""
-            clearErrorToast.restart()
-          }
-        } catch(e) {}
-        root.refreshPacks()
+      if (resp && resp.deleted) {
+        var delPretty = Model.prettyPackName(String(resp.deleted))
+        var fb = resp.fallback ? String(resp.fallback) : ""
+        if (fb) root.errorToast = "Deleted \"" + delPretty + "\" → \"" + Model.prettyPackName(fb) + "\""
+        else root.errorToast = "Deleted \"" + delPretty + "\""
+        clearErrorToast.restart()
       }
+      // packsProc clears the deleting flags when the rescan lands
+      if (root.deleting) root.refreshPacks()
     }
     stdout: StdioCollector { waitForEnd: true }
   }
@@ -906,7 +903,7 @@ Panel {
 
           ToggleSwitch {
             id: muteSwitch
-            checked: root.running && !root.muted
+            checked: root.muted
             enabled: root.running && root.inputError === ""
             rounded: root.roundedCorners
             foreground: root.bar.foreground
@@ -946,7 +943,7 @@ Panel {
             spacing: Style.space(8)
             Button {
               text: ""
-              iconText: "󰅖"
+              iconText: "←"
               radius: root.friendlyRadius
               foreground: root.bar.foreground
               tooltipText: "Back"
@@ -1128,7 +1125,7 @@ SoraDropdown {
               visible: root.lastResult !== ""
               width: parent.width
               horizontalAlignment: Text.AlignHCenter
-              text: "> " + root.lastResult
+              text: root.lastResult
               color: root.bar.foreground
               opacity: 0.6
               font.family: root.bar.fontFamily
@@ -1197,7 +1194,7 @@ SoraDropdown {
               spacing: Style.space(8)
               Text {
                 width: parent.width
-                text: "Sorakey Need Keyboard Permission."
+                text: "Sorakey - Keyboard access needed"
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.subtitle
@@ -1206,7 +1203,7 @@ SoraDropdown {
               }
               Text {
                 width: parent.width
-                text: "Sorakey needs keyboard access to play sounds as you type. Just Basic Permission."
+                text: "Sorakey listens for key presses to play sounds. One approval grants access to keyboards only."
                 color: root.bar.foreground
                 opacity: 0.8
                 font.family: root.bar.fontFamily
@@ -1227,7 +1224,7 @@ SoraDropdown {
               Button {
                 visible: root.inputError !== ""
                 width: parent.width
-                text: "Enable Keyboard Sound with terminal"
+                text: "Enable keyboard permission with terminal"
                 radius: root.friendlyRadius
                 foreground: root.bar.foreground
                 selected: true
