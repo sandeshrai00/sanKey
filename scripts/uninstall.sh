@@ -19,8 +19,9 @@ if [[ -f "$UDEV_RULE" ]]; then
   fi
 fi
 if [[ $PURGE -eq 1 ]]; then
-  rm -rf ~/.local/share/sorakey ~/.local/bin/sorakey ~/.config/systemd/user/sorakey.service ~/.cache/sorakey ~/.local/lib/sorakey
-  echo "purged data + binary"
+  rm -rf ~/.local/share/sorakey ~/.local/share/sorakey.bak.* ~/.local/bin/sorakey ~/.config/systemd/user/sorakey.service ~/.cache/sorakey ~/.local/lib/sorakey ~/.config/sorakey
+  rm -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/sorakey.sock" "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/sorakey.lock" ~/.sorakey.sock ~/.sorakey.lock
+  echo "purged data + binary + prefs + runtime files"
 else
   # keep packs as .bak
   if [[ -d ~/.local/share/sorakey ]]; then

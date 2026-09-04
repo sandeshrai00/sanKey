@@ -13,9 +13,17 @@ find ~/.config ~/.local ~/.cache -name "*sorakey*" -o -name "*Sorakey*" -o -name
 | `~/.config/omarchy/plugins/*sorakey*` | Plugin files |
 | `~/.local/bin/sorakey` | Binary |
 | `~/.local/share/sorakey/` | Soundpacks |
+| `~/.local/share/sorakey.bak.*` | Old backups (`--purge` removes) |
 | `~/.local/lib/sorakey/` | Build cache |
 | `~/.cache/sorakey/` | Temp cache |
+| `~/.config/sorakey/` | Panel prefs (logo, corners) |
 | `~/.config/systemd/user/sorakey.service` | Systemd service |
+| `/etc/udev/rules.d/70-sorakey-keyboard.rules` | Keyboard-access rule (removed with one approval) |
+| `$XDG_RUNTIME_DIR/sorakey.{sock,lock}` | Daemon runtime files |
+
+The panel's Uninstall button runs `uninstall.sh --purge` (full wipe above)
+plus `omarchy plugin remove`. Exported log files (your chosen location)
+are yours and are never deleted.
 
 ## Services to Check
 

@@ -158,6 +158,7 @@ Panel {
   property bool setupBusy: false
   property bool settingsOpen: false
   property bool uninstallArmed: false
+  property bool uninstallBusy: false
   Timer { id: disarmUninstall; interval: 5000; onTriggered: root.uninstallArmed = false }
   onSettingsOpenChanged: {
     if (!settingsOpen) root.uninstallArmed = false
@@ -394,11 +395,26 @@ Panel {
   }
 
   function remove() {
-    // remove via CLI + systemd
-    Quickshell.execDetached(["systemctl", "--user", "disable", "--now", "sorakey"])
-    Quickshell.execDetached(["omarchy", "plugin", "remove", "io.github.sandeshrai00.sorakey", "--yes"])
-    root.installed = false
-    root.running = false
+    // full wipe: the script removes binary, unit, packs, config, caches,
+    // runtime files and the keyboard-access rule, then we unregister.
+    if (root.uninstallBusy || uninstallProc.running) return
+    root.uninstallBusy = true
+    uninstallProc.command = ["/usr/bin/bash", root.pluginDir + "/scripts/uninstall.sh", "--purge"]
+    uninstallProc.running = true
+  }
+
+  function finishRemove(ok, err) {
+    root.uninstallBusy = false
+    if (ok) {
+      root.uninstallArmed = false
+      Quickshell.execDetached(["omarchy", "plugin", "remove", "io.github.sandeshrai00.sorakey", "--yes"])
+      root.installed = false
+      root.running = false
+    } else {
+      root.uninstallArmed = false
+      root.errorToast = String(err || "Uninstall failed.").slice(0, 500)
+      clearErrorToast.restart()
+    }
   }
 
   function applyStatus(text) {
@@ -640,6 +656,23 @@ Panel {
   Process {
     id: stopFlagProc
     command: ["true"]
+  }
+
+  // runs uninstall.sh --purge in background (pkexec inside pops the GUI
+  // approval for the rule removal, like the enable flow)
+  Process {
+    id: uninstallProc
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      var out = String(stdout.text || "").trim()
+      var err = String(stderr.text || "").trim()
+      if (exitCode === 0) root.finishRemove(true, "")
+      else {
+        var msg = err !== "" ? err.split("\n").pop() : (out !== "" ? out.split("\n").pop() : "Uninstall failed.")
+        root.finishRemove(false, msg)
+      }
+    }
   }
 
   // runs sorakey-setup in background
@@ -1087,7 +1120,7 @@ SoraDropdown {
             }
             PanelSectionHeader { text: "DANGER"; foreground: root.bar.foreground }
             Button {
-              text: root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey"
+              text: root.uninstallBusy ? "Uninstalling…" : (root.uninstallArmed ? "Tap again to confirm" : "Uninstall Sorakey")
               iconText: "󰛌"
               radius: root.friendlyRadius
               selected: !root.uninstallArmed
