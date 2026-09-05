@@ -105,3 +105,59 @@ Only rename if you want deeper cleanup. Renaming needs `mod.rs` updates.
 ### Next step for you
 
 Fill `New name` above, save, and tell me `done`. I will then `git mv` + patch usages + run `omarchy plugin validate` + `qmllint`.
+
+## Quick fill — only renameable files (fill after `=`)
+
+Panel.qml = SoraWidget
+Service.qml = SoraService
+Model.js = SoraKeyStore
+SoraDropdown.qml = same
+SoraTextField.qml = same
+SearchablePackDropdown.qml = SoraPackPicker
+CLEANUP.md = same
+scripts/sorakey-setup = sora-install
+scripts/build-sorakey.sh = sora-build
+scripts/sorakey-enable-capture.sh = sora-keyboard-access
+scripts/sorakey-detached-run =  sorakey-detached
+scripts/sorakey-import-pack.py = sora-pack-import
+scripts/sorakey-export-logs.py = sora-export-logs
+scripts/_v1_shared.py = same
+scripts/uninstall.sh = sora-uninstall
+assets/icon-bar-dark.svg = same
+assets/icon-bar-light.svg = same
+assets/icon-hero-dark.svg = same
+assets/icon-hero-light.svg = same
+udev/70-sorakey-keyboard.rules = sora-keyboard-rules
+docs/keyboard-access.md = same
+docs/dev/note.md = same
+docs/dev/plan.md = same
+docs/dev/relse.md = same 
+admin-scripts/dev-sync.sh = same
+admin-scripts/DEV_SYNC.md = same
+admin-scripts/IOHOOK_KEYCODES.md = same
+admin-scripts/README.md = same
+daemon/tests/version_sync.rs = daemon/tests/version_check.rs
+daemon/src/control.rs = daemon/src/commands.rs
+daemon/src/libs/bootstrap.rs = daemon/src/libs/startup.rs
+daemon/src/libs/cli_args.rs = daemon/src/libs/names.rs
+daemon/src/libs/device_manager.rs = daemon/src/libs/speakers.rs
+daemon/src/libs/evdev_input_listener.rs = daemon/src/libs/keyboard.rs
+daemon/src/libs/audio/engine.rs = daemon/src/libs/player.rs
+daemon/src/libs/audio/resampler.rs = daemon/src/libs/sound_quality.rs
+daemon/src/libs/audio/soundpack_loader.rs = daemon/src/libs/pack_loader.rs
+daemon/src/state/config.rs = daemon/src/state/settings.rs
+daemon/src/state/config_writer.rs = daemon/src/state/settings_saver.rs
+daemon/src/state/health.rs = daemon/src/state/status.rs
+daemon/src/state/paths.rs = daemon/src/state/folders.rs
+daemon/src/state/soundpack.rs = daemon/src/state/packs.rs
+daemon/src/utils/auto_startup.rs = daemon/src/utils/auto_start.rs
+daemon/src/utils/config_converter.rs = daemon/src/utils/old_pack_fixer.rs
+daemon/src/utils/constants.rs = daemon/src/utils/version.rs
+daemon/src/utils/data.rs = daemon/src/utils/json_files.rs
+daemon/src/utils/keymap.rs = daemon/src/utils/keys.rs
+daemon/src/utils/log_buffer.rs = daemon/src/utils/logs.rs
+daemon/src/utils/logger.rs = daemon/src/utils/printer.rs
+daemon/src/utils/path.rs = daemon/src/utils/files.rs
+daemon/src/utils/soundpack.rs = daemon/src/utils/pack_info.rs
+daemon/src/utils/soundpack_validator.rs = daemon/src/utils/pack_checker.rs
+daemon/src/utils/symphonia.rs = daemon/src/utils/sound_reader.rs
