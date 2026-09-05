@@ -84,6 +84,13 @@ Panel {
   // daemon health (explains "running but silent")
   property int inputKeyboards: 0
   property string inputError: ""
+  // first-reading tri-state: until `sorakey ctl status` answers once (or
+  // conclusively fails), we know nothing — neither the main controls nor
+  // the permission block may render, or the panel flashes main-then-ask
+  // for ~1-2s on fresh install. statusMissed bounds "Checking…" so a
+  // permanently dead daemon still resolves to a Start button.
+  property bool statusKnown: false
+  property int statusMissed: 0
   property var packLoaded: null
   property string packError: ""
   property var lastKeyAgeS: null
@@ -111,6 +118,7 @@ Panel {
   readonly property string statusText: {
     if (setupBusy) return "Installing…"
     if (!root.installed) return "Not installed"
+    if (!root.statusKnown) return "Checking…"
     if (!root.running) return "Stopped"
     if (root.inputError !== "") return "No keyboard access"
     if (root.packLoaded === false) return "Pack failed"
@@ -132,7 +140,7 @@ Panel {
 
   // Controls that only make sense once keys can be heard. Pack problems
   // are excluded on purpose: the pack picker is the remedy there.
-  readonly property bool captureReady: root.installed && root.inputError === ""
+  readonly property bool captureReady: root.installed && root.statusKnown && root.inputError === ""
   // Shared control heights: default button padding is 6 (too tight),
   // Enable sits at 12 as the primary action; everything else uses 10.
   readonly property int buttonYPadding: Style.space(10)
@@ -229,6 +237,9 @@ Panel {
 
   function runService(args) {
     if (svcProc.running) return
+    // daemon state is about to change under us: the last reading is stale
+    root.statusKnown = false
+    root.statusMissed = 0
     svcProc.command = ["systemctl", "--user"].concat(args)
     svcProc.running = true
   }
@@ -299,6 +310,8 @@ Panel {
   function install() {
     if (setupBusy) return
     setupBusy = true
+    root.statusKnown = false
+    root.statusMissed = 0
     setupProc.command = ["/usr/bin/bash", root.setupPath]
     setupProc.running = true
   }
@@ -473,6 +486,9 @@ Panel {
     }
     if (o.ok === true) {
       var daemonJustUp = !root.running
+      // a parseable answer is knowledge, even before inputError is read
+      if (!root.statusKnown) root.statusKnown = true
+      if (root.statusMissed !== 0) root.statusMissed = 0
       // guarded writes: identical poll answers must not fan out bindings at 1Hz
       if (root.running !== true) root.running = true
       if (root.installed !== true) root.installed = true
@@ -512,6 +528,9 @@ Panel {
       if (daemonJustUp) root.refreshAudioDevices()
     } else {
       root.running = false
+      // daemon answered but not ok: that is still knowledge
+      if (!root.statusKnown) root.statusKnown = true
+      if (root.statusMissed !== 0) root.statusMissed = 0
     }
   }
 
@@ -586,7 +605,20 @@ Panel {
       } else {
         // Either not installed or stopped.
         var o = Model.parseStatus(stdout.text)
-        if (o && o.ok === false) root.running = false
+        if (o && o.ok === false) {
+          root.running = false
+          if (!root.statusKnown) root.statusKnown = true
+          if (root.statusMissed !== 0) root.statusMissed = 0
+        } else {
+          // unreadable answer (daemon mid-restart, socket gone): not
+          // knowledge yet — but don't wait forever, bound "Checking…"
+          // so a dead daemon still resolves to a Start button.
+          if (root.statusMissed < 3) root.statusMissed += 1
+          if (root.statusMissed >= 3) {
+            root.running = false
+            if (!root.statusKnown) root.statusKnown = true
+          }
+        }
       }
     }
     stdout: StdioCollector { waitForEnd: true }
@@ -730,6 +762,8 @@ Panel {
       if (exitCode === 0) {
         root.installed = true
         root.errorToast = ""
+        root.statusKnown = false
+        root.statusMissed = 0
         root.refreshStatus()
         root.refreshPacks()
         root.refreshAudioDevices()
@@ -1211,6 +1245,25 @@ SoraDropdown {
             enabled: !setupBusy
             onClicked: root.install()
           
+          }
+        }
+
+        // first-reading placeholder: until `sorakey ctl status` answers we
+        // know nothing — show this instead of guessing main vs permission,
+        // so fresh installs never flash the main panel before the ask.
+        Item {
+          visible: root.installed && !root.statusKnown && !root.settingsOpen
+          width: parent.width
+          implicitHeight: checkingText.implicitHeight
+          Text {
+            id: checkingText
+            width: parent.width
+            horizontalAlignment: Text.AlignHCenter
+            text: "Checking status…"
+            color: root.bar.foreground
+            opacity: 0.7
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
           }
         }
 
