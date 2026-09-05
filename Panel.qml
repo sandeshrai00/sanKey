@@ -103,6 +103,7 @@ Panel {
   property string audioError: ""
   // one-tap keyboard-access enable flow (panel button → script → GUI approval)
   property bool captureBusy: false
+  property bool terminalBusy: false
   property string captureStatus: ""
   property string deleteConfirmId: ""
   property bool deleting: false
@@ -170,6 +171,17 @@ Panel {
     interval: 8000
     onTriggered: if (root.captureBusy) root.capturePhase = "Verifying access…"
   }
+  Timer {
+    id: terminalTimeout
+    interval: 30000
+    onTriggered: {
+      if (root.terminalBusy) {
+        root.terminalBusy = false
+        root.capturePhase = ""
+        capturePhaseTimer.stop()
+      }
+    }
+  }
   // post-success settling: the script exits 0 as soon as the rule works,
   // but the daemon only re-scans keyboards every ~5s, so status still
   // reports blocked for a few seconds after. Latch a finishing state
@@ -186,11 +198,19 @@ Panel {
       root.captureSettling = false
       captureSettleTimer.stop()
     }
+    if (root.inputError === "" && root.terminalBusy) {
+      root.terminalBusy = false
+      terminalTimeout.stop()
+      capturePhaseTimer.stop()
+      root.capturePhase = "Finishing up…"
+      root.captureSettling = true
+      captureSettleTimer.restart()
+    }
   }
   readonly property string whyLearnMoreUrl: "https://github.com/sandeshrai00/soraKey/blob/main/docs/keyboard-access.md"
 
   // one input while busy OR settling: buttons, spinner, phase text share it
-  readonly property bool captureWorking: root.captureBusy || root.captureSettling
+  readonly property bool captureWorking: root.captureBusy || root.captureSettling || root.terminalBusy
   function enableCapture() {
     if (root.captureWorking || captureProc.running) return
     root.captureBusy = true
@@ -208,8 +228,13 @@ Panel {
   // quotes (still inside the -c string) — quoting them together would make
   // bash look for a file literally named "... --use-sudo".
   function fixInTerminal() {
+    if (root.captureWorking || root.terminalBusy) return
     var term = Quickshell.env("TERMINAL") || "xdg-terminal-exec"
     var script = root.pluginDir + "/scripts/sorakey-enable-capture.sh"
+    root.terminalBusy = true
+    root.capturePhase = "Check your terminal…"
+    capturePhaseTimer.restart()
+    terminalTimeout.restart()
     Quickshell.execDetached([term, "--", "/usr/bin/bash", "-c",
       "\"" + script + "\" --use-sudo; echo; read -n1 -rp 'Press any key to close…'"])
   }
@@ -1368,13 +1393,14 @@ SoraDropdown {
               Button {
                 visible: root.inputError !== ""
                 width: parent.width
-                text: "Enable keyboard permission with terminal"
+                text: root.terminalBusy ? "Opening terminal…" : "Enable keyboard permission with terminal"
                 radius: root.friendlyRadius
                 foreground: root.bar.foreground
                 selected: true
                 verticalPadding: root.buttonYPadding
                 tooltipText: "Opens your terminal — approve there with sudo"
                 enabled: !root.captureWorking
+                iconSpinning: root.terminalBusy
                 onClicked: root.fixInTerminal()
               }
               Text {
