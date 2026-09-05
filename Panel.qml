@@ -1290,7 +1290,6 @@ SoraDropdown {
             id: checkingRow
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.space(8)
-            anchors.verticalCenter: parent.verticalCenter
             Text {
               id: checkingSpinner
               text: "󰑐"
