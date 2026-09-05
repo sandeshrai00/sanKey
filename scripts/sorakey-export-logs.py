@@ -7,10 +7,16 @@ import re
 import subprocess
 import sys
 
+# Same self-reload root fix as the importer: a launched script's own
+# __pycache__ entry would be written into the watched plugin dir on first
+# tap (shell reloads → bar blink). Canonical flag — see
+# sorakey-import-pack.py for why the no-underscore alias is a no-op.
+sys.dont_write_bytecode = True
+
 try:
     import gi
     gi.require_version("Gtk", "4.0")
-    from gi.repository import Gtk, Gio, GLib
+    from gi.repository import Gtk, GLib
 except Exception:
     Gtk = None
 
@@ -79,12 +85,17 @@ def gui_main():
         emit(f"ERROR:{name_or_err}")
         sys.exit(1)
 
-    # Portal-native FileDialog, parent-less (as originally): the "auto-close"
-    # deaths were proven to be reload-kills, fixed by the detached launch.
-    # A 1x1 parent window was tried and removed: Hyprland tiles it into a
-    # big blank window.
-    dialog = Gtk.FileDialog(title="Save Error Logs")
-    dialog.set_initial_name(name_or_err)
+    # Same in-process FileChooserDialog delivery layer as the importer:
+    # the portal dismisses parent-less FileDialogs with zero user action
+    # (journal: "Unhandled parent window type"). No portal, nothing to
+    # dismiss it spuriously.
+    dialog = Gtk.FileChooserDialog(title="Save Error Logs",
+                                   action=Gtk.FileChooserAction.SAVE)
+    dialog.set_modal(True)
+    dialog.set_default_size(800, 600)
+    dialog.set_current_name(name_or_err)
+    dialog.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                       "_Save", Gtk.ResponseType.ACCEPT)
 
     filter_txt = Gtk.FileFilter()
     filter_txt.set_name("Text Files")
@@ -92,36 +103,29 @@ def gui_main():
     filter_all = Gtk.FileFilter()
     filter_all.set_name("All Files")
     filter_all.add_pattern("*")
-    filters = Gio.ListStore.new(Gtk.FileFilter)
-    filters.append(filter_txt)
-    filters.append(filter_all)
-    dialog.set_filters(filters)
-    dialog.set_default_filter(filter_txt)
+    dialog.add_filter(filter_txt)
+    dialog.add_filter(filter_all)
+    dialog.set_filter(filter_txt)
 
     loop = GLib.MainLoop()
 
     def fail_and_quit(msg):
         emit(f"ERROR:{msg}")
+        dialog.destroy()
         loop.quit()
 
     def succeed_and_quit(path):
         emit(f"OK:{path}")
+        dialog.destroy()
         loop.quit()
 
-    def on_done(source, result, user_data=None):
-        try:
-            file = dialog.save_finish(result)
-        except Exception as e:
-            err = str(e)
-            if "Dismissed" in err or "cancel" in err.lower():
-                fail_and_quit("Cancelled")
-            else:
-                fail_and_quit(f"Dialog error: {e}")
+    def on_response(dlg, response):
+        if response != Gtk.ResponseType.ACCEPT:
+            print(f"[response] {response}", file=sys.stderr, flush=True)
+            fail_and_quit("Cancelled")
             return
-        if file is None:
-            fail_and_quit("No file selected")
-            return
-        path = file.get_path()
+        f = dlg.get_file()
+        path = f.get_path() if f is not None else None
         if not path:
             fail_and_quit("No file selected")
             return
@@ -134,7 +138,8 @@ def gui_main():
         succeed_and_quit(path)
 
     def launch_dialog():
-        dialog.save(None, None, on_done, None)
+        dialog.connect("response", on_response)
+        dialog.present()
 
     GLib.idle_add(launch_dialog)
     loop.run()

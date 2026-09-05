@@ -18,6 +18,14 @@ result="$1"; shift
 mkdir -p "$(dirname "$result")"
 rm -f "$result" "$result.pid"
 touch "$result.open"
+# Bytecode quarantine: any python launched from the plugin dir would write
+# its __pycache__ INTO the watched plugin dir on first run — the shell sees
+# the write, reloads the plugin (bar blink), and the reload teardown
+# SIGTERMs our own dialog. Redirect ALL bytecode to the cache dir so no
+# picker can ever trigger a self-reload. (Scripts ALSO set the canonical
+# sys.dont_write_bytecode — belt and suspenders, covers direct CLI use.)
+export PYTHONPYCACHEPREFIX="${HOME}/.cache/sorakey/pycache"
+mkdir -p "$PYTHONPYCACHEPREFIX"
 # Double fork: the inner shell exits at once, leaving <cmd> (via setsid,
 # new session, no terminal) reparented to init. Output goes to the
 # result log next to the result file, never to a pipe that can die.

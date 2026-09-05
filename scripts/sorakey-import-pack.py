@@ -14,11 +14,20 @@ import zipfile
 import subprocess
 import tempfile
 
+# CANONICAL flag — NOT the dead alias sys.dontwritebytecode (a silent
+# no-op on Python 3.14, verified: canonical stays False after the alias
+# is set). Stops CPython from compiling the _v1_shared import below into
+# scripts/__pycache__ inside the watched plugin dir. That write used to
+# make the shell reload the plugin on first tap — bar blink + teardown
+# murder of the picker. Systemic twin: PYTHONPYCACHEPREFIX in
+# sorakey-detached-run redirects ALL bytecode out of the plugin dir.
+sys.dont_write_bytecode = True
+
 try:
     import gi
     gi.require_version("Gtk", "4.0")
-    from gi.repository import Gtk, Gio, GLib
-except ImportError:
+    from gi.repository import Gtk, GLib
+except Exception:
     Gtk = None
 
 SOUNDPACKS = os.path.expanduser("~/.local/share/sorakey/soundpacks")
@@ -75,6 +84,9 @@ def _short(value, limit=50):
 
 import importlib.util as _ilu
 import pathlib as _pl
+# This exec does NOT write scripts/__pycache__ into the watched plugin dir:
+# sys.dont_write_bytecode (top of file) suppresses it, and the detached
+# launcher redirects any stray bytecode to ~/.cache via PYTHONPYCACHEPREFIX.
 _spec = _ilu.spec_from_file_location("_v1_shared", str(_pl.Path(__file__).with_name("_v1_shared.py")))
 _mod = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_mod)
 V1_KEY_TABLE = _mod.V1_KEY_TABLE
@@ -506,48 +518,51 @@ def gui_main():
     if Gtk is None:
         emit("ERROR:GTK 4 missing — file dialog can't open")
         sys.exit(1)
-    # Portal-native FileDialog, parent-less (as originally): the "auto-close"
-    # deaths were proven to be reload-kills (no response callback ever fired
-    # — a portal dismiss always fires one), fixed by the detached launch.
-    # A 1x1 parent window was tried and removed: Hyprland tiles it into a
-    # big blank window. Parent-less + detached is the correct combination.
-    dialog = Gtk.FileDialog(title="Import Soundpack")
+    # Classic FileChooserDialog, drawn in-process: the portal dismisses
+    # parent-less FileDialogs with "Dismissed by user" plus zero user action
+    # (journal at tap time: "Unhandled parent window type" + "Failed to
+    # associate portal window with parent window"). In-process chooser +
+    # detached launch (reload-proof) is the combination that survives
+    # everything on this box.
+    dialog = Gtk.FileChooserDialog(title="Import Soundpack",
+                                   action=Gtk.FileChooserAction.OPEN)
+    dialog.set_modal(True)
+    dialog.set_default_size(800, 600)
+    dialog.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
+                       "_Open", Gtk.ResponseType.ACCEPT)
+
     filter_zip = Gtk.FileFilter()
     filter_zip.set_name("Soundpack ZIP")
     filter_zip.add_pattern("*.zip")
     filter_all = Gtk.FileFilter()
     filter_all.set_name("All Files")
     filter_all.add_pattern("*")
-    filters = Gio.ListStore.new(Gtk.FileFilter)
-    filters.append(filter_zip)
-    filters.append(filter_all)
-    dialog.set_filters(filters)
-    dialog.set_default_filter(filter_zip)
+    dialog.add_filter(filter_zip)
+    dialog.add_filter(filter_all)
+    dialog.set_filter(filter_zip)
 
     loop = GLib.MainLoop()
 
     def fail_and_quit(msg):
         emit(f"ERROR:{msg}")
+        dialog.destroy()
         loop.quit()
 
     def succeed_and_quit(msg):
         emit(f"OK:{msg}")
+        dialog.destroy()
         loop.quit()
 
-    def on_done(source, result, user_data=None):
-        try:
-            file = dialog.open_finish(result)
-        except Exception as e:
-            err = str(e)
-            if "Dismissed" in err or "cancel" in err.lower():
-                fail_and_quit("Cancelled")
-            else:
-                fail_and_quit(f"Dialog error: {e}")
+    def on_response(dlg, response):
+        if response != Gtk.ResponseType.ACCEPT:
+            print(f"[response] {response}", file=sys.stderr, flush=True)
+            fail_and_quit("Cancelled")
             return
-        if file is None:
+        f = dlg.get_file()
+        path = f.get_path() if f is not None else None
+        if not path:
             fail_and_quit("No file selected")
             return
-        path = file.get_path()
         try:
             sid, err = import_zip(path)
         except Exception as e:
@@ -559,7 +574,8 @@ def gui_main():
             succeed_and_quit(sid)
 
     def launch_dialog():
-        dialog.open(None, None, on_done, None)
+        dialog.connect("response", on_response)
+        dialog.present()
 
     GLib.idle_add(launch_dialog)
     loop.run()
