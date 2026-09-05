@@ -25,7 +25,7 @@ Panel {
   property string pluginCommit: ""
 
   // plugin logo — bar follows foreground like other icons, hero wears the theme accent
-  readonly property string barLogoSource: root.bar.foreground.hslLightness > 0.5 ? "logo-bar.svg" : "logo-bar-dark.svg"
+  readonly property string barLogoSource: root.bar.foreground.hslLightness > 0.5 ? "assets/logo-bar.svg" : "assets/logo-bar-dark.svg"
   // hero logo follows the theme accent when on, plain foreground white/black when off
   property bool heroMatchTheme: true
   readonly property string logoModeFile: home + "/.config/sorakey/logo-color-mode"
@@ -977,8 +977,8 @@ Panel {
 
           Image {
             id: heroIcon
-            source: root.heroMatchTheme ? Qt.resolvedUrl("logo.svg")
-              : Qt.resolvedUrl(root.bar.foreground.hslLightness > 0.5 ? "logo.svg" : "logo-dark.svg")
+            source: root.heroMatchTheme ? Qt.resolvedUrl("assets/logo.svg")
+              : Qt.resolvedUrl(root.bar.foreground.hslLightness > 0.5 ? "assets/logo.svg" : "assets/logo-dark.svg")
             sourceSize.height: Style.font.display * 2.5
             fillMode: Image.PreserveAspectFit
             smooth: true
