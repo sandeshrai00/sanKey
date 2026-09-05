@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls as QQC
 import qs.Commons
 import qs.Ui
-import "Model.js" as Model
+import "SoraKeyStore.js" as Model
 
 // SearchableDropdown fork with inline delete. Search stays in popup.
 Item {

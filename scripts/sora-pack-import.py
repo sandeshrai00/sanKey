@@ -20,7 +20,7 @@ import tempfile
 # scripts/__pycache__ inside the watched plugin dir. That write used to
 # make the shell reload the plugin on first tap — bar blink + teardown
 # murder of the picker. Systemic twin: PYTHONPYCACHEPREFIX in
-# sorakey-detached-run redirects ALL bytecode out of the plugin dir.
+# sorakey-detached redirects ALL bytecode out of the plugin dir.
 sys.dont_write_bytecode = True
 
 try:
@@ -38,9 +38,9 @@ MAX_PACK_SIZE = 20 * 1024 * 1024
 # non-zip extensions for dialog filter
 NON_ZIP_EXTS = (".7z", ".rar", ".tar", ".gz", ".bz2", ".xz")
 
-# Detached-run support: when launched via scripts/sorakey-detached-run
+# Detached-run support: when launched via scripts/sorakey-detached
 # (immune to plugin-reload SIGTERM), stdout goes to a log nobody reads —
-# the single result line ALSO goes to --result-file, which Service.qml
+# the single result line ALSO goes to --result-file, which SoraService.qml
 # polls (and resumes polling after its own restart).
 RESULT_FILE = None
 
@@ -496,7 +496,7 @@ def import_zip(zip_path):
 
 def cli_main():
     if len(sys.argv) < 2:
-        print("Usage: sorakey-import-pack.py [--result-file PATH] <path-to-zip>")
+        print("Usage: sora-pack-import.py [--result-file PATH] <path-to-zip>")
         sys.exit(1)
     path = sys.argv[1]
     if not os.path.isfile(path):

@@ -34,7 +34,7 @@ Item {
   // direct child of this service, and every plugin reload ("Local plugin
   // changed, reloading" — dev-sync, updates, editor saves) SIGTERMs
   // direct children, murdering the picker mid-dialog with no trace.
-  // Now the picker is double-forked (scripts/sorakey-detached-run) and
+  // Now the picker is double-forked (scripts/sorakey-detached) and
   // reports via ~/.cache/sorakey/<kind>-result, which this service polls.
   // <kind>-result.open means "dialog may still be open", so a restarted
   // service resumes polling instead of losing the result.
@@ -64,14 +64,14 @@ Item {
     var result = root.pickResultFile(kind)
     root.pickKind = kind
     root.pickTicks = 0
-    Quickshell.execDetached(["/usr/bin/bash", root.pluginDir + "/scripts/sorakey-detached-run",
+    Quickshell.execDetached(["/usr/bin/bash", root.pluginDir + "/scripts/sorakey-detached",
       result, "/usr/bin/env", "GTK_USE_PORTAL=0", "/usr/bin/python3",
       root.pluginDir + "/scripts/" + script, "--result-file", result])
     pickTimer.restart()
   }
 
-  function importSoundpack() { root.startPick("import", "sorakey-import-pack.py") }
-  function exportLogs() { root.startPick("export", "sorakey-export-logs.py") }
+  function importSoundpack() { root.startPick("import", "sora-pack-import.py") }
+  function exportLogs() { root.startPick("export", "sora-export-logs.py") }
 
   function handleImportLine(last) {
     if (last.startsWith("OK:")) {
@@ -237,7 +237,7 @@ Item {
   // after update, rebuild or fetch prebuilt and restart if needed
   Process {
     id: freshnessCheck
-    command: ["/usr/bin/bash", root.pluginDir + "/scripts/build-sorakey.sh"]
+    command: ["/usr/bin/bash", root.pluginDir + "/scripts/sora-build.sh"]
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { waitForEnd: true }
     onExited: function(exitCode) {

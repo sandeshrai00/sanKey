@@ -5,7 +5,7 @@ macro_rules! always_print {
         {
             let line = format!($($arg)*);
             println!("{}", line);
-            $crate::utils::log_buffer::push(&line);
+            $crate::utils::logs::push(&line);
         }
     };
 }
@@ -17,7 +17,7 @@ macro_rules! always_eprint {
         {
             let line = format!($($arg)*);
             eprintln!("{}", line);
-            $crate::utils::log_buffer::push(&line);
+            $crate::utils::logs::push(&line);
         }
     };
 }
@@ -28,16 +28,16 @@ mod tests {
     #[test]
     fn always_print_reaches_the_ring_buffer() {
         // serialized with other buffer tests to avoid eviction
-        let _guard = crate::utils::log_buffer::buffer_test_guard();
+        let _guard = crate::utils::logs::buffer_test_guard();
 
-        let before = crate::utils::log_buffer::generation();
+        let before = crate::utils::logs::generation();
         crate::always_print!("logger test marker {}", 42);
         assert!(
-            crate::utils::log_buffer::generation() > before,
+            crate::utils::logs::generation() > before,
             "a logged line must land in the buffer"
         );
 
-        let recent = crate::utils::log_buffer::recent(50).join("\n");
+        let recent = crate::utils::logs::recent(50).join("\n");
         assert!(recent.contains("logger test marker 42"), "{}", recent);
     }
 

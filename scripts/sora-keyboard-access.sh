@@ -3,7 +3,7 @@
 # sounds" button. One GUI approval (via the shell's polkit agent), no
 # terminal commands, no logout.
 #
-# Installs udev/70-sorakey-keyboard.rules to /etc/udev/rules.d/ (TAG+=uaccess
+# Installs udev/70-sora-keyboard.rules to /etc/udev/rules.d/ (TAG+=uaccess
 # for ID_INPUT_KEYBOARD devices), reloads rules and triggers them, then
 # verifies the current user can read a keyboard event node.
 #
@@ -20,13 +20,13 @@ if [[ "${1:-}" == "--use-sudo" ]]; then USE_SUDO=1; fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(dirname "$SCRIPT_DIR")"
-SRC="$PLUGIN_DIR/udev/70-sorakey-keyboard.rules"
-DST="/etc/udev/rules.d/70-sorakey-keyboard.rules"
+SRC="$PLUGIN_DIR/udev/70-sora-keyboard.rules"
+DST="/etc/udev/rules.d/70-sora-keyboard.rules"
 
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
 note() { printf '%s\n' "$*"; }
 
-[[ -f "$SRC" ]] || { echo "sorakey-enable-capture: rule source missing: $SRC" >&2; exit 1; }
+[[ -f "$SRC" ]] || { echo "sora-keyboard-access: rule source missing: $SRC" >&2; exit 1; }
 
 # A keyboard event node the current user should be able to read.
 find_keyboard_node() {
@@ -101,7 +101,7 @@ if ! run_privileged; then
     code=$?
   fi
   if [[ "$code" -eq 3 ]]; then
-    echo "sorakey-enable-capture: no approval dialog on this system" >&2
+    echo "sora-keyboard-access: no approval dialog on this system" >&2
     exit 3
   fi
   if [[ "$code" -eq 1 ]]; then
@@ -122,5 +122,5 @@ for _ in $(seq 1 10); do
   sleep 1
 done
 
-echo "sorakey-enable-capture: approved, but keys are still unreadable" >&2
+echo "sora-keyboard-access: approved, but keys are still unreadable" >&2
 exit 1

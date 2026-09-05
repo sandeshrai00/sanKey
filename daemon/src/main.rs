@@ -1,7 +1,7 @@
 //! sorakey daemon — mechanical keyboard sounds.
 //! Forked from MechvibesDX audio core; control via Unix socket plus Ctrl+Alt+M mute.
 
-mod control;
+mod commands;
 mod libs;
 mod state;
 mod utils;
@@ -13,13 +13,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("ctl") {
         let request = args.get(2).map(String::as_str).unwrap_or("{}");
-        std::process::exit(control::ctl_client(request));
+        std::process::exit(commands::ctl_client(request));
     }
     // `sorakey key <Code> [up]` - fire-and-forget keystroke for notifiers.
     if args.get(1).map(String::as_str) == Some("key") {
         let code = args.get(2).map(String::as_str).unwrap_or("");
         let down = args.get(3).map(String::as_str) != Some("up");
-        std::process::exit(control::key_client(code, down));
+        std::process::exit(commands::key_client(code, down));
     }
 
     // Only one instance — two would double-play every keystroke.
@@ -31,7 +31,7 @@ fn main() {
         }
     };
 
-    if let Err(e) = state::paths::soundpacks::ensure_soundpack_directories() {
+    if let Err(e) = state::folders::soundpacks::ensure_soundpack_directories() {
         always_eprint!("⚠️  sorakey: could not create soundpack dirs: {e}");
     }
 
@@ -40,14 +40,14 @@ fn main() {
 
     let engine = libs::audio::spawn_engine(keyboard_rx, hotkey_rx);
 
-    if let Some(path) = control::serve(engine) {
+    if let Some(path) = commands::serve(engine) {
         always_print!("🔌 sorakey control socket: {}", path.display());
     } else {
         eprintln!("sorakey: control socket bind failed — exiting so systemd restarts the daemon");
         std::process::exit(1);
     }
 
-    libs::bootstrap::start_input_capture(keyboard_tx, hotkey_tx);
+    libs::startup::start_input_capture(keyboard_tx, hotkey_tx);
     always_print!("✅ sorakey ready. Ctrl+Alt+M mutes, Ctrl+C exits.");
 
     std::thread::park();

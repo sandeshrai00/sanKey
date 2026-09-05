@@ -201,8 +201,8 @@ pub fn start_evdev_keyboard_listener(keyboard_tx: Sender<String>, hotkey_tx: Sen
             let device_count = devices.len();
             if device_count == 0 {
                 attempt += 1;
-                crate::state::health::set_input_keyboards(0);
-                crate::state::health::set_input_error(Some(
+                crate::state::status::set_input_keyboards(0);
+                crate::state::status::set_input_error(Some(
                     "no_input_devices: cannot open /dev/input/event*".to_string(),
                 ));
                 if attempt == 1 {
@@ -234,8 +234,8 @@ pub fn start_evdev_keyboard_listener(keyboard_tx: Sender<String>, hotkey_tx: Sen
             }
 
             if keyboards.is_empty() && live.is_empty() {
-                crate::state::health::set_input_keyboards(0);
-                crate::state::health::set_input_error(Some(format!(
+                crate::state::status::set_input_keyboards(0);
+                crate::state::status::set_input_error(Some(format!(
                     "no_keyboards: saw {device_count} input device(s) but none usable"
                 )));
                 crate::always_eprint!(
@@ -261,8 +261,8 @@ pub fn start_evdev_keyboard_listener(keyboard_tx: Sender<String>, hotkey_tx: Sen
                 );
             }
             if !live.is_empty() {
-                crate::state::health::set_input_keyboards(live.len());
-                crate::state::health::set_input_error(None);
+                crate::state::status::set_input_keyboards(live.len());
+                crate::state::status::set_input_error(None);
                 break;
             }
             std::thread::sleep(std::time::Duration::from_secs(5));
@@ -305,13 +305,13 @@ pub fn start_evdev_keyboard_listener(keyboard_tx: Sender<String>, hotkey_tx: Sen
                     );
                 }
             }
-            crate::state::health::set_input_keyboards(live.len());
+            crate::state::status::set_input_keyboards(live.len());
             if live.is_empty() {
-                crate::state::health::set_input_error(Some(
+                crate::state::status::set_input_error(Some(
                     "no_keyboards: all keyboards disconnected".to_string(),
                 ));
             } else {
-                crate::state::health::set_input_error(None);
+                crate::state::status::set_input_error(None);
             }
             std::thread::sleep(std::time::Duration::from_secs(10));
         }
@@ -324,7 +324,7 @@ pub fn start_evdev_keyboard_listener(keyboard_tx: Sender<String>, hotkey_tx: Sen
 /// IOHook keyspaces diverge, so the evdev-specific extended codes live here.
 #[cfg(target_os = "linux")]
 fn map_evdev_keycode(code: u16) -> &'static str {
-    if let Some(name) = crate::utils::keymap::w3c_name(code) {
+    if let Some(name) = crate::utils::keys::w3c_name(code) {
         return name;
     }
 

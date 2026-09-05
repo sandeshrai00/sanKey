@@ -5,7 +5,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Ui
 import qs.Commons
-import "Model.js" as Model
+import "SoraKeyStore.js" as Model
 
 // Sorakey panel — status, mute/volume, soundpacks, install controls.
 // Polls `sorakey ctl status` every second (open or closed); ctl/systemctl are one-shot.
@@ -17,7 +17,7 @@ Panel {
   readonly property string home: Quickshell.env("HOME")
   readonly property string sorakeyBin: home + "/.local/bin/sorakey"
   readonly property string pluginDir: home + "/.config/omarchy/plugins/io.github.sandeshrai00.sorakey"
-  readonly property string setupPath: pluginDir + "/scripts/sorakey-setup"
+  readonly property string setupPath: pluginDir + "/scripts/sora-install"
 
   // shell-managed service — survives panel rebuilds
   readonly property var service: bar?.shell?.firstPartyServiceFor("io.github.sandeshrai00.sorakey")
@@ -217,7 +217,7 @@ Panel {
     root.captureStatus = ""
     root.capturePhase = "Waiting for approval…"
     capturePhaseTimer.restart()
-    captureProc.command = ["/usr/bin/bash", root.pluginDir + "/scripts/sorakey-enable-capture.sh"]
+    captureProc.command = ["/usr/bin/bash", root.pluginDir + "/scripts/sora-keyboard-access.sh"]
     captureProc.running = true
   }
 
@@ -230,7 +230,7 @@ Panel {
   function fixInTerminal() {
     if (root.captureWorking || root.terminalBusy) return
     var term = Quickshell.env("TERMINAL") || "xdg-terminal-exec"
-    var script = root.pluginDir + "/scripts/sorakey-enable-capture.sh"
+    var script = root.pluginDir + "/scripts/sora-keyboard-access.sh"
     root.terminalBusy = true
     root.capturePhase = "Check your terminal…"
     capturePhaseTimer.restart()
@@ -492,7 +492,7 @@ Panel {
     // runtime files and the keyboard-access rule, then we unregister.
     if (root.uninstallBusy || uninstallProc.running) return
     root.uninstallBusy = true
-    uninstallProc.command = ["/usr/bin/bash", root.pluginDir + "/scripts/uninstall.sh", "--purge"]
+    uninstallProc.command = ["/usr/bin/bash", root.pluginDir + "/scripts/sora-uninstall.sh", "--purge"]
     uninstallProc.running = true
   }
 
@@ -788,7 +788,7 @@ Panel {
     command: ["true"]
   }
 
-  // runs uninstall.sh --purge in background (pkexec inside pops the GUI
+  // runs sora-uninstall.sh --purge in background (pkexec inside pops the GUI
   // approval for the rule removal, like the enable flow)
   Process {
     id: uninstallProc
@@ -805,7 +805,7 @@ Panel {
     }
   }
 
-  // runs sorakey-setup in background
+  // runs sora-install in background
   Process {
     id: setupProc
     stdout: StdioCollector { waitForEnd: true }
@@ -1580,7 +1580,7 @@ SoraDropdown {
             Row {
               width: parent.width
               spacing: Style.space(8)
-              SearchablePackDropdown {
+              SoraPackPicker {
                 id: kbPack
                 width: parent.width
                 value: root.keyboardPack

@@ -41,7 +41,7 @@ pub struct SoundpackValidationResult {
 
 /// Validate soundpack config at path.
 pub fn validate_soundpack_config(config_path: &str) -> SoundpackValidationResult {
-    let content = match crate::utils::path::read_file_contents(config_path) {
+    let content = match crate::utils::files::read_file_contents(config_path) {
         Ok(content) => content,
         Err(e) => {
             return SoundpackValidationResult {

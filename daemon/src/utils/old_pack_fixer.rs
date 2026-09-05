@@ -1,4 +1,4 @@
-use super::path;
+use super::files;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ fn get_audio_duration_ms(file_path: &str) -> Result<f64, Box<dyn std::error::Err
 
 /// Get duration via shared Symphonia helper.
 fn get_duration_with_symphonia(file_path: &str) -> Result<f64, Box<dyn std::error::Error>> {
-    Ok(crate::utils::symphonia::duration_ms(file_path).unwrap_or(100.0))
+    Ok(crate::utils::sound_reader::duration_ms(file_path).unwrap_or(100.0))
 }
 
 /// JSON number for a computed `f64`. `Number::from_f64` returns `None` for
@@ -43,7 +43,7 @@ pub fn convert_v1_to_v2(
             .ok_or("Could not determine soundpack directory")?,
     );
 
-    let content = path::read_file_contents(v1_config_path)
+    let content = files::read_file_contents(v1_config_path)
         .map_err(|e| format!("Failed to read V1 config: {}", e))?;
     let config: Value = serde_json::from_str(&content)?;
 
@@ -592,7 +592,7 @@ fn concatenate_audio_files_with_timing(
 fn load_audio_file_samples(
     file_path: &str,
 ) -> Result<(Vec<f32>, u16, u32), Box<dyn std::error::Error>> {
-    crate::utils::symphonia::decode_interleaved(file_path).map_err(|e| e.into())
+    crate::utils::sound_reader::decode_interleaved(file_path).map_err(|e| e.into())
 }
 
 /// Convert channels and rate — both matter for correct speed.
@@ -613,7 +613,7 @@ fn convert_audio_format(
         return channel_converted;
     }
 
-    crate::libs::audio::resampler::resample_interleaved(
+    crate::libs::audio::sound_quality::resample_interleaved(
         &channel_converted,
         to_channels.max(1),
         from_sample_rate,
@@ -708,7 +708,7 @@ fn create_iohook_to_web_key_mapping() -> HashMap<u32, String> {
     // table in utils/keymap.rs; seeding from it keeps the runtime listener and
     // the converter on one source of truth. Everything below is IOHook-only
     // codes that evdev does not use at the same value.
-    let mut mapping: HashMap<u32, String> = crate::utils::keymap::KEY_MAP
+    let mut mapping: HashMap<u32, String> = crate::utils::keys::KEY_MAP
         .iter()
         .map(|&(code, name)| (code as u32, name.to_string()))
         .collect();
@@ -896,7 +896,7 @@ mod tests {
         // 3597/3612/3640. Scan the source for re-inserted codes.
         let src = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/src/utils/config_converter.rs"
+            "/src/utils/old_pack_fixer.rs"
         ))
         .expect("read own source");
         let start = src.find("fn create_iohook_to_web_key_mapping").unwrap();

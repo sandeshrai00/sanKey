@@ -4,7 +4,7 @@ use rodio::{OutputStream, OutputStreamHandle, Sink};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::libs::device_manager::DeviceManager;
+use crate::libs::speakers::DeviceManager;
 
 const FADE_IN_MS: f32 = 2.0;
 const FADE_OUT_MS: f32 = 5.0;
@@ -42,7 +42,7 @@ pub enum AudioCommand {
     /// request sequence it was spawned for (stale results are dropped).
     PackLoaded(
         u64,
-        Box<Result<super::soundpack_loader::LoadedPack, String>>,
+        Box<Result<super::pack_loader::LoadedPack, String>>,
     ),
     SwitchDevice(Option<String>), // None = system default
 }
@@ -102,7 +102,7 @@ pub(super) struct EngineState {
     /// The pack currently playing: precomputed per-key segments at the
     /// device rate. Native-rate buffers are freed at load (see
     /// `prepare_pack_segments`); a device switch re-decodes from disk.
-    pub(super) pack: Option<super::soundpack_loader::LoadedPack>,
+    pub(super) pack: Option<super::pack_loader::LoadedPack>,
     /// Sequence of the most recent LoadKeyboardPack request. Worker results
     /// carry the request's sequence; only the latest is applied, so rapid
     /// loads can't drop the newest pack (or apply a stale one out of order).
@@ -171,7 +171,7 @@ fn open_stream(
 impl EngineState {
     fn new() -> Self {
         let device_manager = DeviceManager::new();
-        let config = crate::state::config_writer::current();
+        let config = crate::state::settings_saver::current();
 
         let (stream, stream_handle, opened_device_id, device_rate) =
             open_stream(&device_manager, config.selected_audio_device.as_deref()).unwrap_or_else(
@@ -187,7 +187,7 @@ impl EngineState {
                 },
             );
         let current_device_id = opened_device_id;
-        crate::state::health::set_audio_result(true, None);
+        crate::state::status::set_audio_result(true, None);
 
         Self {
             stream,
@@ -209,7 +209,7 @@ impl EngineState {
 
     fn handle_key_event(&mut self, code: &str, down: bool) {
         if down {
-            crate::state::health::note_key();
+            crate::state::status::note_key();
         }
         if !self.sound_enabled {
             return;
@@ -252,7 +252,7 @@ impl EngineState {
             self.pack = Some(pack);
             return;
         }
-        match super::soundpack_loader::load_pack_prepared(&pack.soundpack.id, Some(device_rate)) {
+        match super::pack_loader::load_pack_prepared(&pack.soundpack.id, Some(device_rate)) {
             Ok(reloaded) => {
                 self.pack = Some(reloaded);
             }
@@ -376,7 +376,7 @@ fn play_segment(
             sinks.push(sink);
         }
         Err(e) => {
-            crate::state::health::set_audio_result(false, Some(format!("playback failed: {e}")));
+            crate::state::status::set_audio_result(false, Some(format!("playback failed: {e}")));
         }
     }
 }
@@ -464,7 +464,7 @@ fn parse_input_event(raw: &str) -> Option<(String, bool)> {
 /// the hotkey muted the app while the window kept showing the unmuted icon.
 fn handle_toggle_sound() -> bool {
     let mut enabled = false;
-    crate::state::config_writer::apply(|config| {
+    crate::state::settings_saver::apply(|config| {
         config.enable_sound = !config.enable_sound;
         enabled = config.enable_sound;
     });
@@ -485,13 +485,13 @@ fn spawn_load_worker(
 ) {
     let tx = cmd_tx.clone();
     std::thread::spawn(move || {
-        let loaded = super::soundpack_loader::load_pack_prepared(&soundpack_id, rate);
+        let loaded = super::pack_loader::load_pack_prepared(&soundpack_id, rate);
         match &loaded {
             Ok(l) => {
-                super::soundpack_loader::update_soundpack_cache(l, &soundpack_id);
+                super::pack_loader::update_soundpack_cache(l, &soundpack_id);
             }
             Err(e) if update_cache_on_error => {
-                super::soundpack_loader::capture_soundpack_loading_error(&soundpack_id, e);
+                super::pack_loader::capture_soundpack_loading_error(&soundpack_id, e);
             }
             _ => {}
         }
@@ -526,7 +526,7 @@ fn handle_command(cmd_tx: &Sender<AudioCommand>, state: &mut EngineState, comman
                 state.queued_load = None;
                 state.pack = None;
                 state.key_sinks.clear();
-                crate::state::health::set_pack_result(
+                crate::state::status::set_pack_result(
                     false,
                     Some("no soundpack selected".to_string()),
                 );
@@ -557,8 +557,8 @@ fn handle_command(cmd_tx: &Sender<AudioCommand>, state: &mut EngineState, comman
             // re-prepared for the new device instead of being replaced.
             state.loading_pack = false;
             match result.as_ref().as_ref() {
-                Ok(_) => crate::state::health::set_pack_result(true, None),
-                Err(e) => crate::state::health::set_pack_result(false, Some(e.clone())),
+                Ok(_) => crate::state::status::set_pack_result(true, None),
+                Err(e) => crate::state::status::set_pack_result(false, Some(e.clone())),
             }
             match state.pending_pack_seq {
                 Some(latest) if seq >= latest => {
@@ -589,7 +589,7 @@ fn handle_command(cmd_tx: &Sender<AudioCommand>, state: &mut EngineState, comman
                     state.loading_pack = false;
                     state.pack = None;
                     state.key_sinks.clear();
-                    crate::state::health::set_pack_result(
+                    crate::state::status::set_pack_result(
                         false,
                         Some("no soundpack selected".to_string()),
                     );
@@ -617,9 +617,9 @@ fn handle_command(cmd_tx: &Sender<AudioCommand>, state: &mut EngineState, comman
             state.loading_pack = false;
             state.queued_load = None;
             match state.switch_device(device_id) {
-                Ok(_) => crate::state::health::set_audio_result(true, None),
+                Ok(_) => crate::state::status::set_audio_result(true, None),
                 Err(e) => {
-                    crate::state::health::set_audio_result(false, Some(e.clone()));
+                    crate::state::status::set_audio_result(false, Some(e.clone()));
                     crate::always_eprint!("❌ [Engine] Device switch failed: {}", e);
                 }
             }
@@ -629,7 +629,7 @@ fn handle_command(cmd_tx: &Sender<AudioCommand>, state: &mut EngineState, comman
 
 /// Recommended volume for a pack id, if its config declares a non-default one.
 fn recommended_volume_for_pack(id: &str) -> Option<f32> {
-    let path = crate::state::paths::soundpacks::config_json(id);
+    let path = crate::state::folders::soundpacks::config_json(id);
     let content = std::fs::read_to_string(&path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&content).ok()?;
     v.get("options")?
@@ -641,7 +641,7 @@ fn recommended_volume_for_pack(id: &str) -> Option<f32> {
 /// First `keyboard/<name>` with a `config.json` on disk, sorted for stability.
 /// Used once at startup when the configured pack fails to load.
 fn first_available_pack() -> Option<String> {
-    let base = crate::state::paths::soundpacks::get_builtin_soundpacks_dir().join("keyboard");
+    let base = crate::state::folders::soundpacks::get_builtin_soundpacks_dir().join("keyboard");
     let entries = std::fs::read_dir(&base).ok()?;
     let mut names: Vec<String> = entries
         .flatten()
@@ -662,15 +662,15 @@ fn run_engine(
 
     // Load the configured soundpack once at startup (decode + resample +
     // precompute in one pass, on this thread - nothing else is running yet).
-    let config = crate::state::config_writer::current();
+    let config = crate::state::settings_saver::current();
     if !config.keyboard_soundpack.is_empty() {
-        match super::soundpack_loader::load_pack_prepared(
+        match super::pack_loader::load_pack_prepared(
             &config.keyboard_soundpack,
             state.device_rate,
         ) {
             Ok(pack) => {
                 state.pack = Some(pack);
-                crate::state::health::set_pack_result(true, None);
+                crate::state::status::set_pack_result(true, None);
             }
             Err(e) => {
                 crate::always_eprint!(
@@ -681,14 +681,14 @@ fn run_engine(
                 match first_available_pack() {
                     Some(fallback) if fallback != config.keyboard_soundpack => {
                         crate::always_print!("🔄 [Engine] Falling back to {}", fallback);
-                        match super::soundpack_loader::load_pack_prepared(
+                        match super::pack_loader::load_pack_prepared(
                             &fallback,
                             state.device_rate,
                         ) {
                             Ok(pack) => {
                                 state.pack = Some(pack);
                                 let rec = recommended_volume_for_pack(&fallback);
-                                crate::state::config_writer::apply(|c| {
+                                crate::state::settings_saver::apply(|c| {
                                     c.keyboard_soundpack = fallback.clone();
                                     if !c.per_pack_volume.contains_key(&fallback) {
                                         if let Some(v) = rec {
@@ -700,11 +700,11 @@ fn run_engine(
                                     }
                                 });
                                 state.volume =
-                                    crate::state::config_writer::current().effective_volume();
-                                crate::state::health::set_pack_result(true, None);
+                                    crate::state::settings_saver::current().effective_volume();
+                                crate::state::status::set_pack_result(true, None);
                             }
                             Err(e2) => {
-                                crate::state::health::set_pack_result(
+                                crate::state::status::set_pack_result(
                                     false,
                                     Some(format!(
                                         "{}; fallback {} also failed: {}",
@@ -715,13 +715,13 @@ fn run_engine(
                         }
                     }
                     _ => {
-                        crate::state::health::set_pack_result(false, Some(e));
+                        crate::state::status::set_pack_result(false, Some(e));
                     }
                 }
             }
         }
     } else {
-        crate::state::health::set_pack_result(false, Some("no soundpack selected".to_string()));
+        crate::state::status::set_pack_result(false, Some("no soundpack selected".to_string()));
     }
 
     // This loop is purely event-driven: every arm below is a channel receive,

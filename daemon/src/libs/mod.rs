@@ -1,7 +1,7 @@
 pub mod audio;
-pub mod bootstrap;
-pub mod cli_args;
-pub mod device_manager;
+pub mod startup;
+pub mod names;
+pub mod speakers;
 
 #[cfg(target_os = "linux")]
-pub mod evdev_input_listener;
+pub mod keyboard;

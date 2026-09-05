@@ -1,10 +1,10 @@
 /// Path and file system utility functions
-use crate::state::paths;
+use crate::state::folders;
 use std::fs;
 
 /// Get absolute path for soundpacks directory (built-in soundpacks)
 pub fn get_soundpacks_dir_absolute() -> String {
-    paths::soundpacks::get_builtin_soundpacks_dir()
+    folders::soundpacks::get_builtin_soundpacks_dir()
         .to_string_lossy()
         .to_string()
 }

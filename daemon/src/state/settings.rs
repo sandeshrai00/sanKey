@@ -1,5 +1,5 @@
-use crate::state::paths;
-use crate::utils::{data, path};
+use crate::state::folders;
+use crate::utils::{json_files, files};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -170,10 +170,10 @@ impl AppConfig {
     }
 
     pub fn load() -> Self {
-        let config_path = paths::data::config_json();
+        let config_path = folders::data::config_json();
 
         if let Some(parent) = config_path.parent() {
-            if path::ensure_directory_exists(parent).is_err() {
+            if files::ensure_directory_exists(parent).is_err() {
                 crate::always_eprint!("⚠️  Could not create data directory");
             }
         }
@@ -235,7 +235,7 @@ impl AppConfig {
                 // drop index-based device IDs — they're unstable, revert to default
 
                 if let Some(device_id) = config.selected_audio_device.clone() {
-                    if crate::libs::device_manager::is_legacy_index_device_id(&device_id) {
+                    if crate::libs::speakers::is_legacy_index_device_id(&device_id) {
                         crate::always_print!(
                             "🔄 Dropping index-based audio device {}: reverting to system default",
                             device_id
@@ -253,7 +253,7 @@ impl AppConfig {
                 // sync auto_start with system, but never let a failed
                 // detection overwrite the user's value (non-systemd boxes
                 // would otherwise force true -> false on every start).
-                match crate::utils::auto_startup::get_auto_startup_state() {
+                match crate::utils::auto_start::get_auto_startup_state() {
                     Some(actual_auto_start) if config.auto_start != actual_auto_start => {
                         crate::always_print!(
                             "🔄 Syncing auto_start config with registry: {} -> {}",
@@ -318,17 +318,17 @@ impl AppConfig {
 
     /// Write config to disk — only via `config_writer::apply` outside this module.
     pub(in crate::state) fn save(&self) -> Result<(), String> {
-        let config_path = paths::data::config_json();
+        let config_path = folders::data::config_json();
         crate::always_print!("💾 Saving config to: {}", config_path.display());
         crate::always_print!("   keyboard_soundpack: {}", self.keyboard_soundpack);
-        data::save_json_to_file_atomically(self, &config_path)
+        json_files::save_json_to_file_atomically(self, &config_path)
     }
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            version: crate::utils::constants::APP_VERSION.to_string(),
+            version: crate::utils::version::APP_VERSION.to_string(),
             last_updated: Utc::now(),
             commit: option_env!("GIT_HASH").map(|s| s.to_string()),
             keyboard_soundpack: "keyboard/sankey-oreo".to_string(),
@@ -581,7 +581,7 @@ mod tests {
     /// Index-based device ID is legacy.
     #[test]
     fn an_index_based_device_id_is_recognised_as_legacy_and_droppable() {
-        use crate::libs::device_manager::is_legacy_index_device_id;
+        use crate::libs::speakers::is_legacy_index_device_id;
 
         assert!(is_legacy_index_device_id("output_2"));
         assert!(is_legacy_index_device_id("output_0"));

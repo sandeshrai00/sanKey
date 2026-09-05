@@ -1,5 +1,5 @@
-pub mod engine;
-pub mod resampler;
-pub mod soundpack_loader;
+pub mod player;
+pub mod sound_quality;
+pub mod pack_loader;
 
-pub use engine::{AudioCommand, AudioEngineHandle, spawn_engine};
+pub use player::{AudioCommand, AudioEngineHandle, spawn_engine};

@@ -10,7 +10,7 @@ import sys
 # Same self-reload root fix as the importer: a launched script's own
 # __pycache__ entry would be written into the watched plugin dir on first
 # tap (shell reloads → bar blink). Canonical flag — see
-# sorakey-import-pack.py for why the no-underscore alias is a no-op.
+# sora-pack-import.py for why the no-underscore alias is a no-op.
 sys.dont_write_bytecode = True
 
 try:
@@ -20,8 +20,8 @@ try:
 except Exception:
     Gtk = None
 
-# Detached-run support: see sorakey-import-pack.py — result line goes to
-# --result-file too, so Service.qml can poll it after a plugin reload.
+# Detached-run support: see sora-pack-import.py — result line goes to
+# --result-file too, so SoraService.qml can poll it after a plugin reload.
 RESULT_FILE = None
 
 

@@ -32,7 +32,7 @@ omarchy plugin add https://github.com/sandeshrai00/soraKey.git --enable
 2. For **keyboard** sounds the panel shows a **keyboard-access step**.
    Tap **Enable keyboard sounds** and approve the one-time system dialog
    (password or fingerprint). This installs one rule for **keyboards only**
-   (`/etc/udev/rules.d/70-sorakey-keyboard.rules`) — no logout, no restart,
+    (`/etc/udev/rules.d/70-sora-keyboard.rules`) — no logout, no restart,
    no terminal. Sounds start within seconds. Why this is needed and how
    removal works: `docs/keyboard-access.md`.
 
@@ -93,13 +93,13 @@ binary automatically.
 
 ```sh
 # stops the daemon, removes binary + service file, keeps soundpacks as .bak
-~/.config/omarchy/plugins/io.github.sandeshrai00.sorakey/scripts/uninstall.sh
+~/.config/omarchy/plugins/io.github.sandeshrai00.sorakey/scripts/sora-uninstall.sh
 omarchy plugin remove io.github.sandeshrai00.sorakey --yes
 omarchy restart shell
 ```
 
-`uninstall.sh` moves `~/.local/share/sorakey` (packs **and** settings) to a
-`.bak` timestamped folder; `uninstall.sh --purge` deletes it instead. The
+`sora-uninstall.sh` moves `~/.local/share/sorakey` (packs **and** settings) to a
+`.bak` timestamped folder; `sora-uninstall.sh --purge` deletes it instead. The
 final `omarchy restart shell` drops the bar icon.
 
 ## Import a soundpack
@@ -135,7 +135,7 @@ contain a `config.json` (V2 format).
   spotting unbounded growth.
 - **Error logs**: the daemon keeps a rolling buffer of recent errors.
   Settings → **Export error logs** opens a GTK save dialog (or run
-  `scripts/sorakey-export-logs.py <name>` from a terminal to write straight to
+  `scripts/sora-export-logs.py <name>` from a terminal to write straight to
   `~/Downloads`). The file is named `sorakey-log-<timestamp>.txt`.
 
 ## Files
@@ -143,13 +143,14 @@ contain a `config.json` (V2 format).
 | Path | What |
 |---|---|
 | `manifest.json` | Omarchy plugin manifest (bar-widget + service) |
-| `Panel.qml` | Bar icon + popup panel (with **Import Sound** button) |
-| `Service.qml` | Headless service (daemon lifecycle + import flow) |
-| `Model.js` | Status/pack parsing helpers |
-| `scripts/sorakey-setup` | One-click installer |
-| `scripts/sorakey-import-pack.py` | GTK4 file-picker + ZIP extractor |
-| `scripts/build-sorakey.sh` | Verified-prebuilt-or-source daemon build |
-| `scripts/uninstall.sh` | Removes daemon, unit file, binary (`--purge`: all data too) |
+| `SoraWidget.qml` | Bar icon + popup panel (with **Import Sound** button) |
+| `SoraService.qml` | Headless service (daemon lifecycle + import flow) |
+| `SoraKeyStore.js` | Status/pack parsing helpers |
+| `SoraPackPicker.qml` | Searchable soundpack picker |
+| `scripts/sora-install` | One-click installer |
+| `scripts/sora-pack-import.py` | GTK4 file-picker + ZIP extractor |
+| `scripts/sora-build.sh` | Verified-prebuilt-or-source daemon build |
+| `scripts/sora-uninstall.sh` | Removes daemon, unit file, binary (`--purge`: all data too) |
 | `daemon/` | The `sorakey` Rust daemon (trimmed MechvibesDX core) |
 | `daemon/soundpacks/` | Built-in V2 soundpacks |
 

@@ -1,10 +1,10 @@
-use crate::state::paths;
-use crate::state::soundpack::SoundPack;
-use crate::state::soundpack::{SoundpackCache, SoundpackMetadata};
+use crate::state::folders;
+use crate::state::packs::SoundPack;
+use crate::state::packs::{SoundpackCache, SoundpackMetadata};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::engine::{KeySegments, Segment};
+use super::player::{KeySegments, Segment};
 
 /// (samples, channels, sample_rate) for a decoded buffer.
 type DecodedAudio = (Arc<Vec<f32>>, u16, u32);
@@ -101,14 +101,14 @@ fn load_audio_with_symphonia(file_path: &str) -> Result<(Vec<f32>, u16, u32), St
             file_path
         ));
     }
-    crate::utils::symphonia::decode_interleaved(file_path)
+    crate::utils::sound_reader::decode_interleaved(file_path)
 }
 
 /// Derives the `type/name` id the cache is keyed by from a pack's absolute
 /// path against the single soundpacks root. Kept separate from the root
 /// itself so the path logic can be tested without a filesystem.
 fn soundpack_id_from_path(soundpack_path: &str) -> String {
-    let roots = [crate::utils::path::get_soundpacks_dir_absolute()];
+    let roots = [crate::utils::files::get_soundpacks_dir_absolute()];
     relative_soundpack_id(soundpack_path, &roots)
 }
 
@@ -198,7 +198,7 @@ fn create_soundpack_metadata(
 /// conversion is unrecoverable, so refuse to start it rather than convert
 /// without a safety net.
 fn convert_v1_if_needed(config_path: &str) -> Result<(), String> {
-    use crate::utils::soundpack_validator::{SoundpackValidationStatus, validate_soundpack_config};
+    use crate::utils::pack_checker::{SoundpackValidationStatus, validate_soundpack_config};
     let validation = validate_soundpack_config(config_path);
     if validation.status != SoundpackValidationStatus::VersionOneNeedsConversion {
         return Ok(());
@@ -218,7 +218,7 @@ fn convert_v1_if_needed(config_path: &str) -> Result<(), String> {
         )
     })?;
 
-    crate::utils::config_converter::convert_v1_to_v2(config_path, config_path, None).map_err(|e| {
+    crate::utils::old_pack_fixer::convert_v1_to_v2(config_path, config_path, None).map_err(|e| {
         let _ = std::fs::copy(&backup_path, config_path); // restore the original
         format!("Failed to convert {} from V1 to V2: {}", config_path, e)
     })
@@ -259,8 +259,8 @@ pub(super) fn load_pack(soundpack_id: &str) -> Result<LoadedPack, String> {
         return Err("empty soundpack ID".to_string());
     }
 
-    let soundpack_path = paths::soundpacks::soundpack_dir(soundpack_id);
-    let config_path = paths::soundpacks::config_json(soundpack_id);
+    let soundpack_path = folders::soundpacks::soundpack_dir(soundpack_id);
+    let config_path = folders::soundpacks::config_json(soundpack_id);
     convert_v1_if_needed(&config_path)?;
     let config_content = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read config: {}", e))?;
@@ -447,13 +447,13 @@ fn build_segment(
         return None;
     }
     let mut segment_samples = base[start_sample..end_sample].to_vec();
-    super::engine::apply_fade(&mut segment_samples, channels, sample_rate);
+    super::player::apply_fade(&mut segment_samples, channels, sample_rate);
     Some((Arc::new(segment_samples), channels, sample_rate))
 }
 
 /// Update the soundpack cache after a successful load.
 pub(super) fn update_soundpack_cache(pack: &LoadedPack, soundpack_id: &str) {
-    let _guard = crate::state::soundpack::cache_lock();
+    let _guard = crate::state::packs::cache_lock();
     let mut cache = SoundpackCache::load_locked();
     match create_soundpack_metadata(&pack.soundpack_path, &pack.soundpack) {
         Ok(metadata) => {
@@ -476,7 +476,7 @@ pub(super) fn capture_soundpack_loading_error(soundpack_id: &str, error: &str) {
 
     crate::always_print!("📝 Capturing loading error for {}: {}", soundpack_id, error);
 
-    let _guard = crate::state::soundpack::cache_lock();
+    let _guard = crate::state::packs::cache_lock();
     let mut cache = SoundpackCache::load_locked();
 
     // Check if we already have metadata for this soundpack

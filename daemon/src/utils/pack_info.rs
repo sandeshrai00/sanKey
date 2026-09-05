@@ -1,13 +1,13 @@
-use crate::state::paths;
-use crate::state::soundpack::SoundpackMetadata;
-use crate::utils::soundpack_validator::{SoundpackValidationStatus, validate_soundpack_config};
+use crate::state::folders;
+use crate::state::packs::SoundpackMetadata;
+use crate::utils::pack_checker::{SoundpackValidationStatus, validate_soundpack_config};
 use std::fs;
 
 /// Load soundpack metadata from config.json. Pure read — never writes to the
 /// pack. V1→V2 conversion lives in the pack-load path (soundpack_loader), not
 /// here: a scan that mutates user files is how B5 destroyed multi packs.
 pub fn load_soundpack_metadata(soundpack_id: &str) -> Result<SoundpackMetadata, String> {
-    let config_path = paths::soundpacks::config_json(soundpack_id);
+    let config_path = folders::soundpacks::config_json(soundpack_id);
 
     // Validate the soundpack configuration first
     let validation_result = validate_soundpack_config(&config_path);
@@ -37,7 +37,7 @@ pub fn load_soundpack_metadata(soundpack_id: &str) -> Result<SoundpackMetadata, 
 
     // If audio_file exists, check if the actual file exists
     if let Some(audio_filename) = audio_file {
-        let soundpack_dir = paths::soundpacks::soundpack_dir(soundpack_id);
+        let soundpack_dir = folders::soundpacks::soundpack_dir(soundpack_id);
         let full_audio_path = format!(
             "{}/{}",
             soundpack_dir,

@@ -1,5 +1,5 @@
-use crate::state::paths;
-use crate::utils::{data, path, soundpack};
+use crate::state::folders;
+use crate::utils::{json_files, files, pack_info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -119,7 +119,7 @@ pub struct SoundpackCache {
 
 impl SoundpackCache {
     fn cache_file() -> String {
-        paths::data::soundpack_cache_json()
+        folders::data::soundpack_cache_json()
             .to_string_lossy()
             .to_string()
     }
@@ -132,7 +132,7 @@ impl SoundpackCache {
     pub(crate) fn load_locked() -> Self {
         let cache_file = Self::cache_file();
         let mut cache =
-            match data::load_json_from_file::<SoundpackCache>(std::path::Path::new(&cache_file)) {
+            match json_files::load_json_from_file::<SoundpackCache>(std::path::Path::new(&cache_file)) {
                 Ok(cache) => {
                     crate::always_print!(
                         "📦 Loaded soundpack metadata cache with {} entries",
@@ -167,13 +167,13 @@ impl SoundpackCache {
         let cache_file = Self::cache_file();
 
         if let Some(parent) = Path::new(&cache_file).parent() {
-            if let Err(e) = path::ensure_directory_exists(parent) {
+            if let Err(e) = files::ensure_directory_exists(parent) {
                 crate::always_eprint!("⚠️  Failed to create cache directory: {}", e);
                 return;
             }
         }
 
-        match data::save_json_to_file_atomically(self, std::path::Path::new(&cache_file)) {
+        match json_files::save_json_to_file_atomically(self, std::path::Path::new(&cache_file)) {
             Ok(_) => crate::always_print!(
                 "💾 Saved soundpack metadata cache with {} entries",
                 self.soundpacks.len()
@@ -190,7 +190,7 @@ impl SoundpackCache {
 
         self.soundpacks.clear();
 
-        let soundpacks_dir = paths::soundpacks::get_builtin_soundpacks_dir()
+        let soundpacks_dir = folders::soundpacks::get_builtin_soundpacks_dir()
             .to_string_lossy()
             .to_string();
         crate::always_print!("📂 Scanning soundpacks in: {}", soundpacks_dir);
@@ -233,7 +233,7 @@ impl SoundpackCache {
                             full_soundpack_id
                         );
 
-                        match soundpack::load_soundpack_metadata(&full_soundpack_id) {
+                        match pack_info::load_soundpack_metadata(&full_soundpack_id) {
                             Ok(metadata) => {
                                 crate::always_print!(
                                     "✅ [CACHE DEBUG] Successfully loaded metadata for: {}",

@@ -10,7 +10,7 @@ Linux locks keyboard input so only your active login session can read `/dev/inpu
 
 1. Your system’s approval dialog appears (not ours).
 2. On approval, one scoped udev rule is installed **for keyboards only**:
-   `/etc/udev/rules.d/70-sorakey-keyboard.rules`
+   `/etc/udev/rules.d/70-sora-keyboard.rules`
    ```ini
    ACTION=="add|change", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"
    ```
@@ -19,7 +19,7 @@ Linux locks keyboard input so only your active login session can read `/dev/inpu
    - Must sort **before** `73-seat-late.rules` so the `uaccess` builtin actually writes the ACL at event time.
 3. `udevadm control --reload-rules && udevadm trigger --subsystem-match=input --action=change` applies it instantly — no logout, no reboot. Sounds start within seconds. Panel shows `Checking status…` → `Enabling… / Check your terminal…` → `Finishing up…` → `Playing`.
 
-Source: `udev/70-sorakey-keyboard.rules` and `scripts/sorakey-enable-capture.sh` in the plugin directory.
+Source: `udev/70-sora-keyboard.rules` and `scripts/sora-keyboard-access.sh` in the plugin directory.
 
 ## What “Enable keyboard permission with terminal” does
 
@@ -30,14 +30,14 @@ Same rule, same `install + reload + trigger`, but via `sudo` in your own termina
 
 The panel opens your `$TERMINAL` (or `xdg-terminal-exec`) and runs:
 ```bash
-/path/to/plugin/scripts/sorakey-enable-capture.sh --use-sudo
+/path/to/plugin/scripts/sora-keyboard-access.sh --use-sudo
 # you type your password in your own terminal, nothing is logged
 ```
 Both buttons share the same unified `Enabling…` UI — both buttons hide, one centered spinner + `Check your terminal… / Waiting for approval…` → `Verifying…` → `Finishing up…`.
 
 Manual equivalent (run from plugin directory):
 ```bash
-sudo install -m 644 udev/70-sorakey-keyboard.rules /etc/udev/rules.d/70-sorakey-keyboard.rules
+sudo install -m 644 udev/70-sora-keyboard.rules /etc/udev/rules.d/70-sora-keyboard.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=input --action=change
 # verify: should show user:<you>:rw- on a keyboard node, and daemon status ok
@@ -50,7 +50,7 @@ getfacl /dev/input/event4 2>/dev/null | grep user:
 
 ```bash
 # 1. Rule installed?
-ls -l /etc/udev/rules.d/70-sorakey-keyboard.rules
+ls -l /etc/udev/rules.d/70-sora-keyboard.rules
 
 # 2. ACL granted to you? (should show user:<you>:rw- on a keyboard node)
 for d in /dev/input/event*; do
@@ -74,13 +74,13 @@ Uninstalling the plugin removes the rule with the same one-time approval:
 
 ```bash
 # from the panel: Settings → Uninstall Sorakey, or:
-~/.config/omarchy/plugins/io.github.sandeshrai00.sorakey/scripts/uninstall.sh --purge
+~/.config/omarchy/plugins/io.github.sandeshrai00.sorakey/scripts/sora-uninstall.sh --purge
 # then: omarchy plugin remove io.github.sandeshrai00.sorakey --yes
 ```
 
-`uninstall.sh` runs:
+`sora-uninstall.sh` runs:
 ```bash
-pkexec bash -c "rm -f /etc/udev/rules.d/70-sorakey-keyboard.rules && udevadm control --reload-rules && udevadm trigger --subsystem-match=input --action=change"
+pkexec bash -c "rm -f /etc/udev/rules.d/70-sora-keyboard.rules && udevadm control --reload-rules && udevadm trigger --subsystem-match=input --action=change"
 ```
 
 ### Option B — manual revoke (for developers / fresh-install testing)
@@ -89,9 +89,9 @@ No terminal is available to agents, so the shell uses `pkexec` (GUI prompt). In 
 
 ```bash
 # 1. Remove rule
-pkexec bash -c 'rm -f /etc/udev/rules.d/70-sorakey-keyboard.rules && udevadm control --reload-rules && udevadm trigger --subsystem-match=input --action=change'
+pkexec bash -c 'rm -f /etc/udev/rules.d/70-sora-keyboard.rules && udevadm control --reload-rules && udevadm trigger --subsystem-match=input --action=change'
 # — or with sudo in a terminal:
-# sudo rm /etc/udev/rules.d/70-sorakey-keyboard.rules
+# sudo rm /etc/udev/rules.d/70-sora-keyboard.rules
 # sudo udevadm control --reload-rules
 # sudo udevadm trigger --subsystem-match=input --action=change
 
@@ -104,7 +104,7 @@ systemctl --user restart sorakey
 omarchy restart shell
 
 # 4. Verify revoked
-ls /etc/udev/rules.d/70-sorakey-keyboard.rules 2>&1 | head   # should be "No such file"
+ls /etc/udev/rules.d/70-sora-keyboard.rules 2>&1 | head   # should be "No such file"
 getfacl /dev/input/event4 2>/dev/null | grep "^user:"        # should be only user::rw-, no user:<you>:rw-
 ~/.local/bin/sorakey ctl '{"cmd":"status"}' | grep input_error  # should be "no_input_devices: cannot open /dev/input/event*"
 # Panel should show: Checking status… (spinning) → NEEDS ATTENTION / Enable keyboard sounds
@@ -116,7 +116,7 @@ Re-grant anytime: open the Sorakey panel → **Enable keyboard sounds** (GUI) or
 
 ```bash
 # revoke (as above)
-pkexec bash -c 'rm -f /etc/udev/rules.d/70-sorakey-keyboard.rules && udevadm control --reload-rules && udevadm trigger --subsystem-match=input --action=change; setfacl -b /dev/input/event* 2>/dev/null'
+pkexec bash -c 'rm -f /etc/udev/rules.d/70-sora-keyboard.rules /etc/udev/rules.d/70-sorakey-keyboard.rules && udevadm control --reload-rules && udevadm trigger --subsystem-match=input --action=change; setfacl -b /dev/input/event* 2>/dev/null'
 systemctl --user restart sorakey; omarchy restart shell
 # open panel → expect: Checking (spinner) → Need Attention, no main flash
 # click Enable → expect: both buttons hide → centered "Enabling…" + "Waiting for approval…" / "Check your terminal…" → "Finishing up…" → main controls
@@ -150,10 +150,10 @@ Your system has no polkit agent. Use **Enable keyboard permission with terminal*
 ## How it works under the hood
 
 ```
-Panel (QML) ──enableCapture()/fixInTerminal()──▶ sorakey-enable-capture.sh
+Panel (QML) ──enableCapture()/fixInTerminal()──▶ sora-keyboard-access.sh
                                                      │ pkexec/sudo
                                                      ▼
-                                              /etc/udev/rules.d/70-sorakey-keyboard.rules (TAG+=uaccess)
+                                              /etc/udev/rules.d/70-sora-keyboard.rules (TAG+=uaccess)
                                                      │ udevadm reload + trigger
                                                      ▼
                                               73-seat-late.rules builtin "uaccess" → ACL on /dev/input/event* (user:<you>:rw-)
@@ -162,5 +162,5 @@ Panel (QML) ──enableCapture()/fixInTerminal()──▶ sorakey-enable-captur
                                               sorakey daemon (evdev) → sound engine → Pulse/PipeWire
 ```
 
-- Panel state: `statusKnown` gates the UI — `Checking status…` (spinning) until `sorakey ctl status` returns a definitive `input_error` (string = blocked, `null` = clear after 2 consecutive polls to avoid the daemon’s startup lie-window). Then either `Need Attention` or main controls. See `Panel.qml:92-98,213,1304-1345`.
-- Daemon health: `daemon/src/state/health.rs` (`input_error` slot) + `daemon/src/libs/evdev_input_listener.rs:192-265` (enumerate retry, supervisor).
+- Panel state: `statusKnown` gates the UI — `Checking status…` (spinning) until `sorakey ctl status` returns a definitive `input_error` (string = blocked, `null` = clear after 2 consecutive polls to avoid the daemon’s startup lie-window). Then either `Need Attention` or main controls. See `SoraWidget.qml:92-98,213,1304-1345`.
+- Daemon health: `daemon/src/state/status.rs` (`input_error` slot) + `daemon/src/libs/keyboard.rs:192-265` (enumerate retry, supervisor).

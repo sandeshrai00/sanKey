@@ -1,6 +1,6 @@
 //! The only place `config.json` is written — use `apply` to mutate.
 
-use crate::state::config::AppConfig;
+use crate::state::settings::AppConfig;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -326,7 +326,7 @@ mod tests {
 
         let _serialised = lock_real_authority();
         let original = current();
-        let path = crate::state::paths::data::config_json();
+        let path = crate::state::folders::data::config_json();
         let stop = Arc::new(AtomicBool::new(false));
 
         let reader = {
@@ -338,7 +338,7 @@ mod tests {
                 while !stop.load(AtomicOrdering::Relaxed) {
                     // missing is okay — only broken is a failure
                     if let Ok(contents) = std::fs::read_to_string(&path) {
-                        if crate::state::config::parse_lenient(&contents).is_ok() {
+                        if crate::state::settings::parse_lenient(&contents).is_ok() {
                             successful_reads += 1;
                         } else {
                             partial_reads += 1;

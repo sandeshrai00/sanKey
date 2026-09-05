@@ -1,14 +1,14 @@
 #!/bin/bash
-# sorakey-detached-run — launch a helper fully detached from the shell.
+# sorakey-detached — launch a helper fully detached from the shell.
 #
 # WHY: the shell reloads the plugin on any file change ("Local plugin
 # changed, reloading"), and teardown SIGTERMs the service's direct
 # children. A file picker open during a reload/sync/update was murdered
 # mid-dialog with no trace. Double-forking here reparents the helper to
 # init, so no reload can reach it. The helper reports via <result-file>,
-# which Service.qml polls (and resumes polling after its own restart).
+# which SoraService.qml polls (and resumes polling after its own restart).
 #
-# Usage: sorakey-detached-run <result-file> <cmd> [args...]
+# Usage: sorakey-detached <result-file> <cmd> [args...]
 #   - touches <result-file>.open as an "in flight" marker (Service resumes
 #     on it after a restart), removes any stale <result-file>
 #   - <cmd> must append its single result line (OK:.../ERROR:...) to

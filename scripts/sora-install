@@ -12,12 +12,12 @@ UNIT_DIR="$HOME/.config/systemd/user"
 UNIT="$UNIT_DIR/sorakey.service"
 
 step() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
-die()  { printf '\n\033[1;31msorakey-setup: %s\033[0m\n' "$*" >&2; exit 1; }
+die()  { printf '\n\033[1;31msora-install: %s\033[0m\n' "$*" >&2; exit 1; }
 
 # 1. Build daemon
 [[ -d "$DAEMON_DIR" ]] || die "daemon/ not found next to this script"
 step "Building sorakey (verified prebuilt if available, else source)"
-"$PLUGIN_DIR/scripts/build-sorakey.sh" || die "build failed — needs network for the prebuilt, or cargo/rustup for a source build"
+"$PLUGIN_DIR/scripts/sora-build.sh" || die "build failed — needs network for the prebuilt, or cargo/rustup for a source build"
 [[ -x "$BIN" ]] || die "build reported success but $BIN is missing/not executable"
 
 # 2. Install soundpacks

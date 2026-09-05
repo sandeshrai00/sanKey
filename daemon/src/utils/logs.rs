@@ -140,7 +140,7 @@ pub fn export_header() -> String {
          Verbose logging: {}\n\
          Lines captured: {} (buffer holds up to {})\n\
          {}\n",
-        crate::utils::constants::APP_VERSION,
+        crate::utils::version::APP_VERSION,
         std::env::consts::OS,
         std::env::consts::ARCH,
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
@@ -341,7 +341,7 @@ mod tests {
         assert!(
             contents.contains(&format!(
                 "App version: {}",
-                crate::utils::constants::APP_VERSION
+                crate::utils::version::APP_VERSION
             )),
             "{}",
             contents

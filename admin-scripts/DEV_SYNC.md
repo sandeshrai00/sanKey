@@ -54,8 +54,8 @@ omarchy plugin remove io.github.sandeshrai00.sorakey --yes  # wipes installed di
 
 | Edit | Needs new release? | How dev-sync tests it |
 |------|-------------------|----------------------|
-| `Panel.qml` / `Service.qml` / `scripts/` | No | dev-sync + shell restart is enough |
-| `daemon/` (Rust) | Yes for fast prebuilt on users' machines | dev-sync + shell restart triggers `build-sorakey.sh` freshness check: if no matching tag it builds from source (needs `cargo`), if tag exists it tries prebuilt (needs release). To force source: `SORAKEY_BUILD_FROM_SOURCE=1 ./scripts/build-sorakey.sh` |
+| `SoraWidget.qml` / `SoraService.qml` / `scripts/` | No | dev-sync + shell restart is enough |
+| `daemon/` (Rust) | Yes for fast prebuilt on users' machines | dev-sync + shell restart triggers `sora-build.sh` freshness check: if no matching tag it builds from source (needs `cargo`), if tag exists it tries prebuilt (needs release). To force source: `SORAKEY_BUILD_FROM_SOURCE=1 ./scripts/sora-build.sh` |
 
 ## Notes
 

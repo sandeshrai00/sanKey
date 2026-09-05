@@ -12,8 +12,8 @@
     "service"
   ],
   "entryPoints": {
-    "barWidget": "Panel.qml",
-    "service": "Service.qml"
+    "barWidget": "SoraWidget.qml",
+    "service": "SoraService.qml"
   },
   "barWidget": {
     "displayName": "Sorakey",

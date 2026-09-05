@@ -10,9 +10,9 @@ Sync dev repo → installed plugin, validate, restart shell. See `DEV_SYNC.md`.
 
 ## V1 → V2 conversion
 
-V1 packs are converted automatically on import (`scripts/sorakey-import-pack.py`,
+V1 packs are converted automatically on import (`scripts/sora-pack-import.py`,
 shared table in `scripts/_v1_shared.py`, mirrored by the daemon's
-`daemon/src/utils/config_converter.rs`). There is no standalone converter
+`daemon/src/utils/old_pack_fixer.rs`). There is no standalone converter
 script — the section below is obsolete and kept only for reference.
 
 ### (Obsolete) standalone converter notes

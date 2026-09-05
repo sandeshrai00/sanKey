@@ -9,7 +9,7 @@ Binaries built by CI: `sorakey-x86_64` + `sorakey-aarch64`
 ## 0. The one rule (read this first)
 
 A release exists for ONE thing: shipping the compiled **daemon binary**.
-The installer (`scripts/build-sorakey.sh`) only downloads the GitHub
+The installer (`scripts/sora-build.sh`) only downloads the GitHub
 prebuilt when **the tagged commit's daemon source == your current daemon
 source**. Otherwise every user compiles from source (slow, needs Rust).
 
@@ -17,7 +17,7 @@ source**. Otherwise every user compiles from source (slow, needs Rust).
 |---|---|
 | anything in `daemon/` (any `.rs`, `Cargo.toml`) | **YES — must release** |
 | `rust-toolchain.toml` | **YES — must release** |
-| only `Panel.qml`, `Service.qml`, `Model.js`, `Sora*.qml`, `SearchablePackDropdown.qml`, `scripts/*.py`, `scripts/*.sh`, README, docs | **NO** — plugin files ship from the repo; users get them with `omarchy plugin update` |
+| only `SoraWidget.qml`, `SoraService.qml`, `SoraKeyStore.js`, `Sora*.qml`, `SoraPackPicker.qml`, `scripts/*.py`, `scripts/*.sh`, README, docs | **NO** — plugin files ship from the repo; users get them with `omarchy plugin update` |
 
 Three files must ALWAYS agree with each other: the git tag,
 `manifest.json:version`, and `daemon/Cargo.toml:version`.
