@@ -1298,9 +1298,9 @@ SoraDropdown {
           }
         }
 
-        // controls
+        // controls — gated by knowledge: while Checking, only the placeholder above shows
         Column {
-          visible: root.installed && !root.settingsOpen
+          visible: root.installed && root.statusKnown && !root.settingsOpen
           width: parent.width
           spacing: Style.space(14)
 
