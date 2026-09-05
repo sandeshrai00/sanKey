@@ -1285,16 +1285,35 @@ SoraDropdown {
         Item {
           visible: root.installed && !root.statusKnown && !root.settingsOpen
           width: parent.width
-          implicitHeight: checkingText.implicitHeight
-          Text {
-            id: checkingText
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            text: "Checking status…"
-            color: root.bar.foreground
-            opacity: 0.7
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
+          implicitHeight: checkingRow.implicitHeight
+          Row {
+            id: checkingRow
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            Text {
+              id: checkingSpinner
+              text: "󰑐"
+              color: root.bar.foreground
+              opacity: 0.7
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.subtitle
+              anchors.verticalCenter: parent.verticalCenter
+              transformOrigin: Item.Center
+              RotationAnimation on rotation {
+                from: 0; to: 360; duration: 900; loops: Animation.Infinite; running: true
+              }
+            }
+            Text {
+              id: checkingText
+              text: "Checking status…"
+              color: root.bar.foreground
+              opacity: 0.85
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.subtitle
+              font.bold: true
+              anchors.verticalCenter: parent.verticalCenter
+            }
           }
         }
 
