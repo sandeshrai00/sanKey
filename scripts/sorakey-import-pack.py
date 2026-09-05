@@ -26,7 +26,7 @@ sys.dont_write_bytecode = True
 try:
     import gi
     gi.require_version("Gtk", "4.0")
-    from gi.repository import Gtk, GLib
+    from gi.repository import Gtk, Gio, GLib
 except Exception:
     Gtk = None
 
@@ -518,51 +518,47 @@ def gui_main():
     if Gtk is None:
         emit("ERROR:GTK 4 missing — file dialog can't open")
         sys.exit(1)
-    # Classic FileChooserDialog, drawn in-process: the portal dismisses
-    # parent-less FileDialogs with "Dismissed by user" plus zero user action
-    # (journal at tap time: "Unhandled parent window type" + "Failed to
-    # associate portal window with parent window"). In-process chooser +
-    # detached launch (reload-proof) is the combination that survives
-    # everything on this box.
-    dialog = Gtk.FileChooserDialog(title="Import Soundpack",
-                                   action=Gtk.FileChooserAction.OPEN)
-    dialog.set_modal(True)
-    dialog.set_default_size(800, 600)
-    dialog.add_buttons("_Cancel", Gtk.ResponseType.CANCEL,
-                       "_Open", Gtk.ResponseType.ACCEPT)
-
+    # Portal-native FileDialog — the OS default file manager dialog, so it
+    # always matches whatever the user has set as default. Parent-less, as
+    # originally: it now runs detached (reload-proof), so a plugin reload
+    # can no longer SIGTERM it mid-dialog.
+    dialog = Gtk.FileDialog(title="Import Soundpack")
     filter_zip = Gtk.FileFilter()
     filter_zip.set_name("Soundpack ZIP")
     filter_zip.add_pattern("*.zip")
     filter_all = Gtk.FileFilter()
     filter_all.set_name("All Files")
     filter_all.add_pattern("*")
-    dialog.add_filter(filter_zip)
-    dialog.add_filter(filter_all)
-    dialog.set_filter(filter_zip)
+    filters = Gio.ListStore.new(Gtk.FileFilter)
+    filters.append(filter_zip)
+    filters.append(filter_all)
+    dialog.set_filters(filters)
+    dialog.set_default_filter(filter_zip)
 
     loop = GLib.MainLoop()
 
     def fail_and_quit(msg):
         emit(f"ERROR:{msg}")
-        dialog.destroy()
         loop.quit()
 
     def succeed_and_quit(msg):
         emit(f"OK:{msg}")
-        dialog.destroy()
         loop.quit()
 
-    def on_response(dlg, response):
-        if response != Gtk.ResponseType.ACCEPT:
-            print(f"[response] {response}", file=sys.stderr, flush=True)
-            fail_and_quit("Cancelled")
+    def on_done(source, result, user_data=None):
+        try:
+            file = dialog.open_finish(result)
+        except Exception as e:
+            err = str(e)
+            if "Dismissed" in err or "cancel" in err.lower():
+                fail_and_quit("Cancelled")
+            else:
+                fail_and_quit(f"Dialog error: {e}")
             return
-        f = dlg.get_file()
-        path = f.get_path() if f is not None else None
-        if not path:
+        if file is None:
             fail_and_quit("No file selected")
             return
+        path = file.get_path()
         try:
             sid, err = import_zip(path)
         except Exception as e:
@@ -574,8 +570,7 @@ def gui_main():
             succeed_and_quit(sid)
 
     def launch_dialog():
-        dialog.connect("response", on_response)
-        dialog.present()
+        dialog.open(None, None, on_done, None)
 
     GLib.idle_add(launch_dialog)
     loop.run()
