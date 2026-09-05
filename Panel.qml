@@ -1377,41 +1377,71 @@ SoraDropdown {
                 font.pixelSize: Style.font.caption
                 wrapMode: Text.WordWrap
               }
-              Button {
+              Column {
+                visible: !root.captureWorking
                 width: parent.width
-                text: root.captureWorking ? "Enabling…" : "Enable keyboard sounds"
-                iconText: ""
-                radius: root.friendlyRadius
-                foreground: root.bar.foreground
-                selected: true
-                iconSpinning: root.captureWorking
-                fontSize: Style.font.subtitle
-                verticalPadding: Style.space(12)
-                enabled: !root.captureWorking
-                onClicked: root.enableCapture()
+                spacing: Style.space(8)
+                Button {
+                  width: parent.width
+                  text: "Enable keyboard sounds"
+                  iconText: ""
+                  radius: root.friendlyRadius
+                  foreground: root.bar.foreground
+                  selected: true
+                  fontSize: Style.font.subtitle
+                  verticalPadding: Style.space(12)
+                  enabled: !root.captureWorking
+                  onClicked: root.enableCapture()
+                }
+                Button {
+                  visible: root.inputError !== ""
+                  width: parent.width
+                  text: "Enable keyboard permission with terminal"
+                  radius: root.friendlyRadius
+                  foreground: root.bar.foreground
+                  selected: true
+                  verticalPadding: root.buttonYPadding
+                  tooltipText: "Opens your terminal — approve there with sudo"
+                  enabled: !root.captureWorking
+                  onClicked: root.fixInTerminal()
+                }
               }
-              Button {
-                visible: root.inputError !== ""
+              Column {
+                visible: root.captureWorking
                 width: parent.width
-                text: root.terminalBusy ? "Opening terminal…" : "Enable keyboard permission with terminal"
-                radius: root.friendlyRadius
-                foreground: root.bar.foreground
-                selected: true
-                verticalPadding: root.buttonYPadding
-                tooltipText: "Opens your terminal — approve there with sudo"
-                enabled: !root.captureWorking
-                iconSpinning: root.terminalBusy
-                onClicked: root.fixInTerminal()
-              }
-              Text {
-                visible: root.captureWorking && root.capturePhase !== ""
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                text: root.capturePhase
-                color: root.bar.foreground
-                opacity: 0.7
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
+                spacing: Style.space(8)
+                Row {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  spacing: Style.space(8)
+                  Text {
+                    text: "󰑐"
+                    color: root.bar.foreground
+                    opacity: 0.8
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.subtitle
+                    anchors.verticalCenter: parent.verticalCenter
+                    transformOrigin: Item.Center
+                    RotationAnimation on rotation { from: 0; to: 360; duration: 900; loops: Animation.Infinite; running: true }
+                  }
+                  Text {
+                    text: "Enabling…"
+                    color: root.bar.foreground
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.subtitle
+                    font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+                Text {
+                  visible: root.capturePhase !== ""
+                  width: parent.width
+                  horizontalAlignment: Text.AlignHCenter
+                  text: root.capturePhase
+                  color: root.bar.foreground
+                  opacity: 0.7
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
               }
               Text {
                 width: parent.width
