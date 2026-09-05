@@ -91,6 +91,11 @@ Panel {
   // permanently dead daemon still resolves to a Start button.
   property bool statusKnown: false
   property int statusMissed: 0
+  // A lone `input_error: null` is ambiguous: "scanned, all clear" or
+  // "daemon hasn't finished its first keyboard scan yet" (its startup
+  // answer is always null, error lands a beat later). So a clear reading
+  // needs a second consecutive confirm before it counts as knowledge.
+  property int clearStreak: 0
   property var packLoaded: null
   property string packError: ""
   property var lastKeyAgeS: null
@@ -240,6 +245,7 @@ Panel {
     // daemon state is about to change under us: the last reading is stale
     root.statusKnown = false
     root.statusMissed = 0
+    root.clearStreak = 0
     svcProc.command = ["systemctl", "--user"].concat(args)
     svcProc.running = true
   }
@@ -312,6 +318,7 @@ Panel {
     setupBusy = true
     root.statusKnown = false
     root.statusMissed = 0
+    root.clearStreak = 0
     setupProc.command = ["/usr/bin/bash", root.setupPath]
     setupProc.running = true
   }
@@ -486,9 +493,11 @@ Panel {
     }
     if (o.ok === true) {
       var daemonJustUp = !root.running
-      // a parseable answer is knowledge, even before inputError is read
-      if (!root.statusKnown) root.statusKnown = true
+      // any parseable answer proves the daemon is responsive…
       if (root.statusMissed !== 0) root.statusMissed = 0
+      // …but a (re)started daemon hasn't scanned keyboards yet: forget
+      // any clear streak a previous incarnation earned
+      if (daemonJustUp) root.clearStreak = 0
       // guarded writes: identical poll answers must not fan out bindings at 1Hz
       if (root.running !== true) root.running = true
       if (root.installed !== true) root.installed = true
@@ -500,9 +509,26 @@ Panel {
       if (root.keyboardPack !== pack) root.keyboardPack = pack
       // health fields (absent on older daemons → keep previous value)
       if (typeof o.input_keyboards === "number" && root.inputKeyboards !== o.input_keyboards) root.inputKeyboards = o.input_keyboards
-      if (typeof o.input_error !== "undefined") {
-        var ie = o.input_error ? String(o.input_error) : ""
+      // input_error:null is ambiguous (all clear vs not scanned yet, see
+      // clearStreak). Errors are never ambiguous — the daemon only writes
+      // them on real failure — so they apply at once, while a clear
+      // reading needs a second consecutive confirm before it counts.
+      var ie = (typeof o.input_error !== "undefined")
+        ? (o.input_error ? String(o.input_error) : "")
+        : root.inputError
+      if (ie !== "") {
         if (root.inputError !== ie) root.inputError = ie
+        root.clearStreak = 0
+        if (!root.statusKnown) root.statusKnown = true
+      } else {
+        // hold the previous verdict until the clear is confirmed: a lone
+        // null right after a (re)start is the pre-scan lie, and wiping a
+        // shown error on it would flash the main panel in steady state too
+        if (root.clearStreak < 2) root.clearStreak += 1
+        if (root.clearStreak >= 2) {
+          if (root.inputError !== "") root.inputError = ""
+          if (!root.statusKnown) root.statusKnown = true
+        }
       }
       if (typeof o.pack_loaded !== "undefined") {
         var pl = (o.pack_loaded === true) ? true : ((o.pack_loaded === false) ? false : null)
@@ -529,6 +555,7 @@ Panel {
     } else {
       root.running = false
       // daemon answered but not ok: that is still knowledge
+      root.clearStreak = 0
       if (!root.statusKnown) root.statusKnown = true
       if (root.statusMissed !== 0) root.statusMissed = 0
     }
@@ -612,8 +639,11 @@ Panel {
         } else {
           // unreadable answer (daemon mid-restart, socket gone): not
           // knowledge yet — but don't wait forever, bound "Checking…"
-          // so a dead daemon still resolves to a Start button.
+          // so a dead daemon still resolves to a Start button. The gap
+          // also voids the clear streak: the next answer may come from a
+          // fresh daemon still in its pre-scan window.
           if (root.statusMissed < 3) root.statusMissed += 1
+          root.clearStreak = 0
           if (root.statusMissed >= 3) {
             root.running = false
             if (!root.statusKnown) root.statusKnown = true
@@ -764,6 +794,7 @@ Panel {
         root.errorToast = ""
         root.statusKnown = false
         root.statusMissed = 0
+        root.clearStreak = 0
         root.refreshStatus()
         root.refreshPacks()
         root.refreshAudioDevices()
